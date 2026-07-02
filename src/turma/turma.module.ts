@@ -5,6 +5,8 @@ import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
+import { AgrupamentoController } from './agrupamento.controller';
+import { AgrupamentoService } from './agrupamento.service';
 import { AlunoController } from './aluno.controller';
 import { AlunoService } from './aluno.service';
 import { FeriasController } from './ferias.controller';
@@ -14,7 +16,12 @@ import { TurmaService } from './turma.service';
 
 @Module({
   imports: [ProfessorModule],
-  controllers: [TurmaController, FeriasController, AlunoController],
+  controllers: [
+    TurmaController,
+    FeriasController,
+    AlunoController,
+    AgrupamentoController,
+  ],
   providers: [
     TurmaService,
     TurmaRepository,
@@ -23,6 +30,7 @@ import { TurmaService } from './turma.service';
     FeriasRepository,
     AlunoRepository,
     AlunoService,
+    AgrupamentoService,
     PlanosGuard,
   ],
 })
