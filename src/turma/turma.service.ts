@@ -30,7 +30,9 @@ export class TurmaService {
     professorId: string,
     dto: CreateFeriasDto,
   ): Promise<{ ferias: FeriasEntity; turmasRecalculadas: number }> {
-    const ferias = await this.feriasRepo.create({ ...dto, professorId });
+    const ferias = await this.feriasRepo.create(
+      new FeriasEntity({ ...dto, professorId }),
+    );
     const turmasRecalculadas = await this.recalcularTurmas(professorId);
     return { ferias, turmasRecalculadas };
   }
