@@ -43,12 +43,33 @@ export class TurmaEntity {
 
   ativo: boolean;
 
+  /**
+   * Arquivamento manual: quando true, a turma nao conta mais para a cota do
+   * plano, mesmo que o cronograma ainda nao tenha expirado.
+   */
+  encerradaManualmente?: boolean;
+
   constructor(partial: Partial<TurmaEntity> = {}) {
     Object.assign(this, partial);
   }
 
   get isModulo(): boolean {
     return this.tipoModalidade === 'MODULO_FECHADO';
+  }
+
+  /**
+   * Uma turma conta para o limite do plano se nao foi encerrada manualmente e
+   * seu cronograma ainda esta vigente. Modulos deixam de contar quando a
+   * dataFimPrevista passa; grades fixas (ou modulos sem fim) contam sempre.
+   */
+  contaComoAtiva(hojeISO: string): boolean {
+    if (this.encerradaManualmente) {
+      return false;
+    }
+    if (this.isModulo && this.dataFimPrevista) {
+      return this.dataFimPrevista >= hojeISO;
+    }
+    return true;
   }
 
   /**

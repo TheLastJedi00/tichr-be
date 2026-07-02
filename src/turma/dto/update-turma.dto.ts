@@ -1,6 +1,7 @@
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -60,4 +61,9 @@ export class UpdateTurmaDto {
   @IsOptional()
   @Matches(/^\d{2}:\d{2}$/, { message: 'horaFim deve estar no formato HH:mm' })
   horaFim?: string;
+
+  /** Arquiva (ou reativa) a turma para efeito de cota do plano. */
+  @IsOptional()
+  @IsBoolean()
+  encerradaManualmente?: boolean;
 }

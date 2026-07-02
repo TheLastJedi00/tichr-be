@@ -109,6 +109,8 @@ export class TurmaService {
       disciplina: dto.disciplina ?? turma.disciplina,
       horaInicio: dto.horaInicio ?? turma.horaInicio,
       horaFim: dto.horaFim ?? turma.horaFim,
+      encerradaManualmente:
+        dto.encerradaManualmente ?? turma.encerradaManualmente ?? false,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);
