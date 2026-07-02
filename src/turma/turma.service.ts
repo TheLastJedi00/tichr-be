@@ -69,6 +69,7 @@ export class TurmaService {
       diasSemana: dto.diasSemana ?? turma.diasSemana,
       dataInicio: dto.dataInicio ?? turma.dataInicio,
       totalAulas: dto.totalAulas ?? turma.totalAulas,
+      cor: dto.cor ?? turma.cor,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);

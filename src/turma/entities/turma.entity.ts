@@ -31,6 +31,9 @@ export class TurmaEntity {
   /** Data de termino calculada dinamicamente ('YYYY-MM-DD'). */
   dataFimPrevista?: string;
 
+  /** Cor de destaque da turma no calendario (hex, ex.: '#2563eb'). */
+  cor?: string;
+
   ativo: boolean;
 
   constructor(partial: Partial<TurmaEntity> = {}) {
