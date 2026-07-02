@@ -34,6 +34,9 @@ export class TurmaEntity {
   /** Cor de destaque da turma no calendario (hex, ex.: '#2563eb'). */
   cor?: string;
 
+  /** Disciplina/competencia lecionada nesta turma. */
+  disciplina?: string;
+
   ativo: boolean;
 
   constructor(partial: Partial<TurmaEntity> = {}) {

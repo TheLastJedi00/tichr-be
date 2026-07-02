@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
   ValidateIf,
 } from 'class-validator';
@@ -46,4 +47,9 @@ export class UpdateTurmaDto {
   @IsOptional()
   @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'cor deve ser um hex #RRGGBB' })
   cor?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  disciplina?: string;
 }

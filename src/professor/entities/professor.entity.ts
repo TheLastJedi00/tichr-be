@@ -8,6 +8,9 @@ export class ProfessorEntity {
   disciplina?: string;
   bio?: string;
 
+  /** Competencias/disciplinas que o professor leciona. */
+  disciplinas?: string[];
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
   }
