@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
 import { UpdateTurmaDto } from './dto/update-turma.dto';
+import { PlanosGuard } from './planos.guard';
 import { TurmaService } from './turma.service';
 
 @Controller()
@@ -10,6 +19,7 @@ export class TurmaController {
   constructor(private readonly turmaService: TurmaService) {}
 
   @Post('turmas')
+  @UseGuards(PlanosGuard)
   criarTurma(
     @ProfessorId() professorId: string,
     @Body() dto: CreateTurmaDto,
