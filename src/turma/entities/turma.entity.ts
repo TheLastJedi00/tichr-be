@@ -37,6 +37,10 @@ export class TurmaEntity {
   /** Disciplina/competencia lecionada nesta turma. */
   disciplina?: string;
 
+  /** Horarios da jornada da turma ('HH:mm'). */
+  horaInicio?: string;
+  horaFim?: string;
+
   ativo: boolean;
 
   constructor(partial: Partial<TurmaEntity> = {}) {
