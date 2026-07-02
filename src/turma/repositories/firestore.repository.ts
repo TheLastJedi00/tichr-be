@@ -25,9 +25,20 @@ export abstract class FirestoreRepository<T extends { id: string }> {
     return plainToInstance(this.entity, { ...data, id });
   }
 
+  /**
+   * Converte a entidade num objeto plano (sem prototipo/getters) e remove o id
+   * — o Firestore recusa objetos criados via "new" e o id vive no doc, nao no corpo.
+   */
+  protected toPlain(data: object): DocumentData {
+    const plain = { ...(data as Record<string, unknown>) };
+    delete plain.id;
+    return plain as DocumentData;
+  }
+
   async create(data: Omit<T, 'id'>): Promise<T> {
-    const ref = await this.collection.add(data as DocumentData);
-    return this.toEntity(ref.id, data as DocumentData);
+    const plain = this.toPlain(data);
+    const ref = await this.collection.add(plain);
+    return this.toEntity(ref.id, plain);
   }
 
   async findById(id: string): Promise<T | null> {
@@ -41,7 +52,7 @@ export abstract class FirestoreRepository<T extends { id: string }> {
   }
 
   async update(id: string, data: Partial<T>): Promise<void> {
-    await this.collection.doc(id).update(data as DocumentData);
+    await this.collection.doc(id).update(this.toPlain(data));
   }
 
   async delete(id: string): Promise<void> {
