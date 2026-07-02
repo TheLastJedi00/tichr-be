@@ -108,11 +108,9 @@ export class TurmaService {
     } as Partial<TurmaEntity>);
     turma.dataFimPrevista = fim ?? undefined;
 
-    const persistidas: SessaoAulaEntity[] = [];
-    for (const sessao of sessoes) {
-      persistidas.push(await this.sessaoRepo.create(sessao));
-    }
-    return persistidas;
+    // Persiste as sessoes em paralelo (docs independentes) — evita N
+    // round-trips sequenciais e deixa a reprojecao muito mais rapida.
+    return Promise.all(sessoes.map((sessao) => this.sessaoRepo.create(sessao)));
   }
 
   private async carregarExcecoes(professorId: string): Promise<Set<string>> {
