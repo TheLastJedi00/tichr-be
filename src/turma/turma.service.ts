@@ -107,6 +107,8 @@ export class TurmaService {
       totalAulas: dto.totalAulas ?? turma.totalAulas,
       cor: dto.cor ?? turma.cor,
       disciplina: dto.disciplina ?? turma.disciplina,
+      horaInicio: dto.horaInicio ?? turma.horaInicio,
+      horaFim: dto.horaFim ?? turma.horaFim,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);

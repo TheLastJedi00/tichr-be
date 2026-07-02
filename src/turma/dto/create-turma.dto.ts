@@ -48,4 +48,12 @@ export class CreateTurmaDto {
   @IsString()
   @MaxLength(60)
   disciplina?: string;
+
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/, { message: 'horaInicio deve estar no formato HH:mm' })
+  horaInicio?: string;
+
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/, { message: 'horaFim deve estar no formato HH:mm' })
+  horaFim?: string;
 }
