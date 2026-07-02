@@ -1,11 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
+import { CreateFeriasDto } from './dto/create-ferias.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
 import { UpdateTurmaDto } from './dto/update-turma.dto';
 import { ExcecaoEntity } from './entities/excecao.entity';
+import { FeriasEntity } from './entities/ferias.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { TurmaEntity } from './entities/turma.entity';
 import { ExcecaoRepository } from './repositories/excecao.repository';
+import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
 
@@ -15,7 +18,36 @@ export class TurmaService {
     private readonly turmaRepo: TurmaRepository,
     private readonly sessaoRepo: SessaoRepository,
     private readonly excecaoRepo: ExcecaoRepository,
+    private readonly feriasRepo: FeriasRepository,
   ) {}
+
+  listarFerias(professorId: string): Promise<FeriasEntity[]> {
+    return this.feriasRepo.findByProfessor(professorId);
+  }
+
+  /** Cadastra um periodo de ferias e recalcula a agenda do professor. */
+  async criarFerias(
+    professorId: string,
+    dto: CreateFeriasDto,
+  ): Promise<{ ferias: FeriasEntity; turmasRecalculadas: number }> {
+    const ferias = await this.feriasRepo.create({ ...dto, professorId });
+    const turmasRecalculadas = await this.recalcularTurmas(professorId);
+    return { ferias, turmasRecalculadas };
+  }
+
+  /** Remove um periodo de ferias e recalcula a agenda. */
+  async removerFerias(
+    professorId: string,
+    feriasId: string,
+  ): Promise<{ turmasRecalculadas: number }> {
+    const ferias = await this.feriasRepo.findById(feriasId);
+    if (!ferias || ferias.professorId !== professorId) {
+      throw new NotFoundException('Ferias nao encontradas.');
+    }
+    await this.feriasRepo.delete(feriasId);
+    const turmasRecalculadas = await this.recalcularTurmas(professorId);
+    return { turmasRecalculadas };
+  }
 
   /** Cria a turma, projeta as sessoes e persiste tudo. */
   async criarTurma(
