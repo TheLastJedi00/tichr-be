@@ -39,3 +39,16 @@ export function toISO(date: Date): string {
   const d = String(date.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+/** Todas as datas do intervalo [inicio, fim] inclusive. */
+export function expandirIntervalo(inicio: string, fim: string): string[] {
+  const datas: string[] = [];
+  let cursor = inicio;
+  let guarda = 0;
+  while (cursor <= fim && guarda < 3660) {
+    datas.push(cursor);
+    cursor = addDays(cursor, 1);
+    guarda++;
+  }
+  return datas;
+}

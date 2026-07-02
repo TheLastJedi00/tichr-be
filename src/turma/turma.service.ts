@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { expandirIntervalo } from '../common/date.util';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
 import { CreateFeriasDto } from './dto/create-ferias.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
@@ -59,7 +60,8 @@ export class TurmaService {
     const turma = new TurmaEntity({ ...dto, professorId, ativo: true });
     const salva = await this.turmaRepo.create(turma);
 
-    const sessoes = await this.reprojetar(salva, professorId);
+    const bloqueadas = await this.datasBloqueadas(professorId, salva.id);
+    const sessoes = await this.reprojetar(salva, bloqueadas);
     return { turma: salva, sessoes };
   }
 
@@ -109,7 +111,8 @@ export class TurmaService {
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);
 
-    const sessoes = await this.reprojetar(turma, professorId);
+    const bloqueadas = await this.datasBloqueadas(professorId, turmaId);
+    const sessoes = await this.reprojetar(turma, bloqueadas);
     return { turma, sessoes };
   }
 
@@ -117,22 +120,22 @@ export class TurmaService {
   private async recalcularTurmas(professorId: string): Promise<number> {
     const turmas = await this.turmaRepo.findByProfessor(professorId);
     const ativas = turmas.filter((t) => t.ativo);
+    const bloqueador = await this.carregarBloqueador(professorId);
     for (const turma of ativas) {
-      await this.reprojetar(turma, professorId);
+      await this.reprojetar(turma, bloqueador(turma.id));
     }
     return ativas.length;
   }
 
   /**
    * Regenera as sessoes de uma turma: limpa as antigas, projeta com as
-   * excecoes vigentes, atualiza a dataFimPrevista e persiste as novas.
+   * datas bloqueadas (excecoes + ferias), atualiza a dataFimPrevista e persiste.
    */
   private async reprojetar(
     turma: TurmaEntity,
-    professorId: string,
+    bloqueadas: Set<string>,
   ): Promise<SessaoAulaEntity[]> {
-    const excecoes = await this.carregarExcecoes(professorId);
-    const sessoes = turma.projetarSessoes(excecoes);
+    const sessoes = turma.projetarSessoes(bloqueadas);
 
     await this.sessaoRepo.deleteByTurma(turma.id);
 
@@ -149,8 +152,40 @@ export class TurmaService {
     return Promise.all(sessoes.map((sessao) => this.sessaoRepo.create(sessao)));
   }
 
-  private async carregarExcecoes(professorId: string): Promise<Set<string>> {
-    const excecoes = await this.excecaoRepo.findByProfessor(professorId);
-    return new Set(excecoes.map((e) => e.data));
+  /** Datas bloqueadas de uma turma especifica (excecoes + ferias aplicaveis). */
+  private async datasBloqueadas(
+    professorId: string,
+    turmaId: string,
+  ): Promise<Set<string>> {
+    const bloqueador = await this.carregarBloqueador(professorId);
+    return bloqueador(turmaId);
+  }
+
+  /**
+   * Carrega excecoes e ferias uma vez e devolve uma funcao que, dado o id da
+   * turma, retorna o conjunto de datas bloqueadas: excecoes + ferias globais +
+   * ferias daquela turma.
+   */
+  private async carregarBloqueador(
+    professorId: string,
+  ): Promise<(turmaId: string) => Set<string>> {
+    const [excecoes, ferias] = await Promise.all([
+      this.excecaoRepo.findByProfessor(professorId),
+      this.feriasRepo.findByProfessor(professorId),
+    ]);
+
+    const base = new Set(excecoes.map((e) => e.data));
+    const porTurma = new Map<string, string[]>();
+    for (const f of ferias) {
+      const dias = expandirIntervalo(f.dataInicio, f.dataFim);
+      if (f.turmaId) {
+        porTurma.set(f.turmaId, [...(porTurma.get(f.turmaId) ?? []), ...dias]);
+      } else {
+        for (const d of dias) base.add(d);
+      }
+    }
+
+    return (turmaId: string) =>
+      new Set([...base, ...(porTurma.get(turmaId) ?? [])]);
   }
 }
