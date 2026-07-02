@@ -28,4 +28,9 @@ export class TurmaController {
   listarSessoes(@ProfessorId() professorId: string) {
     return this.turmaService.listarSessoes(professorId);
   }
+
+  @Get('turmas')
+  listarTurmas(@ProfessorId() professorId: string) {
+    return this.turmaService.listarTurmas(professorId);
+  }
 }

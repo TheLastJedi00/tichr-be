@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { FirebaseModule } from './firebase/firebase.module';
 import { AuthModule } from './auth/auth.module';
 import { TurmaModule } from './turma/turma.module';
+import { ProfessorModule } from './professor/professor.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { TurmaModule } from './turma/turma.module';
     FirebaseModule,
     AuthModule,
     TurmaModule,
+    ProfessorModule,
   ],
   controllers: [AppController],
   providers: [AppService],

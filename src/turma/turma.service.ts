@@ -42,6 +42,10 @@ export class TurmaService {
     return this.sessaoRepo.findByProfessor(professorId);
   }
 
+  async listarTurmas(professorId: string): Promise<TurmaEntity[]> {
+    return this.turmaRepo.findByProfessor(professorId);
+  }
+
   async buscarTurma(professorId: string, turmaId: string): Promise<TurmaEntity> {
     const turma = await this.turmaRepo.findById(turmaId);
     if (!turma || turma.professorId !== professorId) {
