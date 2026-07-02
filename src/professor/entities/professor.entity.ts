@@ -1,3 +1,17 @@
+/** Nivel academico/assinatura do professor. */
+export type PlanoAtual = 'ESTAGIARIO' | 'GRADUADO' | 'MESTRE' | 'PHD';
+
+/**
+ * Limite base de turmas ativas simultaneas por plano.
+ * `Infinity` = ilimitado (Mestre e PhD).
+ */
+export const LIMITE_BASE_PLANO: Record<PlanoAtual, number> = {
+  ESTAGIARIO: 2,
+  GRADUADO: 5,
+  MESTRE: Infinity,
+  PHD: Infinity,
+};
+
 /**
  * Perfil do professor. Documento salvo em `professores/{uid}`
  * (o uid do Firebase Auth e a chave do documento).
@@ -11,11 +25,26 @@ export class ProfessorEntity {
   /** Competencias/disciplinas que o professor leciona. */
   disciplinas?: string[];
 
+  /** Nivel de assinatura atual. Novos professores entram como ESTAGIARIO. */
+  planoAtual: PlanoAtual = 'ESTAGIARIO';
+
+  /** Vagas de turma compradas avulsas, somadas ao limite base do plano. */
+  slotsAdicionaisComprados = 0;
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
   }
 
   get temNome(): boolean {
     return !!this.nomeExibicao && this.nomeExibicao.trim().length > 0;
+  }
+
+  /**
+   * Limite efetivo de turmas ativas: base do plano + slots avulsos comprados.
+   * Retorna Infinity para planos ilimitados (Mestre/PhD).
+   */
+  get limiteTurmas(): number {
+    const base = LIMITE_BASE_PLANO[this.planoAtual] ?? LIMITE_BASE_PLANO.ESTAGIARIO;
+    return base + (this.slotsAdicionaisComprados ?? 0);
   }
 }
