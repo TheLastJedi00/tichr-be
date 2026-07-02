@@ -40,6 +40,11 @@ export function toISO(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Data de hoje (UTC) como string 'YYYY-MM-DD'. */
+export function hojeISO(): string {
+  return toISO(new Date());
+}
+
 /** Todas as datas do intervalo [inicio, fim] inclusive. */
 export function expandirIntervalo(inicio: string, fim: string): string[] {
   const datas: string[] = [];

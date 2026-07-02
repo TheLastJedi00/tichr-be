@@ -83,6 +83,11 @@ export class TurmaService {
     return this.turmaRepo.findByProfessor(professorId);
   }
 
+  /** Quantidade de turmas do professor que ocupam cota do plano. */
+  async contarTurmasAtivas(professorId: string): Promise<number> {
+    return this.turmaRepo.contarTurmasAtivas(professorId);
+  }
+
   async buscarTurma(professorId: string, turmaId: string): Promise<TurmaEntity> {
     const turma = await this.turmaRepo.findById(turmaId);
     if (!turma || turma.professorId !== professorId) {
@@ -109,6 +114,8 @@ export class TurmaService {
       disciplina: dto.disciplina ?? turma.disciplina,
       horaInicio: dto.horaInicio ?? turma.horaInicio,
       horaFim: dto.horaFim ?? turma.horaFim,
+      encerradaManualmente:
+        dto.encerradaManualmente ?? turma.encerradaManualmente ?? false,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);
