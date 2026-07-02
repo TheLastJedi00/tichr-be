@@ -7,6 +7,7 @@ import { Firestore, getFirestore } from 'firebase-admin/firestore';
 @Injectable()
 export class FirebaseService implements OnModuleInit {
   private app: App;
+  private db: Firestore;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -28,10 +29,14 @@ export class FirebaseService implements OnModuleInit {
       existing.length > 0
         ? existing[0]
         : initializeApp({ credential: cert(serviceAccount) });
+
+    this.db = getFirestore(this.app);
+    // Ignora campos undefined (ex.: totalAulas em GRADE_FIXA) na escrita.
+    this.db.settings({ ignoreUndefinedProperties: true });
   }
 
   get firestore(): Firestore {
-    return getFirestore(this.app);
+    return this.db;
   }
 
   get auth(): Auth {
