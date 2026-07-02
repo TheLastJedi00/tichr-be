@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FirebaseModule } from './firebase/firebase.module';
 import { AuthModule } from './auth/auth.module';
+import { TurmaModule } from './turma/turma.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { AuthModule } from './auth/auth.module';
     }),
     FirebaseModule,
     AuthModule,
+    TurmaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
