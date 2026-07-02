@@ -70,6 +70,7 @@ export class TurmaService {
       dataInicio: dto.dataInicio ?? turma.dataInicio,
       totalAulas: dto.totalAulas ?? turma.totalAulas,
       cor: dto.cor ?? turma.cor,
+      disciplina: dto.disciplina ?? turma.disciplina,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);
