@@ -33,11 +33,31 @@ export class AlunoService {
     const limpos = [
       ...new Set(nomes.map((n) => n.trim()).filter((n) => n.length > 0)),
     ];
-    return Promise.all(
-      limpos.map((nome) =>
-        this.alunoRepo.create(new AlunoEntity({ turmaId, nome })),
-      ),
+
+    // Coleta os PINs ja usados na turma para garantir unicidade.
+    const existentes = await this.alunoRepo.findByTurma(turmaId);
+    const pinsUsados = new Set(
+      existentes.map((a) => a.pinAcesso).filter((p): p is string => !!p),
     );
+
+    return Promise.all(
+      limpos.map((nome) => {
+        const pinAcesso = this.gerarPinUnico(pinsUsados);
+        pinsUsados.add(pinAcesso);
+        return this.alunoRepo.create(
+          new AlunoEntity({ turmaId, nome, pinAcesso, xpTotal: 0 }),
+        );
+      }),
+    );
+  }
+
+  /** Gera um PIN de 4 digitos que ainda nao esteja em uso na turma. */
+  private gerarPinUnico(usados: Set<string>): string {
+    let pin: string;
+    do {
+      pin = String(Math.floor(1000 + Math.random() * 9000));
+    } while (usados.has(pin));
+    return pin;
   }
 
   async remover(

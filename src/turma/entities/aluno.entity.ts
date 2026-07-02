@@ -10,6 +10,12 @@ export class AlunoEntity {
   /** Tags livres de perfil (ex.: 'lider', 'iniciante') usadas para dinamicas. */
   tagsPerfil?: string[];
 
+  /** PIN de 4 digitos para o aluno entrar no portal (Plano PhD). */
+  pinAcesso?: string;
+
+  /** Pontuacao acumulada (gamificacao). */
+  xpTotal = 0;
+
   constructor(partial: Partial<AlunoEntity> = {}) {
     Object.assign(this, partial);
   }
