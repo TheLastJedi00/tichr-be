@@ -42,4 +42,8 @@ export class UpdateTurmaDto {
   @IsInt()
   @Min(1)
   totalAulas?: number;
+
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'cor deve ser um hex #RRGGBB' })
+  cor?: string;
 }

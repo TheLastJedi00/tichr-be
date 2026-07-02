@@ -4,6 +4,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   Max,
@@ -37,4 +38,8 @@ export class CreateTurmaDto {
   @IsInt()
   @Min(1)
   totalAulas?: number;
+
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'cor deve ser um hex #RRGGBB' })
+  cor?: string;
 }
