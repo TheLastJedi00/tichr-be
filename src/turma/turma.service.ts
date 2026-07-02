@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
+import { UpdateTurmaDto } from './dto/update-turma.dto';
 import { ExcecaoEntity } from './entities/excecao.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { TurmaEntity } from './entities/turma.entity';
@@ -54,6 +55,28 @@ export class TurmaService {
     return turma;
   }
 
+  /** Atualiza os dados da turma e reprojeta as sessoes. */
+  async atualizarTurma(
+    professorId: string,
+    turmaId: string,
+    dto: UpdateTurmaDto,
+  ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
+    const turma = await this.buscarTurma(professorId, turmaId);
+
+    const campos: Partial<TurmaEntity> = {
+      nome: dto.nome ?? turma.nome,
+      tipoModalidade: dto.tipoModalidade ?? turma.tipoModalidade,
+      diasSemana: dto.diasSemana ?? turma.diasSemana,
+      dataInicio: dto.dataInicio ?? turma.dataInicio,
+      totalAulas: dto.totalAulas ?? turma.totalAulas,
+    };
+    Object.assign(turma, campos);
+    await this.turmaRepo.update(turmaId, campos);
+
+    const sessoes = await this.reprojetar(turma, professorId);
+    return { turma, sessoes };
+  }
+
   /** Reprojeta todas as turmas ativas do professor com o calendario atual. */
   private async recalcularTurmas(professorId: string): Promise<number> {
     const turmas = await this.turmaRepo.findByProfessor(professorId);
@@ -77,11 +100,13 @@ export class TurmaService {
 
     await this.sessaoRepo.deleteByTurma(turma.id);
 
-    const fim = turma.calcularFimPrevisto(sessoes.map((s) => s.data));
-    if (fim) {
-      await this.turmaRepo.update(turma.id, { dataFimPrevista: fim });
-      turma.dataFimPrevista = fim;
-    }
+    // Sempre grava a dataFimPrevista (null p/ grade fixa) para limpar valor
+    // antigo ao trocar de modulo para grade fixa numa edicao.
+    const fim = turma.calcularFimPrevisto(sessoes.map((s) => s.data)) ?? null;
+    await this.turmaRepo.update(turma.id, {
+      dataFimPrevista: fim,
+    } as Partial<TurmaEntity>);
+    turma.dataFimPrevista = fim ?? undefined;
 
     const persistidas: SessaoAulaEntity[] = [];
     for (const sessao of sessoes) {
