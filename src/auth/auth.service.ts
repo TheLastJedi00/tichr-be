@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { DecodedIdToken } from 'firebase-admin/auth';
@@ -32,6 +36,34 @@ export class AuthService {
   /** Verifica um JWT customizado de aluno e devolve o payload. */
   verifyStudentToken(token: string): StudentTokenPayload {
     return this.jwt.verify<StudentTokenPayload>(token);
+  }
+
+  /**
+   * Info publica para a tela de login do aluno: nome da turma + lista de nomes
+   * (sem PINs) para o aluno se localizar no dropdown.
+   */
+  async infoTurmaLogin(turmaId: string): Promise<{
+    turmaId: string;
+    turmaNome: string;
+    alunos: Array<{ id: string; nome: string }>;
+  }> {
+    const db = this.firebase.firestore;
+    const turmaSnap = await db.collection('turmas').doc(turmaId).get();
+    if (!turmaSnap.exists) {
+      throw new NotFoundException('Turma nao encontrada.');
+    }
+    const alunosSnap = await db
+      .collection('alunos')
+      .where('turmaId', '==', turmaId)
+      .get();
+    return {
+      turmaId,
+      turmaNome: (turmaSnap.data()?.nome as string) ?? 'Turma',
+      alunos: alunosSnap.docs.map((d) => ({
+        id: d.id,
+        nome: d.data().nome as string,
+      })),
+    };
   }
 
   /**
