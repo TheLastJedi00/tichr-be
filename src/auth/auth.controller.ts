@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginAlunoDto } from './dto/login-aluno.dto';
 import { LoginDto } from './dto/login.dto';
@@ -19,5 +19,12 @@ export class AuthController {
   @Post('aluno')
   loginAluno(@Body() dto: LoginAlunoDto) {
     return this.authService.loginAluno(dto.turmaId, dto.pin);
+  }
+
+  /** Info publica da turma (nome + nomes dos alunos) para a tela de login. */
+  @Public()
+  @Get('turma/:turmaId')
+  infoTurma(@Param('turmaId') turmaId: string) {
+    return this.authService.infoTurmaLogin(turmaId);
   }
 }

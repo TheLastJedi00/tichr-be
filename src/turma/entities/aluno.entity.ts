@@ -10,6 +10,9 @@ export class AlunoEntity {
   /** Tags livres de perfil (ex.: 'lider', 'iniciante') usadas para dinamicas. */
   tagsPerfil?: string[];
 
+  /** Equipe persistente a que o aluno pertence; null/ausente = sem equipe. */
+  equipeId?: string | null;
+
   /** PIN de 4 digitos para o aluno entrar no portal (Plano PhD). */
   pinAcesso?: string;
 

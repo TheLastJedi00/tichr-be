@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
+import { EquipeRepository } from './repositories/equipe.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
 
@@ -11,6 +12,7 @@ export class AlunoService {
     private readonly alunoRepo: AlunoRepository,
     private readonly turmaRepo: TurmaRepository,
     private readonly sessaoRepo: SessaoRepository,
+    private readonly equipeRepo: EquipeRepository,
   ) {}
 
   /** Perfil do proprio aluno (portal). */
@@ -98,6 +100,32 @@ export class AlunoService {
       pin = String(Math.floor(1000 + Math.random() * 9000));
     } while (usados.has(pin));
     return pin;
+  }
+
+  /**
+   * Move o aluno para uma equipe (drop manual) ou de volta ao pool (null).
+   * Valida a posse da turma, do aluno e da equipe de destino.
+   */
+  async definirEquipe(
+    professorId: string,
+    turmaId: string,
+    alunoId: string,
+    equipeId: string | null,
+  ): Promise<AlunoEntity> {
+    await this.assertTurma(professorId, turmaId);
+    const aluno = await this.alunoRepo.findById(alunoId);
+    if (!aluno || aluno.turmaId !== turmaId) {
+      throw new NotFoundException('Aluno nao encontrado.');
+    }
+    if (equipeId !== null) {
+      const equipe = await this.equipeRepo.findById(equipeId);
+      if (!equipe || equipe.turmaId !== turmaId) {
+        throw new NotFoundException('Equipe nao encontrada.');
+      }
+    }
+    await this.alunoRepo.definirEquipe(alunoId, equipeId);
+    aluno.equipeId = equipeId;
+    return aluno;
   }
 
   async remover(

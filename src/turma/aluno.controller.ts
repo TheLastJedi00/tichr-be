@@ -4,11 +4,13 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { AlunoService } from './aluno.service';
 import { CreateAlunosDto } from './dto/create-alunos.dto';
+import { DefinirEquipeDto } from './dto/definir-equipe.dto';
 import { DistribuirXpDto } from './dto/distribuir-xp.dto';
 import { XpService } from './xp.service';
 
@@ -44,6 +46,22 @@ export class AlunoController {
     @Param('alunoId') alunoId: string,
   ) {
     return this.alunoService.remover(professorId, turmaId, alunoId);
+  }
+
+  /** Move o aluno para uma equipe (drop) ou de volta ao pool (equipeId=null). */
+  @Patch(':alunoId/equipe')
+  definirEquipe(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+    @Param('alunoId') alunoId: string,
+    @Body() dto: DefinirEquipeDto,
+  ) {
+    return this.alunoService.definirEquipe(
+      professorId,
+      turmaId,
+      alunoId,
+      dto.equipeId,
+    );
   }
 
   /** Distribui XP a um aluno (ferramenta rapida do professor no Plano PhD). */
