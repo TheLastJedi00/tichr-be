@@ -3,12 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { hojeISO } from '../common/date.util';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
+import { XpService } from './xp.service';
 
 @Injectable()
 export class AlunoService {
@@ -17,15 +19,30 @@ export class AlunoService {
     private readonly turmaRepo: TurmaRepository,
     private readonly sessaoRepo: SessaoRepository,
     private readonly equipeRepo: EquipeRepository,
+    private readonly xpService: XpService,
   ) {}
 
-  /** Perfil do proprio aluno (portal). */
+  /** Perfil do proprio aluno (portal). Sincroniza a base passiva antes. */
   async perfil(alunoId: string): Promise<AlunoEntity> {
-    const aluno = await this.alunoRepo.findById(alunoId);
-    if (!aluno) {
+    const atual = await this.alunoRepo.findById(alunoId);
+    if (!atual) {
       throw new NotFoundException('Aluno nao encontrado.');
     }
-    return aluno;
+    await this.xpService.sincronizarBaseTurma(atual.turmaId);
+    return (await this.alunoRepo.findById(alunoId)) ?? atual;
+  }
+
+  /** Progresso da turma: aulas concluidas / total (evolucao do curso). */
+  async progresso(
+    turmaId: string,
+  ): Promise<{ concluidas: number; total: number; pct: number }> {
+    const hoje = hojeISO();
+    const sessoes = await this.sessaoRepo.findByTurma(turmaId);
+    const validas = sessoes.filter((s) => s.status !== 'CANCELADA');
+    const concluidas = validas.filter((s) => s.data < hoje).length;
+    const total = validas.length;
+    const pct = total > 0 ? Math.round((concluidas / total) * 100) : 0;
+    return { concluidas, total, pct };
   }
 
   /** Agenda (sessoes ja recalculadas) da turma do aluno, ordenada por numero. */
@@ -60,6 +77,7 @@ export class AlunoService {
     if (!turma.configPontuacao.rankingAtivo) {
       throw new ForbiddenException('O ranking esta desativado nesta turma.');
     }
+    await this.xpService.sincronizarBaseTurma(turmaId);
     const alunos = await this.alunoRepo.findByTurma(turmaId);
     return alunos
       .sort((a, b) => (b.xpTotal ?? 0) - (a.xpTotal ?? 0))
@@ -73,6 +91,7 @@ export class AlunoService {
 
   async listar(professorId: string, turmaId: string): Promise<AlunoEntity[]> {
     await this.assertTurma(professorId, turmaId);
+    await this.xpService.sincronizarBaseTurma(turmaId);
     return this.alunoRepo.findByTurma(turmaId);
   }
 
