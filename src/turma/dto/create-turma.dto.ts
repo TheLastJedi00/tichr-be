@@ -1,6 +1,7 @@
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -56,4 +57,29 @@ export class CreateTurmaDto {
   @IsOptional()
   @Matches(/^\d{2}:\d{2}$/, { message: 'horaFim deve estar no formato HH:mm' })
   horaFim?: string;
+
+  // ===== Configuracao de pontuacao/gamificacao =====
+
+  @IsOptional()
+  @IsBoolean()
+  pontuacaoAtiva?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  nomePontuacao?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  rankingAtivo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  rotuloAdicionar?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  rotuloRemover?: string;
 }

@@ -116,6 +116,12 @@ export class TurmaService {
       horaFim: dto.horaFim ?? turma.horaFim,
       encerradaManualmente:
         dto.encerradaManualmente ?? turma.encerradaManualmente ?? false,
+      pontuacaoAtiva: dto.pontuacaoAtiva ?? turma.pontuacaoAtiva ?? true,
+      nomePontuacao: dto.nomePontuacao ?? turma.nomePontuacao ?? 'XP',
+      rankingAtivo: dto.rankingAtivo ?? turma.rankingAtivo ?? true,
+      rotuloAdicionar:
+        dto.rotuloAdicionar ?? turma.rotuloAdicionar ?? 'Adicionar',
+      rotuloRemover: dto.rotuloRemover ?? turma.rotuloRemover ?? 'Remover',
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);

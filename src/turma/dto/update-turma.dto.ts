@@ -66,4 +66,29 @@ export class UpdateTurmaDto {
   @IsOptional()
   @IsBoolean()
   encerradaManualmente?: boolean;
+
+  // ===== Configuracao de pontuacao/gamificacao =====
+
+  @IsOptional()
+  @IsBoolean()
+  pontuacaoAtiva?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  nomePontuacao?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  rankingAtivo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  rotuloAdicionar?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  rotuloRemover?: string;
 }
