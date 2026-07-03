@@ -49,12 +49,44 @@ export class TurmaEntity {
    */
   encerradaManualmente?: boolean;
 
+  /** Se a turma usa pontuacao/gamificacao (default true). */
+  pontuacaoAtiva?: boolean;
+
+  /** Nome livre da pontuacao exibido na UI (ex.: 'XP', 'Aura'). */
+  nomePontuacao?: string;
+
+  /** Se a turma exibe ranking dos alunos (default true). */
+  rankingAtivo?: boolean;
+
+  /** Rotulo do botao de adicionar pontos (ex.: 'Moggar'). */
+  rotuloAdicionar?: string;
+
+  /** Rotulo do botao de remover pontos (ex.: 'Punir'). */
+  rotuloRemover?: string;
+
   constructor(partial: Partial<TurmaEntity> = {}) {
     Object.assign(this, partial);
   }
 
   get isModulo(): boolean {
     return this.tipoModalidade === 'MODULO_FECHADO';
+  }
+
+  /** Config de pontuacao com defaults aplicados (fonte unica de verdade). */
+  get configPontuacao(): {
+    pontuacaoAtiva: boolean;
+    nomePontuacao: string;
+    rankingAtivo: boolean;
+    rotuloAdicionar: string;
+    rotuloRemover: string;
+  } {
+    return {
+      pontuacaoAtiva: this.pontuacaoAtiva ?? true,
+      nomePontuacao: this.nomePontuacao?.trim() || 'XP',
+      rankingAtivo: this.rankingAtivo ?? true,
+      rotuloAdicionar: this.rotuloAdicionar?.trim() || 'Adicionar',
+      rotuloRemover: this.rotuloRemover?.trim() || 'Remover',
+    };
   }
 
   /**
