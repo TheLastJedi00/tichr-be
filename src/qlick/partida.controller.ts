@@ -19,4 +19,24 @@ export class PartidaController {
   obter(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.partidaService.obterDoProfessor(professorId, id);
   }
+
+  @Post('partidas/:id/iniciar')
+  iniciar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.iniciar(professorId, id);
+  }
+
+  @Post('partidas/:id/apurar')
+  apurar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.apurarComando(professorId, id);
+  }
+
+  @Post('partidas/:id/proxima')
+  proxima(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.proxima(professorId, id);
+  }
+
+  @Post('partidas/:id/encerrar')
+  encerrar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.encerrar(professorId, id);
+  }
 }

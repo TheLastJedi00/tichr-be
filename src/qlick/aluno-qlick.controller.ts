@@ -1,6 +1,7 @@
-import { Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
+import { ResponderDto } from './dto/responder.dto';
 import { PartidaService } from './partida.service';
 
 /** Acesso do aluno ao Tichr Qlick (portal). */
@@ -21,5 +22,14 @@ export class AlunoQlickController {
     @Param('partidaId') partidaId: string,
   ) {
     return this.partidaService.inscrever(alunoId, partidaId);
+  }
+
+  @Post(':partidaId/resposta')
+  responder(
+    @CurrentStudent() { alunoId }: { alunoId: string; turmaId: string },
+    @Param('partidaId') partidaId: string,
+    @Body() dto: ResponderDto,
+  ) {
+    return this.partidaService.responder(alunoId, partidaId, dto.alternativaIndex);
   }
 }
