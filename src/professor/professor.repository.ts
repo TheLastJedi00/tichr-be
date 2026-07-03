@@ -23,6 +23,20 @@ export class ProfessorRepository {
     return plainToInstance(ProfessorEntity, { ...snap.data(), uid });
   }
 
+  /** Busca o professor dono de um `username` (para unicidade e portal). */
+  async findByUsername(username: string): Promise<ProfessorEntity | null> {
+    const snap = await this.firebase.firestore
+      .collection('professores')
+      .where('username', '==', username)
+      .limit(1)
+      .get();
+    if (snap.empty) {
+      return null;
+    }
+    const doc = snap.docs[0];
+    return plainToInstance(ProfessorEntity, { ...doc.data(), uid: doc.id });
+  }
+
   async upsert(
     uid: string,
     data: Partial<ProfessorEntity>,
