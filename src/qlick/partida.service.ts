@@ -17,8 +17,8 @@ import { QlickRepository } from './qlick.repository';
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
-/** Por quanto tempo após a criação a partida continua "de hoje" para o aluno. */
-const JANELA_VISIBILIDADE_MS = 12 * 60 * 60 * 1000; // 12h
+/** Fuso do produto (Brasil): a janela HH:mm da turma é local, não UTC. */
+const FUSO_BR = 'America/Sao_Paulo';
 
 @Injectable()
 export class PartidaService {
@@ -118,6 +118,26 @@ export class PartidaService {
     return ativa
       ? { partidaId: ativa.id, titulo: ativa.titulo, status: ativa.status }
       : null;
+  }
+
+  /** Verifica se agora está no intervalo [horaInicio, horaFim] (HH:mm). */
+  private dentroDaJanela(inicio?: string, fim?: string): boolean {
+    if (!inicio || !fim) {
+      return true; // sem horários definidos, sempre visível
+    }
+    // O servidor (Vercel) roda em UTC, mas a janela HH:mm foi digitada pelo
+    // professor no horário LOCAL. Calcula o HH:mm atual no fuso do Brasil para
+    // não esconder a partida por causa do offset de fuso.
+    const partes = new Intl.DateTimeFormat('en-GB', {
+      timeZone: FUSO_BR,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const hh = partes.find((p) => p.type === 'hour')!.value;
+    const mm = partes.find((p) => p.type === 'minute')!.value;
+    const hhmm = `${hh === '24' ? '00' : hh}:${mm}`; // meia-noite pode vir "24"
+    return hhmm >= inicio && hhmm <= fim;
   }
 
   // ===== Fluxo da partida (CQRS) =====

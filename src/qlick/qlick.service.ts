@@ -40,6 +40,18 @@ export class QlickService {
     });
   }
 
+  /**
+   * Converte os `PerguntaDto` (protótipo do class-transformer) em objetos
+   * literais — o Firestore recusa objetos com protótipo customizado.
+   */
+  private perguntasPlanas(dto: CreateQlickDto) {
+    return dto.perguntas.map((p) => ({
+      enunciado: p.enunciado,
+      alternativas: [...p.alternativas],
+      corretaIndex: p.corretaIndex,
+    }));
+  }
+
   async listar(professorId: string): Promise<QlickEntity[]> {
     await this.assertPhd(professorId);
     return this.repo.findByProfessor(professorId);
@@ -68,7 +80,7 @@ export class QlickService {
         topicoId: dto.topicoId,
         turmaId: dto.turmaId,
         duracaoSegundos: dto.duracaoSegundos ?? 60,
-        perguntas: dto.perguntas,
+        perguntas: this.perguntasPlanas(dto),
       }),
     );
   }
@@ -89,7 +101,7 @@ export class QlickService {
       topicoId: dto.topicoId ?? null,
       turmaId: dto.turmaId ?? null,
       duracaoSegundos: dto.duracaoSegundos ?? 60,
-      perguntas: dto.perguntas,
+      perguntas: this.perguntasPlanas(dto),
     };
     await this.repo.update(id, dados as Partial<QlickEntity>);
     Object.assign(qlick, dados);
