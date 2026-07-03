@@ -17,6 +17,9 @@ import { QlickRepository } from './qlick.repository';
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
+/** Por quanto tempo após a criação a partida continua "de hoje" para o aluno. */
+const JANELA_VISIBILIDADE_MS = 12 * 60 * 60 * 1000; // 12h
+
 @Injectable()
 export class PartidaService {
   constructor(
@@ -49,6 +52,7 @@ export class PartidaService {
         turmaId: qlick.turmaId,
         titulo: qlick.titulo,
         status: 'LOBBY',
+        criadaEm: new Date().toISOString(),
         perguntaAtual: -1,
         totalPerguntas: qlick.perguntas.length,
         duracaoSegundos: qlick.duracaoSegundos,
@@ -96,36 +100,24 @@ export class PartidaService {
   }
 
   /**
-   * Partida "de hoje" visível ao aluno: existe uma partida não encerrada da sua
-   * turma e o horário atual está dentro da janela da aula (quando há horários).
+   * Partida "de hoje" visível ao aluno: a partida **não encerrada** mais recente
+   * da sua turma, desde que criada há pouco (janela de visibilidade). O gatilho
+   * é o professor ter rodado a partida — não depende do relógio, então não sofre
+   * com fuso do servidor. `criadaEm` evita ressuscitar sessões abandonadas.
    */
   async partidaDaTurma(
     turmaId: string,
   ): Promise<{ partidaId: string; titulo: string; status: string } | null> {
-    const turma = await this.turmaRepo.findById(turmaId);
-    if (!turma) {
-      return null;
-    }
-    if (!this.dentroDaJanela(turma.horaInicio, turma.horaFim)) {
-      return null;
-    }
+    const limite = Date.now() - JANELA_VISIBILIDADE_MS;
     const partidas = await this.partidaRepo.findByTurma(turmaId);
-    const ativa = partidas.filter((p) => p.status !== 'ENCERRADO').at(-1);
+    const ativa = partidas
+      .filter((p) => p.status !== 'ENCERRADO')
+      .filter((p) => !p.criadaEm || Date.parse(p.criadaEm) >= limite)
+      .sort((a, b) => (a.criadaEm ?? '').localeCompare(b.criadaEm ?? ''))
+      .at(-1);
     return ativa
       ? { partidaId: ativa.id, titulo: ativa.titulo, status: ativa.status }
       : null;
-  }
-
-  /** Verifica se agora está no intervalo [horaInicio, horaFim] (HH:mm). */
-  private dentroDaJanela(inicio?: string, fim?: string): boolean {
-    if (!inicio || !fim) {
-      return true; // sem horários definidos, sempre visível
-    }
-    const agora = new Date();
-    const hhmm = `${String(agora.getHours()).padStart(2, '0')}:${String(
-      agora.getMinutes(),
-    ).padStart(2, '0')}`;
-    return hhmm >= inicio && hhmm <= fim;
   }
 
   // ===== Fluxo da partida (CQRS) =====

@@ -30,6 +30,8 @@ export class PartidaEntity {
   titulo: string;
 
   status: StatusPartida;
+  /** ISO de quando a partida foi criada (lobby aberto). Filtra sessões velhas. */
+  criadaEm?: string | null;
   /** Índice da pergunta corrente (0-based); -1 no lobby. */
   perguntaAtual: number;
   totalPerguntas: number;
