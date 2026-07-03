@@ -7,7 +7,14 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { DecodedIdToken } from 'firebase-admin/auth';
 import { FirebaseService } from '../firebase/firebase.service';
+import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
+
+/** Config de pontuacao exposta ao portal do aluno. */
+export interface TurmaConfigPublica {
+  nomePontuacao: string;
+  rankingAtivo: boolean;
+}
 
 const IDENTITY_TOOLKIT_URL =
   'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
@@ -23,6 +30,7 @@ export interface LoginResult {
 export interface LoginAlunoResult {
   token: string;
   aluno: { id: string; nome: string; turmaId: string; xpTotal: number };
+  turma: TurmaConfigPublica;
 }
 
 @Injectable()
@@ -46,6 +54,7 @@ export class AuthService {
     turmaId: string;
     turmaNome: string;
     alunos: Array<{ id: string; nome: string }>;
+    config: TurmaConfigPublica;
   }> {
     const db = this.firebase.firestore;
     const turmaSnap = await db.collection('turmas').doc(turmaId).get();
@@ -63,6 +72,17 @@ export class AuthService {
         id: d.id,
         nome: d.data().nome as string,
       })),
+      config: this.configPublica(turmaSnap.data()),
+    };
+  }
+
+  /** Extrai a config publica de pontuacao com defaults via TurmaEntity. */
+  private configPublica(data: unknown): TurmaConfigPublica {
+    const cfg = new TurmaEntity((data ?? {}) as Partial<TurmaEntity>)
+      .configPontuacao;
+    return {
+      nomePontuacao: cfg.nomePontuacao,
+      rankingAtivo: cfg.rankingAtivo,
     };
   }
 
@@ -88,6 +108,11 @@ export class AuthService {
       turmaId,
     } satisfies StudentTokenPayload);
 
+    const turmaSnap = await this.firebase.firestore
+      .collection('turmas')
+      .doc(turmaId)
+      .get();
+
     return {
       token,
       aluno: {
@@ -96,6 +121,7 @@ export class AuthService {
         turmaId,
         xpTotal: data.xpTotal ?? 0,
       },
+      turma: this.configPublica(turmaSnap.data()),
     };
   }
 
