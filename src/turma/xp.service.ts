@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
 import { AlunoRepository } from './repositories/aluno.repository';
 import { TurmaRepository } from './repositories/turma.repository';
@@ -26,6 +30,9 @@ export class XpService {
     const turma = await this.turmaRepo.findById(turmaId);
     if (!turma || turma.professorId !== professorId) {
       throw new NotFoundException('Turma nao encontrada.');
+    }
+    if (!turma.configPontuacao.pontuacaoAtiva) {
+      throw new BadRequestException('A pontuacao esta desativada nesta turma.');
     }
     const aluno = await this.alunoRepo.findById(alunoId);
     if (!aluno || aluno.turmaId !== turmaId) {

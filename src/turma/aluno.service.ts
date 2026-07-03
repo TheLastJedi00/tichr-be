@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
@@ -49,6 +53,13 @@ export class AlunoService {
   ): Promise<
     Array<{ posicao: number; alunoId: string; nome: string; xpTotal: number }>
   > {
+    const turma = await this.turmaRepo.findById(turmaId);
+    if (!turma) {
+      throw new NotFoundException('Turma nao encontrada.');
+    }
+    if (!turma.configPontuacao.rankingAtivo) {
+      throw new ForbiddenException('O ranking esta desativado nesta turma.');
+    }
     const alunos = await this.alunoRepo.findByTurma(turmaId);
     return alunos
       .sort((a, b) => (b.xpTotal ?? 0) - (a.xpTotal ?? 0))
