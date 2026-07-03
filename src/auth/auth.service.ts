@@ -1,7 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { DecodedIdToken } from 'firebase-admin/auth';
 import { FirebaseService } from '../firebase/firebase.service';
+import { StudentTokenPayload } from './auth.types';
 
 const IDENTITY_TOOLKIT_URL =
   'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
@@ -14,12 +16,56 @@ export interface LoginResult {
   email: string;
 }
 
+export interface LoginAlunoResult {
+  token: string;
+  aluno: { id: string; nome: string; turmaId: string; xpTotal: number };
+}
+
 @Injectable()
 export class AuthService {
   constructor(
     private readonly firebase: FirebaseService,
     private readonly config: ConfigService,
+    private readonly jwt: JwtService,
   ) {}
+
+  /** Verifica um JWT customizado de aluno e devolve o payload. */
+  verifyStudentToken(token: string): StudentTokenPayload {
+    return this.jwt.verify<StudentTokenPayload>(token);
+  }
+
+  /**
+   * Login do aluno via portal (Plano PhD): casa turmaId + PIN e emite um JWT
+   * customizado com role STUDENT (sem passar pelo Firebase — alunos nao tem email).
+   */
+  async loginAluno(turmaId: string, pin: string): Promise<LoginAlunoResult> {
+    const snap = await this.firebase.firestore
+      .collection('alunos')
+      .where('turmaId', '==', turmaId)
+      .get();
+
+    const doc = snap.docs.find((d) => d.data().pinAcesso === pin);
+    if (!doc) {
+      throw new UnauthorizedException('Turma ou PIN invalidos.');
+    }
+
+    const data = doc.data();
+    const token = await this.jwt.signAsync({
+      role: 'STUDENT',
+      alunoId: doc.id,
+      turmaId,
+    } satisfies StudentTokenPayload);
+
+    return {
+      token,
+      aluno: {
+        id: doc.id,
+        nome: data.nome,
+        turmaId,
+        xpTotal: data.xpTotal ?? 0,
+      },
+    };
+  }
 
   async verifyToken(token: string): Promise<DecodedIdToken> {
     try {
