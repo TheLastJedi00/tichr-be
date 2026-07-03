@@ -96,6 +96,7 @@ describe('Config de pontuacao', () => {
         turmaRepo as never,
         {} as never,
         {} as never,
+        {} as never,
       );
       await expect(service.ranking('t1')).rejects.toBeInstanceOf(
         ForbiddenException,

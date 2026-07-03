@@ -23,4 +23,11 @@ export class AlunoPortalController {
   ) {
     return this.alunoService.agenda(turmaId);
   }
+
+  @Get('progresso')
+  meuProgresso(
+    @CurrentStudent() { turmaId }: { alunoId: string; turmaId: string },
+  ) {
+    return this.alunoService.progresso(turmaId);
+  }
 }

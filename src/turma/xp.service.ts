@@ -4,10 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { hojeISO } from '../common/date.util';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from './repositories/aluno.repository';
+import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
+
+/** Pontuação base concedida por aula concluída (evolução passiva da turma). */
+const BASE_POR_AULA = 10;
 
 @Injectable()
 export class XpService {
@@ -16,7 +21,63 @@ export class XpService {
     private readonly turmaRepo: TurmaRepository,
     private readonly alunoRepo: AlunoRepository,
     private readonly professorService: ProfessorService,
+    private readonly sessaoRepo: SessaoRepository,
   ) {}
+
+  /**
+   * Sincroniza a "pontuação base" passiva: recompensa cada aluno pelas aulas já
+   * concluídas que ainda não foram contabilizadas. Idempotente — `baseAteSessao`
+   * guarda quantas aulas concluídas já renderam base, então reprocessar não
+   * duplica. Silencioso quando a turma não gamifica.
+   */
+  async sincronizarBaseTurma(turmaId: string): Promise<void> {
+    const turma = await this.turmaRepo.findById(turmaId);
+    if (!turma || !turma.configPontuacao.pontuacaoAtiva) {
+      return;
+    }
+    const professor = await this.professorService.getProfile(turma.professorId);
+    if (!professor.podeGamificar) {
+      return;
+    }
+
+    const hoje = hojeISO();
+    const sessoes = await this.sessaoRepo.findByTurma(turmaId);
+    const concluidas = sessoes.filter(
+      (s) => s.status !== 'CANCELADA' && s.data < hoje,
+    ).length;
+    if (concluidas === 0) {
+      return;
+    }
+
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    const db = this.firebase.firestore;
+    const batch = db.batch();
+    let mudou = false;
+
+    for (const aluno of alunos) {
+      const base = aluno.baseAteSessao ?? 0;
+      if (base >= concluidas) {
+        continue;
+      }
+      const pontos = (concluidas - base) * BASE_POR_AULA;
+      batch.update(db.collection('alunos').doc(aluno.id), {
+        xpTotal: (aluno.xpTotal ?? 0) + pontos,
+        baseAteSessao: concluidas,
+      });
+      batch.set(db.collection('xp_logs').doc(), {
+        alunoId: aluno.id,
+        turmaId,
+        pontos,
+        motivo: 'BASE',
+        data: new Date().toISOString(),
+      });
+      mudou = true;
+    }
+
+    if (mudou) {
+      await batch.commit();
+    }
+  }
 
   /**
    * Distribui XP a um aluno: grava um evento em `xp_logs` e atualiza o

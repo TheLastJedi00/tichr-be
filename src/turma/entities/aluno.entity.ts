@@ -22,6 +22,9 @@ export class AlunoEntity {
   /** Pontuacao acumulada (gamificacao). */
   xpTotal = 0;
 
+  /** Nº de aulas concluidas ja recompensadas com pontuacao base (idempotencia). */
+  baseAteSessao?: number;
+
   constructor(partial: Partial<AlunoEntity> = {}) {
     Object.assign(this, partial);
   }
