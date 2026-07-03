@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
+import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from './repositories/aluno.repository';
 import { TurmaRepository } from './repositories/turma.repository';
 
@@ -13,6 +15,7 @@ export class XpService {
     private readonly firebase: FirebaseService,
     private readonly turmaRepo: TurmaRepository,
     private readonly alunoRepo: AlunoRepository,
+    private readonly professorService: ProfessorService,
   ) {}
 
   /**
@@ -30,6 +33,13 @@ export class XpService {
     const turma = await this.turmaRepo.findById(turmaId);
     if (!turma || turma.professorId !== professorId) {
       throw new NotFoundException('Turma nao encontrada.');
+    }
+    const professor = await this.professorService.getProfile(professorId);
+    if (!professor.podeGamificar) {
+      throw new ForbiddenException({
+        code: 'GAMIFICACAO_LOCKED',
+        message: 'A gamificacao e exclusiva do plano PhD.',
+      });
     }
     if (!turma.configPontuacao.pontuacaoAtiva) {
       throw new BadRequestException('A pontuacao esta desativada nesta turma.');

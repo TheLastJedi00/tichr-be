@@ -1,7 +1,16 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { AlunoService } from './aluno.service';
 import { TurmaEntity } from './entities/turma.entity';
 import { XpService } from './xp.service';
+
+/** ProfessorService fake que devolve um professor com o plano informado. */
+const professorFake = (plano: 'PHD' | 'MESTRE' = 'PHD') =>
+  ({
+    getProfile: jest
+      .fn()
+      .mockResolvedValue(new ProfessorEntity({ planoAtual: plano })),
+  }) as never;
 
 /** Config de pontuacao: defaults da entidade + bloqueios de XP/ranking. */
 describe('Config de pontuacao', () => {
@@ -42,7 +51,7 @@ describe('Config de pontuacao', () => {
   });
 
   describe('XpService bloqueia pontuacao desativada', () => {
-    it('lanca BadRequest quando pontuacaoAtiva=false', async () => {
+    it('lanca BadRequest quando pontuacaoAtiva=false (professor PhD)', async () => {
       const turmaRepo = {
         findById: jest.fn().mockResolvedValue(
           novaTurma({ pontuacaoAtiva: false }),
@@ -52,10 +61,26 @@ describe('Config de pontuacao', () => {
         {} as never,
         turmaRepo as never,
         {} as never,
+        professorFake('PHD'),
       );
       await expect(
         service.distribuir('prof1', 't1', 'a1', 50),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('lanca Forbidden GAMIFICACAO quando professor nao e PhD', async () => {
+      const turmaRepo = {
+        findById: jest.fn().mockResolvedValue(novaTurma({ pontuacaoAtiva: true })),
+      };
+      const service = new XpService(
+        {} as never,
+        turmaRepo as never,
+        {} as never,
+        professorFake('MESTRE'),
+      );
+      await expect(
+        service.distribuir('prof1', 't1', 'a1', 50),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
