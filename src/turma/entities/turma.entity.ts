@@ -64,6 +64,9 @@ export class TurmaEntity {
   /** Rotulo do botao de remover pontos (ex.: 'Punir'). */
   rotuloRemover?: string;
 
+  /** PIN de 6 digitos da turma (portal do aluno); gerado no cadastro. */
+  pinTurma?: string;
+
   constructor(partial: Partial<TurmaEntity> = {}) {
     Object.assign(this, partial);
   }

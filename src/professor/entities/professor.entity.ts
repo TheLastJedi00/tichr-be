@@ -22,6 +22,9 @@ export class ProfessorEntity {
   disciplina?: string;
   bio?: string;
 
+  /** Handle publico unico (estilo @usuario) — chave de busca do portal do aluno. */
+  username?: string;
+
   /** Competencias/disciplinas que o professor leciona. */
   disciplinas?: string[];
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PlanoAtual, ProfessorEntity } from './entities/professor.entity';
 import { ProfessorRepository } from './professor.repository';
@@ -12,8 +12,40 @@ export class ProfessorService {
     return (await this.repo.findByUid(uid)) ?? new ProfessorEntity({ uid });
   }
 
-  updateProfile(uid: string, dto: UpdateProfileDto): Promise<ProfessorEntity> {
-    return this.repo.upsert(uid, dto);
+  /** Normaliza o handle: remove '@' inicial e baixa a caixa. */
+  static normalizarUsername(raw: string): string {
+    return raw.trim().replace(/^@/, '').toLowerCase();
+  }
+
+  /** Professor dono de um @username (normalizado), ou null. */
+  findByUsername(raw: string): Promise<ProfessorEntity | null> {
+    return this.repo.findByUsername(ProfessorService.normalizarUsername(raw));
+  }
+
+  /** Disponibilidade de um username (livre ou ja pertence ao proprio professor). */
+  async checkUsername(
+    uid: string,
+    raw: string,
+  ): Promise<{ username: string; disponivel: boolean }> {
+    const username = ProfessorService.normalizarUsername(raw);
+    const dono = await this.repo.findByUsername(username);
+    return { username, disponivel: !dono || dono.uid === uid };
+  }
+
+  async updateProfile(
+    uid: string,
+    dto: UpdateProfileDto,
+  ): Promise<ProfessorEntity> {
+    const dados: Partial<ProfessorEntity> = { ...dto };
+    if (dto.username !== undefined) {
+      const username = ProfessorService.normalizarUsername(dto.username);
+      const dono = await this.repo.findByUsername(username);
+      if (dono && dono.uid !== uid) {
+        throw new ConflictException('Esse @username ja esta em uso.');
+      }
+      dados.username = username;
+    }
+    return this.repo.upsert(uid, dados);
   }
 
   /** Compra uma vaga avulsa: incrementa slotsAdicionaisComprados em +1. */

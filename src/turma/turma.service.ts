@@ -57,12 +57,30 @@ export class TurmaService {
     professorId: string,
     dto: CreateTurmaDto,
   ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
-    const turma = new TurmaEntity({ ...dto, professorId, ativo: true });
+    const existentes = await this.turmaRepo.findByProfessor(professorId);
+    const pinsUsados = new Set(
+      existentes.map((t) => t.pinTurma).filter((p): p is string => !!p),
+    );
+    const turma = new TurmaEntity({
+      ...dto,
+      professorId,
+      ativo: true,
+      pinTurma: this.gerarPinTurma(pinsUsados),
+    });
     const salva = await this.turmaRepo.create(turma);
 
     const bloqueadas = await this.datasBloqueadas(professorId, salva.id);
     const sessoes = await this.reprojetar(salva, bloqueadas);
     return { turma: salva, sessoes };
+  }
+
+  /** Gera um PIN de 6 digitos ainda nao usado nas turmas do professor. */
+  private gerarPinTurma(usados: Set<string>): string {
+    let pin: string;
+    do {
+      pin = String(Math.floor(100000 + Math.random() * 900000));
+    } while (usados.has(pin));
+    return pin;
   }
 
   /** Cadastra uma excecao e dispara o recalculo das turmas do professor. */
