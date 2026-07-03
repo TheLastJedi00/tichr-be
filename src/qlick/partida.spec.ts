@@ -190,6 +190,46 @@ describe('PartidaService — fluxo CQRS', () => {
     ]);
   });
 
+  it('partidaDaTurma: retorna a partida ativa recém-criada (sem depender do relógio)', async () => {
+    const agora = new Date().toISOString();
+    const repo = {
+      findByTurma: jest.fn().mockResolvedValue([
+        partidaBase({ id: 'velha', status: 'ENCERRADO', criadaEm: agora }),
+        partidaBase({ id: 'nova', status: 'LOBBY', titulo: 'Quiz', criadaEm: agora }),
+      ]),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    const r = await service.partidaDaTurma('t1');
+    expect(r).toMatchObject({ partidaId: 'nova', status: 'LOBBY' });
+  });
+
+  it('partidaDaTurma: ignora partidas encerradas ou antigas', async () => {
+    const repo = {
+      findByTurma: jest.fn().mockResolvedValue([
+        partidaBase({ id: 'enc', status: 'ENCERRADO', criadaEm: new Date().toISOString() }),
+        partidaBase({ id: 'antiga', status: 'LOBBY', criadaEm: '2020-01-01T00:00:00.000Z' }),
+      ]),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    expect(await service.partidaDaTurma('t1')).toBeNull();
+  });
+
   it('encerrar: rejeita partida já encerrada (evita creditar XP em dobro)', async () => {
     const partida = partidaBase({ status: 'ENCERRADO', placar: [] });
     const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
