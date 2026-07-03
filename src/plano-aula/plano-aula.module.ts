@@ -4,6 +4,8 @@ import { TurmaModule } from '../turma/turma.module';
 import { AlocacaoController } from './alocacao.controller';
 import { AlocacaoRepository } from './alocacao.repository';
 import { AlocacaoService } from './alocacao.service';
+import { AlunoPlanoController } from './aluno-plano.controller';
+import { AlunoPlanoService } from './aluno-plano.service';
 import { PlanoAulaController } from './plano-aula.controller';
 import { PlanoAulaRepository } from './plano-aula.repository';
 import { PlanoAulaService } from './plano-aula.service';
@@ -17,7 +19,12 @@ import { TopicoService } from './topico.service';
  */
 @Module({
   imports: [ProfessorModule, TurmaModule],
-  controllers: [PlanoAulaController, TopicoController, AlocacaoController],
+  controllers: [
+    PlanoAulaController,
+    TopicoController,
+    AlocacaoController,
+    AlunoPlanoController,
+  ],
   providers: [
     PlanoAulaService,
     PlanoAulaRepository,
@@ -25,6 +32,7 @@ import { TopicoService } from './topico.service';
     TopicoRepository,
     AlocacaoService,
     AlocacaoRepository,
+    AlunoPlanoService,
   ],
 })
 export class PlanoAulaModule {}
