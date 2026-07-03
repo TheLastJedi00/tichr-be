@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
 import { AlunoRepository } from './repositories/aluno.repository';
+import { CargoRepository } from './repositories/cargo.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
 import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
@@ -40,6 +41,7 @@ import { XpService } from './xp.service';
     FeriasRepository,
     AlunoRepository,
     EquipeRepository,
+    CargoRepository,
     AlunoService,
     EquipeService,
     AgrupamentoService,
