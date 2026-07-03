@@ -17,6 +17,9 @@ import { QlickRepository } from './qlick.repository';
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
+/** Fuso do produto (Brasil): a janela HH:mm da turma é local, não UTC. */
+const FUSO_BR = 'America/Sao_Paulo';
+
 @Injectable()
 export class PartidaService {
   constructor(
@@ -121,10 +124,18 @@ export class PartidaService {
     if (!inicio || !fim) {
       return true; // sem horários definidos, sempre visível
     }
-    const agora = new Date();
-    const hhmm = `${String(agora.getHours()).padStart(2, '0')}:${String(
-      agora.getMinutes(),
-    ).padStart(2, '0')}`;
+    // O servidor (Vercel) roda em UTC, mas a janela HH:mm foi digitada pelo
+    // professor no horário LOCAL. Calcula o HH:mm atual no fuso do Brasil para
+    // não esconder a partida por causa do offset de fuso.
+    const partes = new Intl.DateTimeFormat('en-GB', {
+      timeZone: FUSO_BR,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const hh = partes.find((p) => p.type === 'hour')!.value;
+    const mm = partes.find((p) => p.type === 'minute')!.value;
+    const hhmm = `${hh === '24' ? '00' : hh}:${mm}`; // meia-noite pode vir "24"
     return hhmm >= inicio && hhmm <= fim;
   }
 
