@@ -1,0 +1,55 @@
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { hojeISO } from '../common/date.util';
+import { ProfessorService } from '../professor/professor.service';
+import { AlunoRepository } from './repositories/aluno.repository';
+import { TurmaRepository } from './repositories/turma.repository';
+
+@Injectable()
+export class PortalService {
+  constructor(
+    private readonly professorService: ProfessorService,
+    private readonly turmaRepo: TurmaRepository,
+    private readonly alunoRepo: AlunoRepository,
+  ) {}
+
+  /** Turmas **ativas** de um professor (por @username) para a busca do aluno. */
+  async turmasAtivas(
+    username: string,
+  ): Promise<Array<{ turmaId: string; nome: string; cor?: string }>> {
+    const professor = await this.professorService.findByUsername(username);
+    if (!professor) {
+      throw new NotFoundException('Professor nao encontrado.');
+    }
+    const hoje = hojeISO();
+    const turmas = await this.turmaRepo.findByProfessor(professor.uid);
+    return turmas
+      .filter((t) => t.contaComoAtiva(hoje))
+      .map((t) => ({ turmaId: t.id, nome: t.nome, cor: t.cor }));
+  }
+
+  /**
+   * Valida o PIN de 6 dígitos da turma e só então devolve os nomes dos alunos
+   * (isolamento entre turmas) + a config pública de pontuação.
+   */
+  async desbloquear(turmaId: string, pinTurma: string) {
+    const turma = await this.turmaRepo.findById(turmaId);
+    if (!turma) {
+      throw new NotFoundException('Turma nao encontrada.');
+    }
+    if (turma.pinTurma !== pinTurma) {
+      throw new UnauthorizedException('PIN da turma invalido.');
+    }
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    const cfg = turma.configPontuacao;
+    return {
+      turmaId,
+      turmaNome: turma.nome,
+      alunos: alunos.map((a) => ({ id: a.id, nome: a.nome })),
+      config: { nomePontuacao: cfg.nomePontuacao, rankingAtivo: cfg.rankingAtivo },
+    };
+  }
+}

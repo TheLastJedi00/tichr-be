@@ -17,6 +17,11 @@ export class ProfessorService {
     return raw.trim().replace(/^@/, '').toLowerCase();
   }
 
+  /** Professor dono de um @username (normalizado), ou null. */
+  findByUsername(raw: string): Promise<ProfessorEntity | null> {
+    return this.repo.findByUsername(ProfessorService.normalizarUsername(raw));
+  }
+
   /** Disponibilidade de um username (livre ou ja pertence ao proprio professor). */
   async checkUsername(
     uid: string,

@@ -19,6 +19,8 @@ import { EquipeController } from './equipe.controller';
 import { EquipeService } from './equipe.service';
 import { FeriasController } from './ferias.controller';
 import { PlanosGuard } from './planos.guard';
+import { PortalController } from './portal.controller';
+import { PortalService } from './portal.service';
 import { RankingController } from './ranking.controller';
 import { TurmaController } from './turma.controller';
 import { TurmaService } from './turma.service';
@@ -35,6 +37,7 @@ import { XpService } from './xp.service';
     RankingController,
     EquipeController,
     CargoController,
+    PortalController,
   ],
   providers: [
     TurmaService,
@@ -48,6 +51,7 @@ import { XpService } from './xp.service';
     AlunoService,
     EquipeService,
     CargoService,
+    PortalService,
     AgrupamentoService,
     XpLogRepository,
     XpService,
