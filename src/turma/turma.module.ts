@@ -5,14 +5,18 @@ import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
+import { XpLogRepository } from './repositories/xp-log.repository';
 import { AgrupamentoController } from './agrupamento.controller';
 import { AgrupamentoService } from './agrupamento.service';
 import { AlunoController } from './aluno.controller';
+import { AlunoPortalController } from './aluno-portal.controller';
 import { AlunoService } from './aluno.service';
 import { FeriasController } from './ferias.controller';
 import { PlanosGuard } from './planos.guard';
+import { RankingController } from './ranking.controller';
 import { TurmaController } from './turma.controller';
 import { TurmaService } from './turma.service';
+import { XpService } from './xp.service';
 
 @Module({
   imports: [ProfessorModule],
@@ -20,7 +24,9 @@ import { TurmaService } from './turma.service';
     TurmaController,
     FeriasController,
     AlunoController,
+    AlunoPortalController,
     AgrupamentoController,
+    RankingController,
   ],
   providers: [
     TurmaService,
@@ -31,6 +37,8 @@ import { TurmaService } from './turma.service';
     AlunoRepository,
     AlunoService,
     AgrupamentoService,
+    XpLogRepository,
+    XpService,
     PlanosGuard,
   ],
 })
