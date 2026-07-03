@@ -26,6 +26,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Orquestração de grupos](#orquestração-de-grupos-squads)
   - [Equipes, distribuição e cargos](#equipes-distribuição-e-cargos)
   - [Gamificação (XP, ranking e config)](#gamificação-xp-ranking-e-config)
+  - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
 
 ---
 
@@ -128,6 +129,7 @@ Agrupa as regras de recorrência de um conjunto de aulas.
 | `nomePontuacao` | string? | rótulo livre da pontuação (ex.: `XP`, `Aura`; default `XP`) |
 | `rankingAtivo` | boolean? | liga/desliga o ranking (default `true`) |
 | `rotuloAdicionar` / `rotuloRemover` | string? | rótulos dos botões de pontuar (ex.: `Moggar` / `Punir`; default `Adicionar`/`Remover`) |
+| `pinTurma` | string? | PIN de **6 dígitos** da turma (portal do aluno). Gerado no cadastro; **backfill** ao abrir turmas antigas |
 
 > Os 5 campos de config têm defaults aplicados no getter `TurmaEntity.configPontuacao`
 > — turmas antigas sem os campos assumem `XP`/ativos.
@@ -173,6 +175,7 @@ Perfil do professor.
 | `disciplina` | string? |
 | `bio` | string? |
 | `disciplinas` | string[]? (competências) |
+| `username` | string? — handle público único (`@usuario`), **chave de busca do portal do aluno** |
 | `planoAtual` | `'ESTAGIARIO' \| 'GRADUADO' \| 'MESTRE' \| 'PHD'` (default `ESTAGIARIO`) |
 | `slotsAdicionaisComprados` | number (default `0`) — vagas avulsas somadas ao limite do plano |
 
@@ -188,6 +191,7 @@ Lista de chamada de uma turma (não é conta do Firebase). Ganha PIN e XP para o
 | `xpTotal` | number | pontuação materializada (soma dos `xp_logs`) |
 | `equipeId` | string \| null? | equipe persistente do aluno; `null`/ausente = **sem equipe** (pool) |
 | `cargoIds` | string[]? | cargos atribuídos ao aluno (relação **N↔N** com `cargos`) |
+| `baseAteSessao` | number? | nº de aulas concluídas já recompensadas com **pontuação base** (idempotência) |
 
 ### `equipes`
 Agrupamento **persistente** de alunos de uma turma (distinto do sorteio efêmero de squads).
@@ -238,7 +242,8 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 |---|---|---|---|
 | `POST` | `/turmas` | `CreateTurmaDto` | `{ turma, sessoes }` — barrado pelo **`PlanosGuard`** (403 `LIMIT_REACHED` se estourar a cota) |
 | `GET` | `/turmas` | — | `TurmaEntity[]` |
-| `GET` | `/turmas/:id` | — | `TurmaEntity` (404 se não for do professor) |
+| `GET` | `/turmas/:id` | — | `TurmaEntity` (404 se não for do professor). **Backfill** do `pinTurma` se ausente |
+| `GET` | `/turmas/:id/progresso` | — | `{ concluidas, total, pct, pontuacaoBase }` — evolução do curso + **base coletiva** (`concluidas × 10`) |
 | `PUT` | `/turmas/:id` | `UpdateTurmaDto` | `{ turma, sessoes }` — **reprojeta**; aceita `encerradaManualmente` |
 
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
@@ -260,9 +265,10 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 |---|---|---|---|
 | `GET` | `/turmas/:turmaId/alunos` | — | `AlunoEntity[]` |
 | `POST` | `/turmas/:turmaId/alunos` | `{ nomes: string[] }` | `AlunoEntity[]` — cadastro **em lote** (gera PIN/turma) |
+| `PATCH` | `/turmas/:turmaId/alunos/:alunoId` | `{ nome }` | `AlunoEntity` — **renomeia** o aluno |
 | `DELETE` | `/turmas/:turmaId/alunos/:alunoId` | — | `{ removido: true }` |
 | `PATCH` | `/turmas/:turmaId/alunos/:alunoId/equipe` | `{ equipeId: string \| null }` | `AlunoEntity` — move o aluno para uma equipe (drop) ou de volta ao pool (`null`) |
-| `POST` | `/turmas/:turmaId/alunos/:alunoId/xp` | `{ pontos, motivo? }` | `{ alunoId, xpTotal }` — grava log + atualiza total. **400** se `pontuacaoAtiva=false` |
+| `POST` | `/turmas/:turmaId/alunos/:alunoId/xp` | `{ pontos, motivo? }` | `{ alunoId, xpTotal }` — grava log + atualiza total. **403 `GAMIFICACAO_LOCKED`** se não-PhD; **400** se `pontuacaoAtiva=false` |
 | `POST` | `/turmas/:turmaId/agrupamento` | `{ numeroEquipes, papeis?, temas? }` | `{ squads }` — sorteio efêmero |
 | `GET` | `/turmas/:turmaId/ranking` | — | `[{ posicao, alunoId, nome, xpTotal }]` (professor **ou** aluno da turma). **403** se `rankingAtivo=false` |
 
@@ -283,11 +289,18 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | `DELETE` | `/turmas/:turmaId/cargos/:cargoId` | — | `{ removido: true }` — desatribui o cargo de todos os alunos |
 | `PUT` | `/turmas/:turmaId/cargos/:cargoId/membros` | `{ alunoIds: string[] }` | `AlunoEntity[]` — define o **conjunto final** de responsáveis (**N↔N**, idempotente) |
 
+### Portal — jornada pública de acesso do aluno
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `[{ turmaId, nome, cor }]` — só turmas **ativas** do professor |
+| `POST` | `/portal/turma/:turmaId/alunos` **(pública)** | `{ pinTurma }` | valida o **PIN de 6 díg** → `{ turmaId, turmaNome, alunos:[{id,nome}], config }` (nomes só após o PIN) |
+
 ### Portal do aluno (`@Roles('STUDENT')`)
 | Método | Rota | Resposta |
 |---|---|---|
-| `GET` | `/aluno/me` | `AlunoEntity` — perfil do próprio aluno (XP) |
+| `GET` | `/aluno/me` | `AlunoEntity` — perfil do próprio aluno (sincroniza a **base passiva** antes) |
 | `GET` | `/aluno/agenda` | `SessaoAulaEntity[]` — sessões (já recalculadas) da própria turma |
+| `GET` | `/aluno/progresso` | `{ concluidas, total, pct, pontuacaoBase }` — evolução do curso |
 
 ### Sessões
 | Método | Rota | Resposta |
@@ -310,7 +323,8 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
 | `GET` | `/profile` | — | `ProfessorEntity` (perfil **vazio** só com `uid` se ainda não existe — 200, não 404) |
-| `PUT` | `/profile` | `{ nomeExibicao?, disciplina?, bio?, disciplinas?[] }` | `ProfessorEntity` (upsert com merge) |
+| `GET` | `/profile/check-username?u=` | — | `{ username, disponivel }` — disponibilidade do handle (debounce da UI) |
+| `PUT` | `/profile` | `{ nomeExibicao?, username?, disciplina?, bio?, disciplinas?[] }` | `ProfessorEntity` (upsert; `username` normalizado e **único**, 409 se em uso) |
 
 ---
 
@@ -434,3 +448,26 @@ rótulos `rotuloAdicionar`/`rotuloRemover`.
   `rankingAtivo=false`.
 - A config pública (`nomePontuacao`, `rankingAtivo`) viaja ao **portal do aluno** no login
   (`POST /auth/aluno`) e no `GET /auth/turma/:turmaId`, para o front rotular sem hardcode.
+- **Exclusividade PhD** (`ProfessorEntity.podeGamificar`): distribuir XP exige
+  `planoAtual === 'PHD'` — senão **403 `GAMIFICACAO_LOCKED`**. O front trava a UI de
+  pontuação e o toggle do portal nos planos inferiores, com upsell.
+- **Pontuação base passiva** (`XpService.sincronizarBaseTurma`): cada aula **concluída**
+  (data no passado) rende `BASE_POR_AULA = 10` pontos de base a todos os alunos. É
+  **idempotente** — `aluno.baseAteSessao` guarda quantas aulas concluídas já renderam base,
+  então reprocessar não duplica. Disparada de forma preguiçosa ao listar alunos, rankear ou
+  o aluno carregar o perfil. A **base coletiva** exposta em `/turmas/:id/progresso` e
+  `/aluno/progresso` é `concluidas × 10`.
+
+### Portal do aluno: `@username` + PIN da turma
+
+O aluno acessa o portal sem e-mail, por uma jornada pública em camadas:
+
+1. **Busca** pelo `@username` do professor → `GET /portal/professor/:username/turmas`
+   devolve apenas as turmas **ativas** (omite encerradas/expiradas).
+2. **PIN da turma** (6 díg) → `POST /portal/turma/:turmaId/alunos` só devolve os **nomes**
+   após validar o PIN — isolamento entre turmas.
+3. **PIN do aluno** (4 díg) → `POST /auth/aluno` emite o JWT de aluno.
+
+O `username` é único e normalizado (sem `@`, minúsculo); `GET /profile/check-username`
+verifica disponibilidade. O `pinTurma` é gerado no cadastro da turma e recebe **backfill**
+ao abrir turmas antigas (`TurmaService.buscarTurma`).
