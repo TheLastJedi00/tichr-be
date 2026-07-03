@@ -158,6 +158,23 @@ export class AlunoService {
     return aluno;
   }
 
+  /** Renomeia um aluno da turma (valida posse). */
+  async renomear(
+    professorId: string,
+    turmaId: string,
+    alunoId: string,
+    nome: string,
+  ): Promise<AlunoEntity> {
+    await this.assertTurma(professorId, turmaId);
+    const aluno = await this.alunoRepo.findById(alunoId);
+    if (!aluno || aluno.turmaId !== turmaId) {
+      throw new NotFoundException('Aluno nao encontrado.');
+    }
+    aluno.nome = nome.trim();
+    await this.alunoRepo.update(alunoId, { nome: aluno.nome });
+    return aluno;
+  }
+
   async remover(
     professorId: string,
     turmaId: string,
