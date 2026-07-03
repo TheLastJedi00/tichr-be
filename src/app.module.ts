@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { TurmaModule } from './turma/turma.module';
 import { ProfessorModule } from './professor/professor.module';
 import { PlanoAulaModule } from './plano-aula/plano-aula.module';
+import { QlickModule } from './qlick/qlick.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PlanoAulaModule } from './plano-aula/plano-aula.module';
     TurmaModule,
     ProfessorModule,
     PlanoAulaModule,
+    QlickModule,
   ],
   controllers: [AppController],
   providers: [AppService],
