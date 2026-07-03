@@ -12,6 +12,7 @@ import { AlunoService } from './aluno.service';
 import { CreateAlunosDto } from './dto/create-alunos.dto';
 import { DefinirEquipeDto } from './dto/definir-equipe.dto';
 import { DistribuirXpDto } from './dto/distribuir-xp.dto';
+import { RenameAlunoDto } from './dto/rename-aluno.dto';
 import { XpService } from './xp.service';
 
 /** Lista de chamada (alunos) de uma turma. */
@@ -37,6 +38,16 @@ export class AlunoController {
     @Body() dto: CreateAlunosDto,
   ) {
     return this.alunoService.adicionar(professorId, turmaId, dto.nomes);
+  }
+
+  @Patch(':alunoId')
+  renomear(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+    @Param('alunoId') alunoId: string,
+    @Body() dto: RenameAlunoDto,
+  ) {
+    return this.alunoService.renomear(professorId, turmaId, alunoId, dto.nome);
   }
 
   @Delete(':alunoId')
