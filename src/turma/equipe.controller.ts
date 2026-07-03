@@ -34,6 +34,15 @@ export class EquipeController {
     return this.equipeService.criar(professorId, turmaId, dto);
   }
 
+  /** Distribui os alunos da turma pelas equipes de forma balanceada. */
+  @Post('distribuir')
+  distribuir(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+  ) {
+    return this.equipeService.distribuir(professorId, turmaId);
+  }
+
   @Put(':equipeId')
   atualizar(
     @ProfessorId() professorId: string,
