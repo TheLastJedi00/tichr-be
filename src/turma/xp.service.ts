@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { FieldValue } from 'firebase-admin/firestore';
 import { hojeISO } from '../common/date.util';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
@@ -130,5 +131,39 @@ export class XpService {
     });
 
     return { alunoId, xpTotal: novoXp };
+  }
+
+  /**
+   * Credita ao XP dos alunos os pontos de uma partida do Tichr Qlick encerrada
+   * (motivo QLICK). O próprio Qlick é a opção de gamificar, então dispensa o
+   * gate de `pontuacaoAtiva`. Usa `increment` para somar sem corrida com a base.
+   */
+  async creditarPartida(
+    turmaId: string,
+    pontosPorAluno: Array<{ alunoId: string; pontos: number }>,
+  ): Promise<void> {
+    const validos = pontosPorAluno.filter((p) => p.pontos > 0);
+    if (validos.length === 0) {
+      return;
+    }
+    const db = this.firebase.firestore;
+    const batch = db.batch();
+    for (const { alunoId, pontos } of validos) {
+      const aluno = await this.alunoRepo.findById(alunoId);
+      if (!aluno || aluno.turmaId !== turmaId) {
+        continue;
+      }
+      batch.update(db.collection('alunos').doc(alunoId), {
+        xpTotal: FieldValue.increment(pontos),
+      });
+      batch.set(db.collection('xp_logs').doc(), {
+        alunoId,
+        turmaId,
+        pontos,
+        motivo: 'QLICK',
+        data: new Date().toISOString(),
+      });
+    }
+    await batch.commit();
   }
 }

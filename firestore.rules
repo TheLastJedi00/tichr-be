@@ -1,0 +1,26 @@
+rules_version = '2';
+
+// Regras do Firestore para o Tichr.
+//
+// O backend usa o **Admin SDK**, que IGNORA estas regras — toda a escrita de
+// dados passa por ele. Estas regras existem para o **cliente Angular**, que a
+// partir do Tichr Qlick lê a coleção de partidas em tempo real (`onSnapshot`).
+//
+// Deploy: `firebase deploy --only firestore:rules` (ou colar no console).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Partidas do Tichr Qlick: estado efêmero e público (o aluno lê para jogar).
+    // Escrita SOMENTE pelo backend (Admin SDK) — o cliente nunca escreve.
+    match /qlick_partidas/{partidaId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Todas as demais coleções (turmas, alunos, qlicks, etc.) ficam fechadas ao
+    // cliente — só o Admin SDK do backend as acessa.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
