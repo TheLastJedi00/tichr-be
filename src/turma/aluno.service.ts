@@ -36,6 +36,28 @@ export class AlunoService {
     }
   }
 
+  /** Versao publica do assert de posse (usada por outros controllers). */
+  garantirPosse(professorId: string, turmaId: string): Promise<void> {
+    return this.assertTurma(professorId, turmaId);
+  }
+
+  /** Ranking da turma: alunos ordenados por XP decrescente com posicionamento. */
+  async ranking(
+    turmaId: string,
+  ): Promise<
+    Array<{ posicao: number; alunoId: string; nome: string; xpTotal: number }>
+  > {
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    return alunos
+      .sort((a, b) => (b.xpTotal ?? 0) - (a.xpTotal ?? 0))
+      .map((a, i) => ({
+        posicao: i + 1,
+        alunoId: a.id,
+        nome: a.nome,
+        xpTotal: a.xpTotal ?? 0,
+      }));
+  }
+
   async listar(professorId: string, turmaId: string): Promise<AlunoEntity[]> {
     await this.assertTurma(professorId, turmaId);
     return this.alunoRepo.findByTurma(turmaId);

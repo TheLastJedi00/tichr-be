@@ -13,6 +13,7 @@ import { AlunoPortalController } from './aluno-portal.controller';
 import { AlunoService } from './aluno.service';
 import { FeriasController } from './ferias.controller';
 import { PlanosGuard } from './planos.guard';
+import { RankingController } from './ranking.controller';
 import { TurmaController } from './turma.controller';
 import { TurmaService } from './turma.service';
 import { XpService } from './xp.service';
@@ -25,6 +26,7 @@ import { XpService } from './xp.service';
     AlunoController,
     AlunoPortalController,
     AgrupamentoController,
+    RankingController,
   ],
   providers: [
     TurmaService,
