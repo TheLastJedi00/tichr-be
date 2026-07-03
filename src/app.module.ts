@@ -6,6 +6,7 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { AuthModule } from './auth/auth.module';
 import { TurmaModule } from './turma/turma.module';
 import { ProfessorModule } from './professor/professor.module';
+import { PlanoAulaModule } from './plano-aula/plano-aula.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ProfessorModule } from './professor/professor.module';
     AuthModule,
     TurmaModule,
     ProfessorModule,
+    PlanoAulaModule,
   ],
   controllers: [AppController],
   providers: [AppService],

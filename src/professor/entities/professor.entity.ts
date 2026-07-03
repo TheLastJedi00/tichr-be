@@ -12,6 +12,14 @@ export const LIMITE_BASE_PLANO: Record<PlanoAtual, number> = {
   PHD: Infinity,
 };
 
+/** Hierarquia dos planos (indice = nivel). */
+export const ORDEM_PLANO: PlanoAtual[] = [
+  'ESTAGIARIO',
+  'GRADUADO',
+  'MESTRE',
+  'PHD',
+];
+
 /**
  * Perfil do professor. Documento salvo em `professores/{uid}`
  * (o uid do Firebase Auth e a chave do documento).
@@ -45,6 +53,11 @@ export class ProfessorEntity {
   /** Gamificacao (pontuacao, ranking, portal) e exclusiva do plano PhD. */
   get podeGamificar(): boolean {
     return this.planoAtual === 'PHD';
+  }
+
+  /** Verdadeiro se o plano atual alcanca (>=) o `minimo` na hierarquia. */
+  atendePlano(minimo: PlanoAtual): boolean {
+    return ORDEM_PLANO.indexOf(this.planoAtual) >= ORDEM_PLANO.indexOf(minimo);
   }
 
   /**

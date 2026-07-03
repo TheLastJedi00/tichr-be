@@ -57,5 +57,6 @@ import { XpService } from './xp.service';
     XpService,
     PlanosGuard,
   ],
+  exports: [TurmaService, TurmaRepository],
 })
 export class TurmaModule {}
