@@ -8,6 +8,7 @@ import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
+import { XpService } from '../turma/xp.service';
 import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
@@ -25,6 +26,7 @@ export class PartidaService {
     private readonly alunoRepo: AlunoRepository,
     private readonly professorService: ProfessorService,
     private readonly firebase: FirebaseService,
+    private readonly xpService: XpService,
   ) {}
 
   /** Cria a partida (LOBBY) a partir de um Qlick do professor (PhD). */
@@ -171,6 +173,9 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    if (partida.status === 'ENCERRADO') {
+      throw new BadRequestException('A partida já foi encerrada.');
+    }
     const rankingFinal = [...partida.placar]
       .sort((a, b) => b.pontos - a.pontos)
       .map((p, i) => ({ posicao: i + 1, ...p }));
@@ -182,6 +187,14 @@ export class PartidaService {
     };
     Object.assign(partida, dados);
     await this.partidaRepo.update(partidaId, dados);
+
+    // Converte os pontos da partida em XP do portal (só faz sentido com turma).
+    if (partida.turmaId) {
+      await this.xpService.creditarPartida(
+        partida.turmaId,
+        partida.placar.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
+      );
+    }
     return partida;
   }
 

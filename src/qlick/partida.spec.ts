@@ -23,6 +23,8 @@ function firebaseFake() {
   return { firestore } as never;
 }
 
+const xpFake = () => ({ creditarPartida: jest.fn() }) as never;
+
 const qlickFake = () =>
   ({
     findById: jest.fn().mockResolvedValue({
@@ -67,6 +69,7 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xpFake(),
     );
     const r = await service.iniciar('p1', 'pt1');
     expect(r.status).toBe('QUESTAO_ATIVA');
@@ -85,6 +88,7 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xpFake(),
     );
     await expect(service.iniciar('p1', 'pt1')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -101,6 +105,7 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xpFake(),
     );
     await expect(service.proxima('p1', 'pt1')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -125,6 +130,7 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xpFake(),
     );
     const r = await service.responder('a1', 'pt1', 0);
     expect(r.registrada).toBe(true);
@@ -148,6 +154,7 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xpFake(),
     );
     await service.responder('a1', 'pt1', 1);
     expect(partida.placar[0].pontos).toBe(0);
@@ -162,6 +169,7 @@ describe('PartidaService — fluxo CQRS', () => {
       ],
     });
     const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const xp = { creditarPartida: jest.fn() };
     const service = new PartidaService(
       repo as never,
       qlickFake(),
@@ -169,10 +177,35 @@ describe('PartidaService — fluxo CQRS', () => {
       {} as never,
       {} as never,
       firebaseFake(),
+      xp as never,
     );
     const r = await service.encerrar('p1', 'pt1');
     expect(r.status).toBe('ENCERRADO');
     expect(r.rankingFinal?.[0]).toMatchObject({ posicao: 1, nome: 'Bia' });
     expect(r.rankingFinal?.[1]).toMatchObject({ posicao: 2, nome: 'Ana' });
+    // pontos da partida viram XP do portal (motivo QLICK)
+    expect(xp.creditarPartida).toHaveBeenCalledWith('t1', [
+      { alunoId: 'a1', pontos: 800 },
+      { alunoId: 'a2', pontos: 1500 },
+    ]);
+  });
+
+  it('encerrar: rejeita partida já encerrada (evita creditar XP em dobro)', async () => {
+    const partida = partidaBase({ status: 'ENCERRADO', placar: [] });
+    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const xp = { creditarPartida: jest.fn() };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xp as never,
+    );
+    await expect(service.encerrar('p1', 'pt1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(xp.creditarPartida).not.toHaveBeenCalled();
   });
 });
