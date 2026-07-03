@@ -8,6 +8,7 @@ import { TurmaRepository } from './repositories/turma.repository';
 import { AgrupamentoController } from './agrupamento.controller';
 import { AgrupamentoService } from './agrupamento.service';
 import { AlunoController } from './aluno.controller';
+import { AlunoPortalController } from './aluno-portal.controller';
 import { AlunoService } from './aluno.service';
 import { FeriasController } from './ferias.controller';
 import { PlanosGuard } from './planos.guard';
@@ -20,6 +21,7 @@ import { TurmaService } from './turma.service';
     TurmaController,
     FeriasController,
     AlunoController,
+    AlunoPortalController,
     AgrupamentoController,
   ],
   providers: [

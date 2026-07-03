@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AlunoEntity } from './entities/aluno.entity';
+import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
+import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
 
 @Injectable()
@@ -8,7 +10,23 @@ export class AlunoService {
   constructor(
     private readonly alunoRepo: AlunoRepository,
     private readonly turmaRepo: TurmaRepository,
+    private readonly sessaoRepo: SessaoRepository,
   ) {}
+
+  /** Perfil do proprio aluno (portal). */
+  async perfil(alunoId: string): Promise<AlunoEntity> {
+    const aluno = await this.alunoRepo.findById(alunoId);
+    if (!aluno) {
+      throw new NotFoundException('Aluno nao encontrado.');
+    }
+    return aluno;
+  }
+
+  /** Agenda (sessoes ja recalculadas) da turma do aluno, ordenada por numero. */
+  async agenda(turmaId: string): Promise<SessaoAulaEntity[]> {
+    const sessoes = await this.sessaoRepo.findByTurma(turmaId);
+    return sessoes.sort((a, b) => a.numero - b.numero);
+  }
 
   /** Garante que a turma existe e pertence ao professor autenticado. */
   private async assertTurma(professorId: string, turmaId: string): Promise<void> {
