@@ -12,7 +12,7 @@ import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
 
 /** Pontuação base concedida por aula concluída (evolução passiva da turma). */
-const BASE_POR_AULA = 10;
+export const BASE_POR_AULA = 10;
 
 @Injectable()
 export class XpService {

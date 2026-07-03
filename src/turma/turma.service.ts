@@ -111,6 +111,15 @@ export class TurmaService {
     if (!turma || turma.professorId !== professorId) {
       throw new NotFoundException('Turma nao encontrada.');
     }
+    // Backfill: turmas criadas antes do pinTurma ganham um ao serem abertas.
+    if (!turma.pinTurma) {
+      const existentes = await this.turmaRepo.findByProfessor(professorId);
+      const usados = new Set(
+        existentes.map((t) => t.pinTurma).filter((p): p is string => !!p),
+      );
+      turma.pinTurma = this.gerarPinTurma(usados);
+      await this.turmaRepo.update(turmaId, { pinTurma: turma.pinTurma });
+    }
     return turma;
   }
 
