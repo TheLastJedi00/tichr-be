@@ -72,7 +72,8 @@ Firestore
   (o Firestore recusa objetos com protótipo customizado).
 - **Módulos**: `FirebaseModule` (global), `AuthModule` (login de professor e aluno),
   `TurmaModule` (turmas, sessões, exceções, férias, **alunos**, **equipes**, **cargos**,
-  **agrupamento**, **XP** e **ranking**), `ProfessorModule` (perfil + **checkout/planos**).
+  **agrupamento**, **XP** e **ranking**), `ProfessorModule` (perfil + **checkout/planos**),
+  `PlanoAulaModule` (**plano de aula**: escopo geral, **tópicos** e **alocação**).
 - **Datas** trafegam como string **`YYYY-MM-DD`** (dia de calendário em UTC) — elimina o
   off-by-one de fuso/horário de verão.
 
@@ -212,6 +213,33 @@ Tarefas/papéis atribuíveis aos membros das equipes (ex.: "Líder", "Redator").
 | `id` / `turmaId` | string | |
 | `nome` | string | cadastrado **em lote**; o vínculo com alunos vive em `alunos.cargoIds` |
 
+### `planos_aula`
+Escopo geral (Syllabus) de uma disciplina — um por `(professor, disciplina)`.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `professorId` | string | |
+| `disciplina` | string | |
+| `contextoGeral` | string | texto macro (objetivos, ementa, bibliografia) |
+
+### `topicos`
+Backlog de tópicos de uma disciplina (microplanejamento, Mestre+).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `professorId` | string | |
+| `disciplina` | string | |
+| `nome` | string | cadastrado em lote |
+
+### `alocacoes`
+Vínculo tópico↔aula, ancorado no **número da aula** (não na data).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `turmaId` | string | |
+| `numeroAula` | number | ancora a alocação — sobrevive ao deslizamento da grade |
+| `topicoId` | string | |
+
 ### `xp_logs`
 Registro (event sourcing) de cada distribuição de pontos.
 
@@ -301,6 +329,18 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | `GET` | `/aluno/me` | `AlunoEntity` — perfil do próprio aluno (sincroniza a **base passiva** antes) |
 | `GET` | `/aluno/agenda` | `SessaoAulaEntity[]` — sessões (já recalculadas) da própria turma |
 | `GET` | `/aluno/progresso` | `{ concluidas, total, pct, pontuacaoBase }` — evolução do curso |
+| `GET` | `/aluno/plano` | `{ topicos: [{ numeroAula, topico }] }` — tópicos alocados às aulas (só se o professor é **PhD**) |
+
+### Plano de Aula
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/planos-aula` | — | `PlanoAulaEntity[]` (403 `PLANO_LOCKED` se `< GRADUADO`) |
+| `PUT` | `/planos-aula` | `{ disciplina, contextoGeral }` | `PlanoAulaEntity` — upsert do escopo geral por disciplina |
+| `GET` | `/topicos?disciplina=` | — | `TopicoEntity[]` (403 se `< MESTRE`) |
+| `POST` | `/topicos` | `{ disciplina, nomes: string[] }` | `TopicoEntity[]` — lote |
+| `DELETE` | `/topicos/:id` | — | `{ removido: true }` — limpa as alocações do tópico |
+| `GET` | `/turmas/:turmaId/alocacoes` | — | `AlocacaoEntity[]` |
+| `PUT` | `/turmas/:turmaId/alocacoes/:numero` | `{ topicoId: string \| null }` | aloca (upsert por número) ou desaloca (`null`) |
 
 ### Sessões
 | Método | Rota | Resposta |
@@ -471,3 +511,19 @@ O aluno acessa o portal sem e-mail, por uma jornada pública em camadas:
 O `username` é único e normalizado (sem `@`, minúsculo); `GET /profile/check-username`
 verifica disponibilidade. O `pinTurma` é gerado no cadastro da turma e recebe **backfill**
 ao abrir turmas antigas (`TurmaService.buscarTurma`).
+
+### Plano de Aula (escopo geral, tópicos e alocação)
+
+O **Plano de Aula** escala com o plano do professor (`PlanoAulaModule`, independente):
+
+- **Graduado — escopo geral:** um texto macro (Syllabus) por disciplina (`planos_aula`,
+  upsert em `PUT /planos-aula`). `403 PLANO_LOCKED` para o Estagiário.
+- **Mestre — tópicos + alocação:** o professor cria um backlog de **tópicos** (`topicos`) e os
+  **aloca** às aulas por arrastar-e-soltar. A alocação (`alocacoes`) é ancorada no
+  **`numeroAula`**, não na data — como a reprojeção regenera as sessões mantendo o `numero`, o
+  **tópico desliza junto com a aula** automaticamente quando a grade recalcula. Excluir um
+  tópico limpa suas alocações.
+- **PhD — sincronização com o portal:** `GET /aluno/plano` devolve os tópicos alocados às aulas
+  da turma do aluno (join `alocacoes` × `topicos` por número), **apenas quando o professor é
+  PhD** — alimentando o "o que já vimos" (aulas concluídas) e "o que vem por aí" (próxima aula)
+  no portal.
