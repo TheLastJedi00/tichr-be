@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
-import { CreateQlickDto } from './dto/create-qlick.dto';
+import { CreateQlickDto, PerguntaDto } from './dto/create-qlick.dto';
 import { QlickEntity } from './entities/qlick.entity';
 import { QlickService } from './qlick.service';
 
@@ -42,6 +42,25 @@ describe('QlickService', () => {
     const q = await service.criar('p1', dtoValido());
     expect(q.duracaoSegundos).toBe(60);
     expect(q.perguntas).toHaveLength(1);
+  });
+
+  it('grava perguntas como objetos planos (Firestore recusa protótipo)', async () => {
+    let salvo: QlickEntity | undefined;
+    const repo = {
+      create: jest.fn().mockImplementation(async (q) => {
+        salvo = q as QlickEntity;
+        return new QlickEntity({ ...(q as object), id: 'q1' });
+      }),
+    };
+    const service = new QlickService(repo as never, professorFake('PHD'), {} as never);
+    // pergunta com protótipo customizado (como chega do class-transformer)
+    const pergunta = Object.assign(new PerguntaDto(), {
+      enunciado: 'q',
+      alternativas: ['a', 'b'],
+      corretaIndex: 0,
+    });
+    await service.criar('p1', { titulo: 'X', perguntas: [pergunta] });
+    expect(Object.getPrototypeOf(salvo!.perguntas[0])).toBe(Object.prototype);
   });
 
   it('rejeita corretaIndex fora do intervalo', async () => {
