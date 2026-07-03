@@ -39,6 +39,11 @@ export class ProfessorEntity {
     return !!this.nomeExibicao && this.nomeExibicao.trim().length > 0;
   }
 
+  /** Gamificacao (pontuacao, ranking, portal) e exclusiva do plano PhD. */
+  get podeGamificar(): boolean {
+    return this.planoAtual === 'PHD';
+  }
+
   /**
    * Limite efetivo de turmas ativas: base do plano + slots avulsos comprados.
    * Retorna Infinity para planos ilimitados (Mestre/PhD).
