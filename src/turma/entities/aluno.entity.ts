@@ -13,6 +13,9 @@ export class AlunoEntity {
   /** Equipe persistente a que o aluno pertence; null/ausente = sem equipe. */
   equipeId?: string | null;
 
+  /** Cargos atribuidos ao aluno (relacao N<->N com CargoEntity). */
+  cargoIds?: string[];
+
   /** PIN de 4 digitos para o aluno entrar no portal (Plano PhD). */
   pinAcesso?: string;
 

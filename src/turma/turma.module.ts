@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
 import { AlunoRepository } from './repositories/aluno.repository';
+import { CargoRepository } from './repositories/cargo.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
 import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
@@ -12,6 +13,8 @@ import { AgrupamentoService } from './agrupamento.service';
 import { AlunoController } from './aluno.controller';
 import { AlunoPortalController } from './aluno-portal.controller';
 import { AlunoService } from './aluno.service';
+import { CargoController } from './cargo.controller';
+import { CargoService } from './cargo.service';
 import { EquipeController } from './equipe.controller';
 import { EquipeService } from './equipe.service';
 import { FeriasController } from './ferias.controller';
@@ -31,6 +34,7 @@ import { XpService } from './xp.service';
     AgrupamentoController,
     RankingController,
     EquipeController,
+    CargoController,
   ],
   providers: [
     TurmaService,
@@ -40,8 +44,10 @@ import { XpService } from './xp.service';
     FeriasRepository,
     AlunoRepository,
     EquipeRepository,
+    CargoRepository,
     AlunoService,
     EquipeService,
+    CargoService,
     AgrupamentoService,
     XpLogRepository,
     XpService,
