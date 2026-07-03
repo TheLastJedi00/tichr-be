@@ -13,6 +13,8 @@ import { AgrupamentoService } from './agrupamento.service';
 import { AlunoController } from './aluno.controller';
 import { AlunoPortalController } from './aluno-portal.controller';
 import { AlunoService } from './aluno.service';
+import { CargoController } from './cargo.controller';
+import { CargoService } from './cargo.service';
 import { EquipeController } from './equipe.controller';
 import { EquipeService } from './equipe.service';
 import { FeriasController } from './ferias.controller';
@@ -32,6 +34,7 @@ import { XpService } from './xp.service';
     AgrupamentoController,
     RankingController,
     EquipeController,
+    CargoController,
   ],
   providers: [
     TurmaService,
@@ -44,6 +47,7 @@ import { XpService } from './xp.service';
     CargoRepository,
     AlunoService,
     EquipeService,
+    CargoService,
     AgrupamentoService,
     XpLogRepository,
     XpService,
