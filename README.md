@@ -27,6 +27,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Equipes, distribuição e cargos](#equipes-distribuição-e-cargos)
   - [Gamificação (XP, ranking e config)](#gamificação-xp-ranking-e-config)
   - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
+  - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
 
 ---
 
@@ -73,7 +74,8 @@ Firestore
 - **Módulos**: `FirebaseModule` (global), `AuthModule` (login de professor e aluno),
   `TurmaModule` (turmas, sessões, exceções, férias, **alunos**, **equipes**, **cargos**,
   **agrupamento**, **XP** e **ranking**), `ProfessorModule` (perfil + **checkout/planos**),
-  `PlanoAulaModule` (**plano de aula**: escopo geral, **tópicos** e **alocação**).
+  `PlanoAulaModule` (**plano de aula**: escopo geral, **tópicos** e **alocação**),
+  `QlickModule` (**Tichr Qlick**: quiz gamificado em tempo real — CQRS sobre o Firestore).
 - **Datas** trafegam como string **`YYYY-MM-DD`** (dia de calendário em UTC) — elimina o
   off-by-one de fuso/horário de verão.
 
@@ -247,8 +249,54 @@ Registro (event sourcing) de cada distribuição de pontos.
 |---|---|---|
 | `id` / `alunoId` / `turmaId` | string | |
 | `pontos` | number | delta aplicado (pode ser negativo) |
-| `motivo` | string? | |
+| `motivo` | string? | `BASE` (aula concluída), `QLICK` (partida) ou livre (pontuação manual) |
 | `data` | string | ISO datetime |
+
+### `qlicks`
+Um quiz do professor (template reutilizável). **PhD-exclusivo**.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `professorId` | string | |
+| `titulo` | string | |
+| `disciplina` | string? | |
+| `topicoId` | string? | vínculo opcional com um tópico do plano de aula |
+| `turmaId` | string? | turma-alvo (necessária para converter pontos em XP) |
+| `duracaoSegundos` | number | tempo por pergunta (default `60`) |
+| `perguntas` | `{ enunciado, alternativas: string[], corretaIndex }[]` | `corretaIndex` **nunca** é exposto ao cliente |
+
+### `qlick_partidas`
+Estado **em tempo real** de uma rodada ao vivo — a **única** coleção lida pelo cliente
+(via `onSnapshot`). Escrita só pelo Admin SDK.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `qlickId` / `professorId` | string | |
+| `turmaId` | string? | herdado do Qlick |
+| `titulo` | string | |
+| `status` | `'LOBBY' \| 'QUESTAO_ATIVA' \| 'RANKING_PARCIAL' \| 'ENCERRADO'` | máquina de estados |
+| `perguntaAtual` / `totalPerguntas` | number | índice corrente (−1 no lobby) |
+| `duracaoSegundos` | number | janela da pergunta |
+| `perguntaIniciadaEm` | string? | ISO; base do timer do cliente |
+| `perguntaPublica` | `{ enunciado, alternativas }?` | **sem** a resposta correta |
+| `corretaIndex` | number? | revelado **só** no `RANKING_PARCIAL` |
+| `inscritos` | `{ alunoId, nome }[]` | congelado ao iniciar |
+| `placar` | `{ alunoId, nome, pontos }[]` | acumulado ordenado |
+| `rankingParcial` | `PlacarItem[]?` | top da rodada |
+| `rankingFinal` | `({ posicao } & PlacarItem)[]?` | pódio no encerramento |
+
+### `qlick_respostas`
+Respostas cruas dos alunos — **server-only** (o cliente nunca lê; ficaria de fora das rules).
+Doc id determinístico `${partidaId}_${perguntaIndex}_${alunoId}` garante **1 resposta por
+aluno/pergunta** (idempotência).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `partidaId` / `alunoId` | string | |
+| `perguntaIndex` | number | filtrado em memória (evita índice composto) |
+| `alternativaIndex` | number | escolha do aluno |
+| `correta` | boolean | |
+| `pontos` | number | acerto: `1000` + bônus de rapidez (até `500`) |
 
 ---
 
@@ -341,6 +389,28 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | `DELETE` | `/topicos/:id` | — | `{ removido: true }` — limpa as alocações do tópico |
 | `GET` | `/turmas/:turmaId/alocacoes` | — | `AlocacaoEntity[]` |
 | `PUT` | `/turmas/:turmaId/alocacoes/:numero` | `{ topicoId: string \| null }` | aloca (upsert por número) ou desaloca (`null`) |
+
+### Tichr Qlick (professor — comandos REST)
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/qlicks` | — | `QlickEntity[]` (403 `QLICK_LOCKED` se não-PhD) |
+| `POST` | `/qlicks` | `CreateQlickDto` | `QlickEntity` — valida `corretaIndex` no intervalo |
+| `GET` | `/qlicks/:id` | — | `QlickEntity` |
+| `PUT` | `/qlicks/:id` | `CreateQlickDto` | `QlickEntity` |
+| `DELETE` | `/qlicks/:id` | — | `{ removido: true }` |
+| `POST` | `/qlicks/:qlickId/partida` | — | `PartidaEntity` — cria a partida em `LOBBY` |
+| `GET` | `/partidas/:id` | — | `PartidaEntity` (dona do professor) |
+| `POST` | `/partidas/:id/iniciar` | — | congela inscritos, ativa a pergunta 1 (400 se sem inscritos) |
+| `POST` | `/partidas/:id/apurar` | — | revela a resposta e o ranking da rodada |
+| `POST` | `/partidas/:id/proxima` | — | avança (400 se ainda não apurou ou se era a última) |
+| `POST` | `/partidas/:id/encerrar` | — | monta o pódio e **credita o XP** (400 se já encerrada) |
+
+### Tichr Qlick (aluno — `@Roles('STUDENT')`)
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/aluno/qlick` | — | `{ partidaId, titulo, status } \| null` — partida "de hoje" da turma, dentro da janela da aula |
+| `POST` | `/aluno/qlick/:partidaId/inscricao` | — | `PartidaEntity` — entra no lobby (idempotente; 400 fora do `LOBBY`) |
+| `POST` | `/aluno/qlick/:partidaId/resposta` | `{ alternativaIndex }` | `{ registrada }` — grava a resposta; **auto-apura** quando todos respondem |
 
 ### Sessões
 | Método | Rota | Resposta |
@@ -527,3 +597,46 @@ O **Plano de Aula** escala com o plano do professor (`PlanoAulaModule`, independ
   da turma do aluno (join `alocacoes` × `topicos` por número), **apenas quando o professor é
   PhD** — alimentando o "o que já vimos" (aulas concluídas) e "o que vem por aí" (próxima aula)
   no portal.
+
+### Tichr Qlick (quiz em tempo real, CQRS)
+
+O Tichr Qlick é um quiz ao vivo estilo Kahoot, **PhD-exclusivo** para criação
+(`ProfessorEntity.podeGamificar`). A arquitetura é **CQRS híbrida sobre o Firestore**:
+
+- **Comandos via REST** — toda escrita passa pelo backend (Admin SDK). O professor comanda
+  a partida (`iniciar`/`apurar`/`proxima`/`encerrar`) e o aluno envia inscrição e resposta.
+  O backend é a **única** fonte de escrita em `qlick_partidas`.
+- **Estado por realtime** — o cliente **lê** o documento da partida via `onSnapshot`
+  (Firebase JS SDK reintroduzido no front, **somente leitura**). Cada transição de estado
+  regrava o doc e todos os dispositivos reagem no mesmo instante, sem polling.
+
+**Máquina de estados** da partida (`PartidaService`):
+
+```
+LOBBY ──iniciar──▶ QUESTAO_ATIVA ──apurar──▶ RANKING_PARCIAL ──proxima──▶ QUESTAO_ATIVA
+                                                     │
+                                                  encerrar
+                                                     ▼
+                                                 ENCERRADO
+```
+
+- **Apuração automática:** ao responder, o backend conta as respostas da pergunta; quando
+  **todos os inscritos** responderam, `apurar` dispara sozinho (o professor não precisa
+  esperar o timer). O professor também pode forçar `apurar` a qualquer momento.
+- **Pontuação** (`computarPontos`): acerto vale `PONTOS_ACERTO = 1000` mais um **bônus de
+  rapidez** proporcional ao tempo restante (`BONUS_RAPIDEZ = 500` no limite instantâneo);
+  erro vale `0`.
+- **XP no encerramento:** `encerrar` converte o placar final em XP do portal via
+  `XpService.creditarPartida` (motivo `QLICK`, `FieldValue.increment` para não competir com
+  a base passiva) — **só** quando a partida tem `turmaId`. É **idempotente**: encerrar uma
+  partida já encerrada retorna **400**, evitando crédito em dobro.
+
+**Sigilo da resposta certa.** O `corretaIndex` do Qlick **nunca** vai ao cliente durante a
+pergunta: o doc público expõe só `perguntaPublica` (enunciado + alternativas). A correta é
+gravada no doc apenas ao entrar em `RANKING_PARCIAL`. As respostas cruas ficam em
+`qlick_respostas`, coleção **server-only**.
+
+**Regras do Firestore** (`firestore.rules`, deploy manual): o cliente só **lê**
+`qlick_partidas`; todo o resto (incluindo `qlick_respostas`, `qlicks`, `alunos`,
+`xp_logs`) é `read:false, write:false` — o Admin SDK ignora as rules e continua com acesso
+total. Assim, mesmo lendo o realtime, o aluno não alcança as respostas nem forja pontos.
