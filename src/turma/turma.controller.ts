@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { AlunoService } from './aluno.service';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
 import { UpdateTurmaDto } from './dto/update-turma.dto';
@@ -16,7 +17,10 @@ import { TurmaService } from './turma.service';
 
 @Controller()
 export class TurmaController {
-  constructor(private readonly turmaService: TurmaService) {}
+  constructor(
+    private readonly turmaService: TurmaService,
+    private readonly alunoService: AlunoService,
+  ) {}
 
   @Post('turmas')
   @UseGuards(PlanosGuard)
@@ -48,6 +52,16 @@ export class TurmaController {
   @Get('turmas/:id')
   buscarTurma(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.turmaService.buscarTurma(professorId, id);
+  }
+
+  /** Progresso do curso (aulas concluidas/total) + base coletiva. */
+  @Get('turmas/:id/progresso')
+  async progresso(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+  ) {
+    await this.turmaService.buscarTurma(professorId, id); // valida posse
+    return this.alunoService.progresso(id);
   }
 
   @Put('turmas/:id')

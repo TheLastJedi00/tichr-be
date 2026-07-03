@@ -10,7 +10,7 @@ import { AlunoRepository } from './repositories/aluno.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
-import { XpService } from './xp.service';
+import { BASE_POR_AULA, XpService } from './xp.service';
 
 @Injectable()
 export class AlunoService {
@@ -32,17 +32,23 @@ export class AlunoService {
     return (await this.alunoRepo.findById(alunoId)) ?? atual;
   }
 
-  /** Progresso da turma: aulas concluidas / total (evolucao do curso). */
-  async progresso(
-    turmaId: string,
-  ): Promise<{ concluidas: number; total: number; pct: number }> {
+  /**
+   * Progresso da turma: aulas concluidas / total (evolucao do curso).
+   * `pontuacaoBase` = base coletiva que o andamento rendeu a cada aluno.
+   */
+  async progresso(turmaId: string): Promise<{
+    concluidas: number;
+    total: number;
+    pct: number;
+    pontuacaoBase: number;
+  }> {
     const hoje = hojeISO();
     const sessoes = await this.sessaoRepo.findByTurma(turmaId);
     const validas = sessoes.filter((s) => s.status !== 'CANCELADA');
     const concluidas = validas.filter((s) => s.data < hoje).length;
     const total = validas.length;
     const pct = total > 0 ? Math.round((concluidas / total) * 100) : 0;
-    return { concluidas, total, pct };
+    return { concluidas, total, pct, pontuacaoBase: concluidas * BASE_POR_AULA };
   }
 
   /** Agenda (sessoes ja recalculadas) da turma do aluno, ordenada por numero. */
