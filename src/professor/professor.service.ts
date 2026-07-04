@@ -79,9 +79,25 @@ export class ProfessorService {
     const dados: Partial<ProfessorEntity> = { ...dto };
     if (dto.username !== undefined) {
       const username = ProfessorService.normalizarUsername(dto.username);
-      const dono = await this.repo.findByUsername(username);
-      if (dono && dono.uid !== uid) {
-        throw new ConflictException('Esse @username ja esta em uso.');
+      const atual = (await this.repo.findByUid(uid)) ?? new ProfessorEntity({ uid });
+      const mudou = (atual.username ?? '') !== username;
+
+      if (mudou) {
+        // Trava de identificador: so troca a cada 60 dias.
+        const dias = atual.diasParaTrocarUsername();
+        if (dias > 0) {
+          throw new ConflictException({
+            code: 'USERNAME_COOLDOWN',
+            diasRestantes: dias,
+            message: `Voce podera alterar seu nome de usuario novamente em ${dias} dias.`,
+          });
+        }
+        // Unicidade do handle (so quando muda de fato).
+        const dono = await this.repo.findByUsername(username);
+        if (dono && dono.uid !== uid) {
+          throw new ConflictException('Esse @username ja esta em uso.');
+        }
+        dados.lastUsernameChange = new Date().toISOString();
       }
       dados.username = username;
     }
