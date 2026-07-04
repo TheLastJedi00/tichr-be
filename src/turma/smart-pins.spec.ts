@@ -4,7 +4,9 @@ import {
   proximoPinCurto,
 } from '../common/pin.util';
 import { AlunoService } from './aluno.service';
+import { TurmaService } from './turma.service';
 import { AlunoEntity } from './entities/aluno.entity';
+import { TurmaEntity } from './entities/turma.entity';
 
 describe('Smart PINs (2 dígitos)', () => {
   describe('proximoPinCurto', () => {
@@ -83,6 +85,45 @@ describe('Smart PINs (2 dígitos)', () => {
       await expect(
         service.adicionar('p1', 't1', ['Novo']),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('TurmaService.migrarPins', () => {
+    it('regenera o PIN da turma (2 díg) e redistribui os PINs dos alunos', async () => {
+      const turma = new TurmaEntity({
+        id: 't1',
+        professorId: 'p1',
+        pinTurma: '123456', // legado (6 díg)
+        tipoModalidade: 'GRADE_FIXA',
+        ativo: true,
+      });
+      const turmaRepo = {
+        findById: jest.fn().mockResolvedValue(turma),
+        findByProfessor: jest.fn().mockResolvedValue([turma]),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      const alunos = [
+        new AlunoEntity({ id: 'a2', turmaId: 't1', nome: 'Bruno', pinAcesso: '4444' }),
+        new AlunoEntity({ id: 'a1', turmaId: 't1', nome: 'Ana', pinAcesso: '9999' }),
+      ];
+      const alunoRepo = {
+        findByTurma: jest.fn().mockResolvedValue(alunos),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new TurmaService(
+        turmaRepo as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        alunoRepo as never,
+      );
+
+      const res = await service.migrarPins('p1', 't1');
+
+      expect(res.turma.pinTurma).toBe('01');
+      // Sequência estável por nome: Ana (a1) -> '01', Bruno (a2) -> '02'.
+      expect(alunoRepo.update).toHaveBeenCalledWith('a1', { pinAcesso: '01' });
+      expect(alunoRepo.update).toHaveBeenCalledWith('a2', { pinAcesso: '02' });
     });
   });
 });
