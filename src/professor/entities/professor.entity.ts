@@ -20,6 +20,9 @@ export const ORDEM_PLANO: PlanoAtual[] = [
   'PHD',
 ];
 
+/** Intervalo minimo (dias) entre trocas do @username (trava de identificador). */
+export const USERNAME_COOLDOWN_DIAS = 60;
+
 /**
  * Perfil do professor. Documento salvo em `professores/{uid}`
  * (o uid do Firebase Auth e a chave do documento).
@@ -32,6 +35,12 @@ export class ProfessorEntity {
 
   /** Handle publico unico (estilo @usuario) — chave de busca do portal do aluno. */
   username?: string;
+
+  /** Ultima troca do @username (ISO). Base da trava de cooldown de 60 dias. */
+  lastUsernameChange?: string;
+
+  /** URL publica da foto de perfil (Firebase Storage). Vazio = usa placeholder. */
+  avatarUrl?: string;
 
   /** Competencias/disciplinas que o professor leciona. */
   disciplinas?: string[];
@@ -58,6 +67,24 @@ export class ProfessorEntity {
   /** Verdadeiro se o plano atual alcanca (>=) o `minimo` na hierarquia. */
   atendePlano(minimo: PlanoAtual): boolean {
     return ORDEM_PLANO.indexOf(this.planoAtual) >= ORDEM_PLANO.indexOf(minimo);
+  }
+
+  /**
+   * Dias que faltam para o professor poder trocar o @username de novo.
+   * 0 = liberado (nunca trocou, ou ja passaram 60 dias desde a ultima troca).
+   */
+  diasParaTrocarUsername(agora: Date = new Date()): number {
+    if (!this.lastUsernameChange) return 0;
+    const desde = new Date(this.lastUsernameChange).getTime();
+    if (Number.isNaN(desde)) return 0;
+    const passados = (agora.getTime() - desde) / 86_400_000;
+    const restam = Math.ceil(USERNAME_COOLDOWN_DIAS - passados);
+    return restam > 0 ? restam : 0;
+  }
+
+  /** Verdadeiro se o professor esta liberado para trocar o @username agora. */
+  podeAlterarUsername(agora: Date = new Date()): boolean {
+    return this.diasParaTrocarUsername(agora) === 0;
   }
 
   /**

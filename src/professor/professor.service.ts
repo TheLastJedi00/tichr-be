@@ -3,6 +3,24 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PlanoAtual, ProfessorEntity } from './entities/professor.entity';
 import { ProfessorRepository } from './professor.repository';
 
+/**
+ * Perfil serializavel para o front: campos de dados + derivados da trava de
+ * username (getters de classe nao aparecem no JSON, entao vao explicitos aqui).
+ */
+export interface ProfessorView {
+  uid: string;
+  nomeExibicao?: string;
+  disciplina?: string;
+  bio?: string;
+  username?: string;
+  avatarUrl?: string;
+  disciplinas?: string[];
+  planoAtual: PlanoAtual;
+  slotsAdicionaisComprados: number;
+  podeAlterarUsername: boolean;
+  diasParaTrocarUsername: number;
+}
+
 @Injectable()
 export class ProfessorService {
   constructor(private readonly repo: ProfessorRepository) {}
@@ -10,6 +28,28 @@ export class ProfessorService {
   /** Retorna o perfil do professor, ou um perfil vazio (so uid) se ainda nao existir. */
   async getProfile(uid: string): Promise<ProfessorEntity> {
     return (await this.repo.findByUid(uid)) ?? new ProfessorEntity({ uid });
+  }
+
+  /** Monta a "view" serializavel do perfil (campos + derivados da trava). */
+  static montarView(p: ProfessorEntity): ProfessorView {
+    return {
+      uid: p.uid,
+      nomeExibicao: p.nomeExibicao,
+      disciplina: p.disciplina,
+      bio: p.bio,
+      username: p.username,
+      avatarUrl: p.avatarUrl,
+      disciplinas: p.disciplinas,
+      planoAtual: p.planoAtual,
+      slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
+      podeAlterarUsername: p.podeAlterarUsername(),
+      diasParaTrocarUsername: p.diasParaTrocarUsername(),
+    };
+  }
+
+  /** Perfil do professor ja no formato de view (para os controllers). */
+  async getProfileView(uid: string): Promise<ProfessorView> {
+    return ProfessorService.montarView(await this.getProfile(uid));
   }
 
   /** Normaliza o handle: remove '@' inicial e baixa a caixa. */
