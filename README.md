@@ -132,7 +132,7 @@ Agrupa as regras de recorrência de um conjunto de aulas.
 | `nomePontuacao` | string? | rótulo livre da pontuação (ex.: `XP`, `Aura`; default `XP`) |
 | `rankingAtivo` | boolean? | liga/desliga o ranking (default `true`) |
 | `rotuloAdicionar` / `rotuloRemover` | string? | rótulos dos botões de pontuar (ex.: `Moggar` / `Punir`; default `Adicionar`/`Remover`) |
-| `pinTurma` | string? | PIN de **6 dígitos** da turma (portal do aluno). Gerado no cadastro; **backfill** ao abrir turmas antigas |
+| `pinTurma` | string? | **Smart PIN** da turma (portal do aluno): **2 dígitos** (novo) ou 6 díg (legado). Gerado no cadastro; **backfill** ao abrir turmas antigas |
 
 > Os 5 campos de config têm defaults aplicados no getter `TurmaEntity.configPontuacao`
 > — turmas antigas sem os campos assumem `XP`/ativos.
@@ -192,7 +192,7 @@ Lista de chamada de uma turma (não é conta do Firebase). Ganha PIN e XP para o
 | `id` / `turmaId` | string | |
 | `nome` | string | |
 | `tagsPerfil` | string[]? | tags livres para dinâmicas |
-| `pinAcesso` | string? | PIN de 4 dígitos, **único por turma**, gerado no cadastro |
+| `pinAcesso` | string? | **Smart PIN** do aluno: **2 dígitos sequenciais** ('01', '02', …), único por turma (4 díg no legado) |
 | `xpTotal` | number | pontuação materializada (soma dos `xp_logs`) |
 | `equipeId` | string \| null? | equipe persistente do aluno; `null`/ausente = **sem equipe** (pool) |
 | `cargoIds` | string[]? | cargos atribuídos ao aluno (relação **N↔N** com `cargos`) |
@@ -312,16 +312,17 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 |---|---|---|---|
 | `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, refreshToken, expiresIn, uid, email }` |
 | `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo } }` — JWT de aluno + config da turma |
-| `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config: { nomePontuacao, rankingAtivo } }` — info da tela de login do aluno |
+| `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config, pinAlunoLength }` — info da tela de login do aluno (`pinAlunoLength` = quantos slots de PIN exibir) |
 | `GET` | `/` **(pública)** | — | health check |
 
 ### Turmas
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `POST` | `/turmas` | `CreateTurmaDto` | `{ turma, sessoes }` — barrado pelo **`PlanosGuard`** (403 `LIMIT_REACHED` se estourar a cota) |
+| `POST` | `/turmas` | `CreateTurmaDto` | `{ turma, sessoes }` — barrado pelo **`PlanosGuard`** (403 `LIMIT_REACHED`); 400 `LIMITE_TURMAS` no teto estrutural de **99 ativas** |
 | `GET` | `/turmas` | — | `TurmaEntity[]` |
-| `GET` | `/turmas/:id` | — | `TurmaEntity` (404 se não for do professor). **Backfill** do `pinTurma` se ausente |
+| `GET` | `/turmas/:id` | — | `TurmaEntity` (404 se não for do professor). **Backfill** do `pinTurma` (2 díg) se ausente |
 | `GET` | `/turmas/:id/progresso` | — | `{ concluidas, total, pct, pontuacaoBase }` — evolução do curso + **base coletiva** (`concluidas × 10`) |
+| `POST` | `/turmas/:id/migrar-pins` | — | `{ turma, alunos }` — migra a turma para **Smart PINs**: regenera o PIN da sala (2 díg) e redistribui os PINs dos alunos ('01', '02', …) |
 | `PUT` | `/turmas/:id` | `UpdateTurmaDto` | `{ turma, sessoes }` — **reprojeta**; aceita `encerradaManualmente` |
 
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
@@ -370,8 +371,8 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 ### Portal — jornada pública de acesso do aluno
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `{ professor: { nome, username, avatarUrl? }, turmas: [{ turmaId, nome, cor }] }` — professor (com **avatar**) + só turmas **ativas** |
-| `POST` | `/portal/turma/:turmaId/alunos` **(pública)** | `{ pinTurma }` | valida o **PIN de 6 díg** → `{ turmaId, turmaNome, alunos:[{id,nome}], config }` (nomes só após o PIN) |
+| `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `{ professor: { nome, username, avatarUrl? }, turmas: [{ turmaId, nome, cor, pinLength }] }` — professor (com **avatar**) + só turmas **ativas** (`pinLength` = 2 Smart / 6 legado) |
+| `POST` | `/portal/turma/:turmaId/alunos` **(pública)** | `{ pinTurma }` | valida o **PIN (2–6 díg)** → `{ turmaId, turmaNome, alunos:[{id,nome}], config, pinAlunoLength }` (nomes só após o PIN) |
 
 ### Portal do aluno (`@Roles('STUDENT')`)
 | Método | Rota | Resposta |
@@ -581,14 +582,27 @@ O aluno acessa o portal sem e-mail, por uma jornada pública em camadas:
 
 1. **Busca** pelo `@username` do professor → `GET /portal/professor/:username/turmas`
    devolve apenas as turmas **ativas** (omite encerradas/expiradas).
-2. **PIN da turma** (6 díg) → `POST /portal/turma/:turmaId/alunos` só devolve os **nomes**
-   após validar o PIN — isolamento entre turmas.
-3. **PIN do aluno** (4 díg) → `POST /auth/aluno` emite o JWT de aluno.
+2. **PIN da turma** (2 díg Smart / 6 díg legado) → `POST /portal/turma/:turmaId/alunos` só devolve
+   os **nomes** após validar o PIN — isolamento entre turmas.
+3. **PIN do aluno** (2 díg Smart / 4 díg legado) → `POST /auth/aluno` emite o JWT de aluno.
 
 O `username` é único e normalizado (sem `@`, minúsculo); `GET /profile/check-username`
 verifica disponibilidade. O `pinTurma` é gerado no cadastro da turma e recebe **backfill**
 ao abrir turmas antigas (`TurmaService.buscarTurma`). Na busca, `GET /portal/professor/...`
 devolve também o **avatar** do professor (âncora visual do card de resultado).
+
+### Smart PINs (2 dígitos) e migração
+
+Para reduzir o atrito no login em aula, os PINs são **curtos e memorizáveis**:
+
+- **PIN da turma:** 2 dígitos, único entre as turmas **ativas** do professor (`proximoPinCurto`).
+- **PIN do aluno:** 2 dígitos **sequenciais** ('01', '02', …), único por turma, atribuído no cadastro.
+- **Limites estruturais:** máximo de **99 turmas ativas** por professor e **99 alunos** por turma
+  (`LIMITE_TURMAS_ATIVAS` / `LIMITE_ALUNOS_TURMA` → 400 `LIMITE_TURMAS` / `LIMITE_ALUNOS`).
+- **Migração transparente:** turmas legadas (PIN 6 díg) migram via `POST /turmas/:id/migrar-pins`
+  (`TurmaService.migrarPins`), que regenera o PIN da sala e **redistribui** os PINs dos alunos em
+  sequência. Enquanto não migram, seguem funcionando: os DTOs aceitam 2–6 díg (turma) / 2–4 díg
+  (aluno), e o portal informa `pinLength`/`pinAlunoLength` para o front exibir o nº certo de slots.
 
 ### Trava de `@username` (cooldown de 60 dias)
 

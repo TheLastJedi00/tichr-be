@@ -1,7 +1,10 @@
 import { Matches } from 'class-validator';
 
-/** PIN de 6 dígitos da turma para liberar a lista de nomes no portal. */
+/**
+ * PIN da turma para liberar a lista de nomes no portal.
+ * Aceita 2 díg (Smart PIN) ou 6 díg (turma legada ainda não migrada).
+ */
 export class DesbloquearTurmaDto {
-  @Matches(/^\d{6}$/, { message: 'pinTurma deve ter 6 dígitos' })
+  @Matches(/^\d{2,6}$/, { message: 'pinTurma deve ter de 2 a 6 dígitos' })
   pinTurma: string;
 }

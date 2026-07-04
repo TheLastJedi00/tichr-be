@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { hojeISO } from '../common/date.util';
+import { LIMITE_ALUNOS_TURMA, proximoPinCurto } from '../common/pin.util';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
@@ -114,28 +116,34 @@ export class AlunoService {
 
     // Coleta os PINs ja usados na turma para garantir unicidade.
     const existentes = await this.alunoRepo.findByTurma(turmaId);
+    if (existentes.length + limpos.length > LIMITE_ALUNOS_TURMA) {
+      throw new BadRequestException({
+        code: 'LIMITE_ALUNOS',
+        message: `Limite de ${LIMITE_ALUNOS_TURMA} alunos por turma atingido.`,
+      });
+    }
     const pinsUsados = new Set(
       existentes.map((a) => a.pinAcesso).filter((p): p is string => !!p),
     );
 
-    return Promise.all(
-      limpos.map((nome) => {
-        const pinAcesso = this.gerarPinUnico(pinsUsados);
-        pinsUsados.add(pinAcesso);
-        return this.alunoRepo.create(
+    // Sequencial p/ manter a ordem dos Smart PINs ('01', '02', ...).
+    const criados: AlunoEntity[] = [];
+    for (const nome of limpos) {
+      const pinAcesso = proximoPinCurto(pinsUsados);
+      if (!pinAcesso) {
+        throw new BadRequestException({
+          code: 'LIMITE_ALUNOS',
+          message: `Limite de ${LIMITE_ALUNOS_TURMA} alunos por turma atingido.`,
+        });
+      }
+      pinsUsados.add(pinAcesso);
+      criados.push(
+        await this.alunoRepo.create(
           new AlunoEntity({ turmaId, nome, pinAcesso, xpTotal: 0 }),
-        );
-      }),
-    );
-  }
-
-  /** Gera um PIN de 4 digitos que ainda nao esteja em uso na turma. */
-  private gerarPinUnico(usados: Set<string>): string {
-    let pin: string;
-    do {
-      pin = String(Math.floor(1000 + Math.random() * 9000));
-    } while (usados.has(pin));
-    return pin;
+        ),
+      );
+    }
+    return criados;
   }
 
   /**

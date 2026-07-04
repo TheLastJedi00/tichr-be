@@ -55,6 +55,7 @@ export class AuthService {
     turmaNome: string;
     alunos: Array<{ id: string; nome: string }>;
     config: TurmaConfigPublica;
+    pinAlunoLength: number;
   }> {
     const db = this.firebase.firestore;
     const turmaSnap = await db.collection('turmas').doc(turmaId).get();
@@ -65,6 +66,10 @@ export class AuthService {
       .collection('alunos')
       .where('turmaId', '==', turmaId)
       .get();
+    const pinAlunoLength =
+      (alunosSnap.docs
+        .map((d) => d.data().pinAcesso as string | undefined)
+        .find((p) => !!p)?.length) ?? 4;
     return {
       turmaId,
       turmaNome: (turmaSnap.data()?.nome as string) ?? 'Turma',
@@ -73,6 +78,7 @@ export class AuthService {
         nome: d.data().nome as string,
       })),
       config: this.configPublica(turmaSnap.data()),
+      pinAlunoLength,
     };
   }
 

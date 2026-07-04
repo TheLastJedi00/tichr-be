@@ -31,7 +31,7 @@ describe('PortalService.turmasAtivas', () => {
       }),
     );
     turmaRepo.findByProfessor.mockResolvedValue([
-      new TurmaEntity({ id: 't1', nome: 'Turma A', cor: '#123456', tipoModalidade: 'GRADE_FIXA' }),
+      new TurmaEntity({ id: 't1', nome: 'Turma A', cor: '#123456', tipoModalidade: 'GRADE_FIXA', pinTurma: '07' }),
       new TurmaEntity({
         id: 't2',
         nome: 'Encerrada',
@@ -47,7 +47,10 @@ describe('PortalService.turmasAtivas', () => {
       username: 'prof.marina',
       avatarUrl: 'https://cdn/foto.png',
     });
-    expect(res.turmas).toEqual([{ turmaId: 't1', nome: 'Turma A', cor: '#123456' }]);
+    // Smart PIN de 2 díg → pinLength 2 (informa quantos slots o portal exibe).
+    expect(res.turmas).toEqual([
+      { turmaId: 't1', nome: 'Turma A', cor: '#123456', pinLength: 2 },
+    ]);
   });
 
   it('404 quando o @username nao existe', async () => {

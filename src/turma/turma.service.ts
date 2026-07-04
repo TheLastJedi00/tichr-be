@@ -1,5 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { expandirIntervalo } from '../common/date.util';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { expandirIntervalo, hojeISO } from '../common/date.util';
+import {
+  LIMITE_ALUNOS_TURMA,
+  LIMITE_TURMAS_ATIVAS,
+  proximoPinCurto,
+} from '../common/pin.util';
+import { AlunoEntity } from './entities/aluno.entity';
+import { AlunoRepository } from './repositories/aluno.repository';
 import { CreateExcecaoDto } from './dto/create-excecao.dto';
 import { CreateFeriasDto } from './dto/create-ferias.dto';
 import { CreateTurmaDto } from './dto/create-turma.dto';
@@ -20,6 +31,7 @@ export class TurmaService {
     private readonly sessaoRepo: SessaoRepository,
     private readonly excecaoRepo: ExcecaoRepository,
     private readonly feriasRepo: FeriasRepository,
+    private readonly alunoRepo: AlunoRepository,
   ) {}
 
   listarFerias(professorId: string): Promise<FeriasEntity[]> {
@@ -58,8 +70,16 @@ export class TurmaService {
     dto: CreateTurmaDto,
   ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
     const existentes = await this.turmaRepo.findByProfessor(professorId);
+    const hoje = hojeISO();
+    const ativas = existentes.filter((t) => t.contaComoAtiva(hoje));
+    if (ativas.length >= LIMITE_TURMAS_ATIVAS) {
+      throw new BadRequestException({
+        code: 'LIMITE_TURMAS',
+        message: `Limite de ${LIMITE_TURMAS_ATIVAS} turmas ativas atingido.`,
+      });
+    }
     const pinsUsados = new Set(
-      existentes.map((t) => t.pinTurma).filter((p): p is string => !!p),
+      ativas.map((t) => t.pinTurma).filter((p): p is string => !!p),
     );
     const turma = new TurmaEntity({
       ...dto,
@@ -74,13 +94,55 @@ export class TurmaService {
     return { turma: salva, sessoes };
   }
 
-  /** Gera um PIN de 6 digitos ainda nao usado nas turmas do professor. */
+  /** Gera um Smart PIN de 2 digitos ainda nao usado nas turmas ativas do professor. */
   private gerarPinTurma(usados: Set<string>): string {
-    let pin: string;
-    do {
-      pin = String(Math.floor(100000 + Math.random() * 900000));
-    } while (usados.has(pin));
+    const pin = proximoPinCurto(usados);
+    if (!pin) {
+      throw new BadRequestException({
+        code: 'LIMITE_TURMAS',
+        message: `Limite de ${LIMITE_TURMAS_ATIVAS} turmas ativas atingido.`,
+      });
+    }
     return pin;
+  }
+
+  /**
+   * Migracao para Smart PINs: regenera o PIN da turma (2 dig) e redistribui os
+   * PINs dos alunos sequencialmente ('01', '02', ...). Usado nas turmas legadas
+   * (PIN de 6 dig) para adotar o novo formato do Tichr Qlick.
+   */
+  async migrarPins(
+    professorId: string,
+    turmaId: string,
+  ): Promise<{ turma: TurmaEntity; alunos: AlunoEntity[] }> {
+    const turma = await this.buscarTurma(professorId, turmaId);
+    const hoje = hojeISO();
+    const outras = (await this.turmaRepo.findByProfessor(professorId)).filter(
+      (t) => t.id !== turmaId && t.contaComoAtiva(hoje),
+    );
+    const usados = new Set(
+      outras.map((t) => t.pinTurma).filter((p): p is string => !!p),
+    );
+    const novoPin = this.gerarPinTurma(usados);
+    turma.pinTurma = novoPin;
+    await this.turmaRepo.update(turmaId, { pinTurma: novoPin });
+
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    if (alunos.length > LIMITE_ALUNOS_TURMA) {
+      throw new BadRequestException({
+        code: 'LIMITE_ALUNOS',
+        message: `Limite de ${LIMITE_ALUNOS_TURMA} alunos por turma atingido.`,
+      });
+    }
+    // Sequencia estavel por nome: '01', '02', ...
+    alunos.sort((a, b) => a.nome.localeCompare(b.nome));
+    let i = 1;
+    for (const aluno of alunos) {
+      const pin = String(i++).padStart(2, '0');
+      aluno.pinAcesso = pin;
+      await this.alunoRepo.update(aluno.id, { pinAcesso: pin });
+    }
+    return { turma, alunos };
   }
 
   /** Cadastra uma excecao e dispara o recalculo das turmas do professor. */
