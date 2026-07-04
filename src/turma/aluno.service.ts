@@ -8,6 +8,7 @@ import { hojeISO } from '../common/date.util';
 import { LIMITE_ALUNOS_TURMA, proximoPinCurto } from '../common/pin.util';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
+import { TurmaEntity } from './entities/turma.entity';
 import { AlunoRepository } from './repositories/aluno.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
@@ -60,16 +61,20 @@ export class AlunoService {
   }
 
   /** Garante que a turma existe e pertence ao professor autenticado. */
-  private async assertTurma(professorId: string, turmaId: string): Promise<void> {
+  private async assertTurma(
+    professorId: string,
+    turmaId: string,
+  ): Promise<TurmaEntity> {
     const turma = await this.turmaRepo.findById(turmaId);
     if (!turma || turma.professorId !== professorId) {
       throw new NotFoundException('Turma nao encontrada.');
     }
+    return turma;
   }
 
   /** Versao publica do assert de posse (usada por outros controllers). */
-  garantirPosse(professorId: string, turmaId: string): Promise<void> {
-    return this.assertTurma(professorId, turmaId);
+  async garantirPosse(professorId: string, turmaId: string): Promise<void> {
+    await this.assertTurma(professorId, turmaId);
   }
 
   /** Ranking da turma: alunos ordenados por XP decrescente com posicionamento. */
@@ -109,7 +114,13 @@ export class AlunoService {
     turmaId: string,
     nomes: string[],
   ): Promise<AlunoEntity[]> {
-    await this.assertTurma(professorId, turmaId);
+    const turma = await this.assertTurma(professorId, turmaId);
+    if (turma.encerradaManualmente) {
+      throw new BadRequestException({
+        code: 'TURMA_ENCERRADA',
+        message: 'Turma encerrada — não é possível adicionar alunos.',
+      });
+    }
     const limpos = [
       ...new Set(nomes.map((n) => n.trim()).filter((n) => n.length > 0)),
     ];

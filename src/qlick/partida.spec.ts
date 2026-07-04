@@ -1,5 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
+import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { PartidaEntity } from './entities/partida.entity';
+import { QlickEntity } from './entities/qlick.entity';
 import { PartidaService } from './partida.service';
 
 /** Firestore fake em memória para a coleção qlick_respostas. */
@@ -247,5 +249,68 @@ describe('PartidaService — fluxo CQRS', () => {
       BadRequestException,
     );
     expect(xp.creditarPartida).not.toHaveBeenCalled();
+  });
+});
+
+describe('PartidaService.criar — escolha de turma (N:N)', () => {
+  const profPhd = () =>
+    ({
+      getProfile: jest
+        .fn()
+        .mockResolvedValue(new ProfessorEntity({ planoAtual: 'PHD' })),
+    }) as never;
+
+  const qlickN = (turmaIds: string[]) =>
+    new QlickEntity({
+      id: 'q1',
+      professorId: 'p1',
+      titulo: 'Q',
+      duracaoSegundos: 20,
+      perguntas: [{ enunciado: 'P', alternativas: ['a', 'b'], corretaIndex: 0 }],
+      turmaIds,
+    });
+
+  const montar = (qlick: QlickEntity, turma: unknown) => {
+    const partidaRepo = { create: jest.fn().mockImplementation(async (p) => p) };
+    const qlickRepo = { findById: jest.fn().mockResolvedValue(qlick) };
+    const turmaRepo = { findById: jest.fn().mockResolvedValue(turma) };
+    const service = new PartidaService(
+      partidaRepo as never,
+      qlickRepo as never,
+      turmaRepo as never,
+      {} as never,
+      profPhd(),
+      firebaseFake(),
+      xpFake(),
+    );
+    return { service, partidaRepo };
+  };
+
+  it('usa a turma escolhida quando o Qlick tem várias', async () => {
+    const { service, partidaRepo } = montar(qlickN(['t1', 't2']), {
+      id: 't2',
+      professorId: 'p1',
+    });
+    const p = await service.criar('p1', 'q1', 't2');
+    expect(p.turmaId).toBe('t2');
+    expect(partidaRepo.create).toHaveBeenCalled();
+  });
+
+  it('recusa turma não atribuída ao Qlick', async () => {
+    const { service } = montar(qlickN(['t1']), { id: 'x', professorId: 'p1' });
+    await expect(service.criar('p1', 'q1', 'outra')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('recusa turma encerrada', async () => {
+    const { service } = montar(qlickN(['t1']), {
+      id: 't1',
+      professorId: 'p1',
+      encerradaManualmente: true,
+    });
+    await expect(service.criar('p1', 'q1', 't1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

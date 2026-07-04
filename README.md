@@ -263,7 +263,8 @@ Um quiz do professor (template reutilizável). **PhD-exclusivo**.
 | `titulo` | string | |
 | `disciplina` | string? | |
 | `topicoId` | string? | vínculo opcional com um tópico do plano de aula |
-| `turmaId` | string? | turma-alvo (necessária para converter pontos em XP) |
+| `turmaId` | string? | **legado** — turma única (mantido; unificado por `turmas`) |
+| `turmaIds` | string[]? | turmas atribuídas ao Qlick (**N:N**) |
 | `duracaoSegundos` | number | tempo por pergunta (default `60`) |
 | `perguntas` | `{ enunciado, alternativas: string[], corretaIndex }[]` | `corretaIndex` **nunca** é exposto ao cliente |
 
@@ -323,6 +324,7 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 | `GET` | `/turmas/:id` | — | `TurmaEntity` (404 se não for do professor). **Backfill** do `pinTurma` (2 díg) se ausente |
 | `GET` | `/turmas/:id/progresso` | — | `{ concluidas, total, pct, pontuacaoBase }` — evolução do curso + **base coletiva** (`concluidas × 10`) |
 | `POST` | `/turmas/:id/migrar-pins` | — | `{ turma, alunos }` — migra a turma para **Smart PINs**: regenera o PIN da sala (2 díg) e redistribui os PINs dos alunos ('01', '02', …) |
+| `POST` | `/turmas/:id/encerrar` | — | `TurmaEntity` — encerra a turma (**somente-leitura**; sai do pool de PINs e vai para o Hall da Fama) |
 | `PUT` | `/turmas/:id` | `UpdateTurmaDto` | `{ turma, sessoes }` — **reprojeta**; aceita `encerradaManualmente` |
 
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
@@ -373,6 +375,8 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 |---|---|---|---|
 | `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `{ professor: { nome, username, avatarUrl? }, turmas: [{ turmaId, nome, cor, pinLength }] }` — professor (com **avatar**) + só turmas **ativas** (`pinLength` = 2 Smart / 6 legado) |
 | `POST` | `/portal/turma/:turmaId/alunos` **(pública)** | `{ pinTurma }` | valida o **PIN (2–6 díg)** → `{ turmaId, turmaNome, alunos:[{id,nome}], config, pinAlunoLength }` (nomes só após o PIN) |
+| `GET` | `/portal/professor/:username/hall` **(pública)** | — | `{ professor, turmas }` — **Hall da Fama**: só as turmas **encerradas** |
+| `GET` | `/portal/turma/:turmaId/hall` **(pública)** | — | `{ turmaId, turmaNome, nomePontuacao, alunos, ranking }` — mural público (ranking final), **sem PIN**; turma ainda ativa → 404 |
 
 ### Portal do aluno (`@Roles('STUDENT')`)
 | Método | Rota | Resposta |
@@ -401,7 +405,8 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | `GET` | `/qlicks/:id` | — | `QlickEntity` |
 | `PUT` | `/qlicks/:id` | `CreateQlickDto` | `QlickEntity` |
 | `DELETE` | `/qlicks/:id` | — | `{ removido: true }` |
-| `POST` | `/qlicks/:qlickId/partida` | — | `PartidaEntity` — cria a partida em `LOBBY` |
+| `PUT` | `/qlicks/:id/turmas` | `{ turmaIds: string[] }` | atribui (substitui) as turmas do Qlick — relação **N:N** |
+| `POST` | `/qlicks/:qlickId/partida` | `{ turmaId? }` | `PartidaEntity` em `LOBBY` — a partida **escolhe a turma** (N:N); 400 `TURMA_NAO_ATRIBUIDA`/`TURMA_ENCERRADA` |
 | `GET` | `/partidas/:id` | — | `PartidaEntity` (dona do professor) |
 | `POST` | `/partidas/:id/iniciar` | — | congela inscritos, ativa a pergunta 1 (400 se sem inscritos) |
 | `POST` | `/partidas/:id/apurar` | — | revela a resposta e o ranking da rodada |
@@ -603,6 +608,24 @@ Para reduzir o atrito no login em aula, os PINs são **curtos e memorizáveis**:
   (`TurmaService.migrarPins`), que regenera o PIN da sala e **redistribui** os PINs dos alunos em
   sequência. Enquanto não migram, seguem funcionando: os DTOs aceitam 2–6 díg (turma) / 2–4 díg
   (aluno), e o portal informa `pinLength`/`pinAlunoLength` para o front exibir o nº certo de slots.
+
+### Arquivamento de turmas, reciclagem de PIN e Hall da Fama
+
+- **Encerrar turma** (`POST /turmas/:id/encerrar`) marca `encerradaManualmente`: a turma vira
+  **somente-leitura** — 400 `TURMA_ENCERRADA` ao adicionar alunos (`AlunoService.adicionar`) ou
+  iniciar uma partida (`PartidaService.criar`).
+- **Reciclagem de PIN:** como a geração só considera turmas **ativas** (`contaComoAtiva`), encerrar
+  uma turma **devolve automaticamente** o PIN de 2 díg ao pool para a próxima turma.
+- **Hall da Fama:** as turmas encerradas viram mural **público, sem PIN** — `GET /portal/.../hall`
+  (lista) e `GET /portal/turma/:id/hall` (ranking final). Turma ainda ativa não é pública (404).
+
+### Tichr Qlick: relação N:N com as turmas
+
+Um Qlick é uma definição **reutilizável** da biblioteca do professor, atribuível a **várias turmas**
+(`QlickEntity.turmaIds`, com `turmaId` legado unificado pelo getter `turmas`). A atribuição vem do
+estúdio (create/update) ou de `PUT /qlicks/:id/turmas`. A **partida escolhe a turma no início**
+(`POST /qlicks/:id/partida { turmaId }`): valida que o Qlick está atribuído à turma e que ela não está
+encerrada; o crédito de XP usa a turma da partida.
 
 ### Trava de `@username` (cooldown de 60 dias)
 

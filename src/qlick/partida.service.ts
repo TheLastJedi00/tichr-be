@@ -33,7 +33,11 @@ export class PartidaService {
   ) {}
 
   /** Cria a partida (LOBBY) a partir de um Qlick do professor (PhD). */
-  async criar(professorId: string, qlickId: string): Promise<PartidaEntity> {
+  async criar(
+    professorId: string,
+    qlickId: string,
+    turmaId?: string,
+  ): Promise<PartidaEntity> {
     const professor = await this.professorService.getProfile(professorId);
     if (!professor.podeGamificar) {
       throw new ForbiddenException({
@@ -45,11 +49,33 @@ export class PartidaService {
     if (!qlick || qlick.professorId !== professorId) {
       throw new NotFoundException('Qlick nao encontrado.');
     }
+    // A partida escolhe a turma no início (N:N). Sem escolha, cai na única
+    // turma atribuída ao Qlick (compat) — ou nenhuma.
+    const turmasDoQlick = qlick.turmas;
+    const escolhida = turmaId ?? (turmasDoQlick.length === 1 ? turmasDoQlick[0] : undefined);
+    if (turmaId && !turmasDoQlick.includes(turmaId)) {
+      throw new BadRequestException({
+        code: 'TURMA_NAO_ATRIBUIDA',
+        message: 'Este Qlick não está atribuído a essa turma.',
+      });
+    }
+    if (escolhida) {
+      const turma = await this.turmaRepo.findById(escolhida);
+      if (!turma || turma.professorId !== professorId) {
+        throw new NotFoundException('Turma nao encontrada.');
+      }
+      if (turma.encerradaManualmente) {
+        throw new BadRequestException({
+          code: 'TURMA_ENCERRADA',
+          message: 'Turma encerrada — não é possível iniciar jogos.',
+        });
+      }
+    }
     return this.partidaRepo.create(
       new PartidaEntity({
         qlickId,
         professorId,
-        turmaId: qlick.turmaId,
+        turmaId: escolhida,
         titulo: qlick.titulo,
         status: 'LOBBY',
         criadaEm: new Date().toISOString(),

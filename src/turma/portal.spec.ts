@@ -60,3 +60,67 @@ describe('PortalService.turmasAtivas', () => {
     );
   });
 });
+
+describe('PortalService — Hall da Fama', () => {
+  const montar = () => {
+    const professorService = { findByUsername: jest.fn() };
+    const turmaRepo = { findByProfessor: jest.fn(), findById: jest.fn() };
+    const alunoRepo = { findByTurma: jest.fn() };
+    const service = new PortalService(
+      professorService as unknown as ProfessorService,
+      turmaRepo as unknown as TurmaRepository,
+      alunoRepo as unknown as AlunoRepository,
+    );
+    return { service, professorService, turmaRepo, alunoRepo };
+  };
+
+  it('hall() devolve só as turmas encerradas/inativas', async () => {
+    const { service, professorService, turmaRepo } = montar();
+    professorService.findByUsername.mockResolvedValue(
+      new ProfessorEntity({ uid: 'u1', username: 'prof.marina' }),
+    );
+    turmaRepo.findByProfessor.mockResolvedValue([
+      new TurmaEntity({ id: 'ativa', nome: 'Ativa', tipoModalidade: 'GRADE_FIXA' }),
+      new TurmaEntity({
+        id: 'fim',
+        nome: 'Encerrada',
+        tipoModalidade: 'GRADE_FIXA',
+        encerradaManualmente: true,
+      }),
+    ]);
+
+    const res = await service.hall('prof.marina');
+    expect(res.turmas.map((t) => t.turmaId)).toEqual(['fim']);
+  });
+
+  it('hallTurma() devolve ranking por pontuação, sem PIN', async () => {
+    const { service, turmaRepo, alunoRepo } = montar();
+    turmaRepo.findById.mockResolvedValue(
+      new TurmaEntity({
+        id: 'fim',
+        nome: 'Encerrada',
+        tipoModalidade: 'GRADE_FIXA',
+        encerradaManualmente: true,
+      }),
+    );
+    alunoRepo.findByTurma.mockResolvedValue([
+      { id: 'a1', nome: 'Ana', xpTotal: 50, pinAcesso: '01' },
+      { id: 'a2', nome: 'Bruno', xpTotal: 120, pinAcesso: '02' },
+    ]);
+
+    const res = await service.hallTurma('fim');
+    expect(res.ranking[0]).toMatchObject({ posicao: 1, nome: 'Bruno', xpTotal: 120 });
+    expect(res.ranking[1]).toMatchObject({ posicao: 2, nome: 'Ana' });
+    expect(JSON.stringify(res)).not.toContain('pinAcesso');
+  });
+
+  it('hallTurma() recusa turma ainda ativa (404)', async () => {
+    const { service, turmaRepo } = montar();
+    turmaRepo.findById.mockResolvedValue(
+      new TurmaEntity({ id: 'ativa', nome: 'Ativa', tipoModalidade: 'GRADE_FIXA' }),
+    );
+    await expect(service.hallTurma('ativa')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+});

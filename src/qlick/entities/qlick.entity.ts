@@ -17,7 +17,12 @@ export class QlickEntity {
   /** Metadados/planejamento (opcionais). */
   disciplina?: string;
   topicoId?: string;
+
+  /** Legado: turma única. Substituído por `turmaIds` (N:N). */
   turmaId?: string;
+
+  /** Turmas às quais o Qlick foi atribuído (relação N:N por referência de IDs). */
+  turmaIds?: string[];
 
   /** Limite de tempo por questão (segundos; default 60). */
   duracaoSegundos: number;
@@ -26,5 +31,14 @@ export class QlickEntity {
 
   constructor(partial: Partial<QlickEntity> = {}) {
     Object.assign(this, partial);
+  }
+
+  /** Turmas atribuídas (N:N + legado `turmaId`), sem duplicatas. */
+  get turmas(): string[] {
+    const ids = [...(this.turmaIds ?? [])];
+    if (this.turmaId && !ids.includes(this.turmaId)) {
+      ids.push(this.turmaId);
+    }
+    return ids;
   }
 }

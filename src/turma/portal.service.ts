@@ -54,6 +54,64 @@ export class PortalService {
   }
 
   /**
+   * Hall da Fama: turmas **encerradas** do professor (por @username). Mural
+   * público — não exige PIN, é só celebração/histórico.
+   */
+  async hall(username: string): Promise<{
+    professor: { nome: string; username: string; avatarUrl?: string };
+    turmas: Array<{ turmaId: string; nome: string; cor?: string }>;
+  }> {
+    const professor = await this.professorService.findByUsername(username);
+    if (!professor) {
+      throw new NotFoundException('Professor nao encontrado.');
+    }
+    const hoje = hojeISO();
+    const turmas = await this.turmaRepo.findByProfessor(professor.uid);
+    return {
+      professor: {
+        nome: professor.nomeExibicao ?? professor.username ?? username,
+        username: professor.username ?? username,
+        avatarUrl: professor.avatarUrl,
+      },
+      turmas: turmas
+        .filter((t) => !t.contaComoAtiva(hoje))
+        .map((t) => ({ turmaId: t.id, nome: t.nome, cor: t.cor })),
+    };
+  }
+
+  /**
+   * Mural público de uma turma encerrada: roster + ranking final por pontuação,
+   * **sem PIN** (read-only). Turmas ainda ativas continuam exigindo o PIN.
+   */
+  async hallTurma(turmaId: string) {
+    const turma = await this.turmaRepo.findById(turmaId);
+    if (!turma) {
+      throw new NotFoundException('Turma nao encontrada.');
+    }
+    if (turma.contaComoAtiva(hojeISO())) {
+      // Turma ativa não é pública: o acesso ainda passa pelo PIN.
+      throw new NotFoundException('Turma nao encontrada.');
+    }
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    const cfg = turma.configPontuacao;
+    const ranking = [...alunos]
+      .sort((a, b) => (b.xpTotal ?? 0) - (a.xpTotal ?? 0))
+      .map((a, i) => ({
+        posicao: i + 1,
+        alunoId: a.id,
+        nome: a.nome,
+        xpTotal: a.xpTotal ?? 0,
+      }));
+    return {
+      turmaId,
+      turmaNome: turma.nome,
+      nomePontuacao: cfg.nomePontuacao,
+      alunos: alunos.map((a) => ({ id: a.id, nome: a.nome })),
+      ranking,
+    };
+  }
+
+  /**
    * Valida o PIN de 6 dígitos da turma e só então devolve os nomes dos alunos
    * (isolamento entre turmas) + a config pública de pontuação.
    */

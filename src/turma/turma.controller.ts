@@ -60,6 +60,12 @@ export class TurmaController {
     return this.turmaService.migrarPins(professorId, id);
   }
 
+  /** Encerra a turma (vira somente-leitura e libera o PIN de volta ao pool). */
+  @Post('turmas/:id/encerrar')
+  encerrar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.turmaService.encerrar(professorId, id);
+  }
+
   /** Progresso do curso (aulas concluidas/total) + base coletiva. */
   @Get('turmas/:id/progresso')
   async progresso(

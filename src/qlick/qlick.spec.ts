@@ -89,4 +89,42 @@ describe('QlickService', () => {
     await service.criar('p1', { ...dtoValido(), turmaId: 't1' });
     expect(turmaService.buscarTurma).toHaveBeenCalledWith('p1', 't1');
   });
+
+  it('turmas getter une turmaIds (N:N) + legado turmaId', () => {
+    expect(new QlickEntity({ turmaIds: ['a'], turmaId: 'b' }).turmas).toEqual(['a', 'b']);
+    expect(new QlickEntity({ turmaId: 'b' }).turmas).toEqual(['b']);
+    expect(new QlickEntity({ turmaIds: ['a', 'b'] }).turmas).toEqual(['a', 'b']);
+  });
+
+  it('cria com turmaIds (N:N) validando posse de cada turma', async () => {
+    const repo = {
+      create: jest.fn().mockImplementation(async (q) => new QlickEntity({ ...(q as object), id: 'q1' })),
+    };
+    const turmaService = {
+      buscarTurma: jest.fn().mockResolvedValue({ id: 't', professorId: 'p1' }),
+    };
+    const service = new QlickService(repo as never, professorFake('PHD'), turmaService as never);
+
+    const q = await service.criar('p1', { ...dtoValido(), turmaIds: ['t1', 't2'] });
+
+    expect(turmaService.buscarTurma).toHaveBeenCalledTimes(2);
+    expect(q.turmaIds).toEqual(['t1', 't2']);
+    expect(q.turmaId).toBe('t1');
+  });
+
+  it('atribuirTurmas substitui as turmas do Qlick', async () => {
+    const repo = {
+      findById: jest.fn().mockResolvedValue(
+        new QlickEntity({ id: 'q1', professorId: 'p1', turmaIds: ['old'] }),
+      ),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const turmaService = { buscarTurma: jest.fn().mockResolvedValue({}) };
+    const service = new QlickService(repo as never, professorFake('PHD'), turmaService as never);
+
+    const q = await service.atribuirTurmas('p1', 'q1', ['a', 'b']);
+
+    expect(q.turmaIds).toEqual(['a', 'b']);
+    expect(repo.update).toHaveBeenCalledWith('q1', { turmaIds: ['a', 'b'], turmaId: 'a' });
+  });
 });
