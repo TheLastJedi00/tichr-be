@@ -45,6 +45,15 @@ export class PartidaService {
     if (!qlick || qlick.professorId !== professorId) {
       throw new NotFoundException('Qlick nao encontrado.');
     }
+    if (qlick.turmaId) {
+      const turma = await this.turmaRepo.findById(qlick.turmaId);
+      if (turma?.encerradaManualmente) {
+        throw new BadRequestException({
+          code: 'TURMA_ENCERRADA',
+          message: 'Turma encerrada — não é possível iniciar jogos.',
+        });
+      }
+    }
     return this.partidaRepo.create(
       new PartidaEntity({
         qlickId,

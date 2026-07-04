@@ -145,6 +145,18 @@ export class TurmaService {
     return { turma, alunos };
   }
 
+  /**
+   * Encerra a turma (Hall da Fama): marca `encerradaManualmente`, tornando-a
+   * **somente leitura**. Deixa de contar como ativa → o Smart PIN de 2 díg volta
+   * ao pool para a próxima turma criada.
+   */
+  async encerrar(professorId: string, turmaId: string): Promise<TurmaEntity> {
+    const turma = await this.buscarTurma(professorId, turmaId);
+    turma.encerradaManualmente = true;
+    await this.turmaRepo.update(turmaId, { encerradaManualmente: true });
+    return turma;
+  }
+
   /** Cadastra uma excecao e dispara o recalculo das turmas do professor. */
   async adicionarExcecao(
     professorId: string,
