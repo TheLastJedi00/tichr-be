@@ -179,6 +179,8 @@ Perfil do professor.
 | `bio` | string? |
 | `disciplinas` | string[]? (competências) |
 | `username` | string? — handle público único (`@usuario`), **chave de busca do portal do aluno** |
+| `lastUsernameChange` | string? (ISO) — última troca do handle; base da **trava de cooldown de 60 dias** |
+| `avatarUrl` | string? — URL pública da foto de perfil (Firebase Storage; vazio = placeholder) |
 | `planoAtual` | `'ESTAGIARIO' \| 'GRADUADO' \| 'MESTRE' \| 'PHD'` (default `ESTAGIARIO`) |
 | `slotsAdicionaisComprados` | number (default `0`) — vagas avulsas somadas ao limite do plano |
 
@@ -368,7 +370,7 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 ### Portal — jornada pública de acesso do aluno
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `[{ turmaId, nome, cor }]` — só turmas **ativas** do professor |
+| `GET` | `/portal/professor/:username/turmas` **(pública)** | — | `{ professor: { nome, username, avatarUrl? }, turmas: [{ turmaId, nome, cor }] }` — professor (com **avatar**) + só turmas **ativas** |
 | `POST` | `/portal/turma/:turmaId/alunos` **(pública)** | `{ pinTurma }` | valida o **PIN de 6 díg** → `{ turmaId, turmaNome, alunos:[{id,nome}], config }` (nomes só após o PIN) |
 
 ### Portal do aluno (`@Roles('STUDENT')`)
@@ -432,9 +434,14 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 ### Perfil
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `GET` | `/profile` | — | `ProfessorEntity` (perfil **vazio** só com `uid` se ainda não existe — 200, não 404) |
+| `GET` | `/profile` | — | `ProfessorView` — campos do perfil + derivados `podeAlterarUsername` / `diasParaTrocarUsername` (perfil vazio só com `uid` se ainda não existe — 200, não 404) |
 | `GET` | `/profile/check-username?u=` | — | `{ username, disponivel }` — disponibilidade do handle (debounce da UI) |
-| `PUT` | `/profile` | `{ nomeExibicao?, username?, disciplina?, bio?, disciplinas?[] }` | `ProfessorEntity` (upsert; `username` normalizado e **único**, 409 se em uso) |
+| `PUT` | `/profile` | `{ nomeExibicao?, username?, disciplina?, bio?, disciplinas?[], avatarUrl? }` | `ProfessorView` (upsert; `username` normalizado e **único** → 409 se em uso; troca do handle **trava 60 dias** → 409 `{ code: 'USERNAME_COOLDOWN', diasRestantes }`) |
+
+### Home (BFF — agregador do painel)
+| Método | Rota | Resposta |
+|---|---|---|
+| `GET` | `/home` | `{ profile: ProfessorView, turmas: TurmaEntity[] }` — perfil + turmas num **único roundtrip** (`Promise.all` no servidor, fim do efeito cascata) |
 
 ---
 
@@ -580,7 +587,17 @@ O aluno acessa o portal sem e-mail, por uma jornada pública em camadas:
 
 O `username` é único e normalizado (sem `@`, minúsculo); `GET /profile/check-username`
 verifica disponibilidade. O `pinTurma` é gerado no cadastro da turma e recebe **backfill**
-ao abrir turmas antigas (`TurmaService.buscarTurma`).
+ao abrir turmas antigas (`TurmaService.buscarTurma`). Na busca, `GET /portal/professor/...`
+devolve também o **avatar** do professor (âncora visual do card de resultado).
+
+### Trava de `@username` (cooldown de 60 dias)
+
+O handle é um identificador estável — não pode ser volátil. Quando o `PUT /profile` **muda**
+o `username`, `ProfessorService.updateProfile` grava `lastUsernameChange`; novas trocas só
+são permitidas após **60 dias** (`ProfessorEntity.diasParaTrocarUsername`). Dentro do
+período, a API responde **409** `{ code: 'USERNAME_COOLDOWN', diasRestantes }` e o front
+desabilita o campo exibindo a microcópia. Salvar outros campos mantendo o mesmo handle
+**não** reinicia o relógio.
 
 ### Plano de Aula (escopo geral, tópicos e alocação)
 
