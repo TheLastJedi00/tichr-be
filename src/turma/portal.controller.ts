@@ -14,6 +14,20 @@ export class PortalController {
     return this.portalService.turmasAtivas(username);
   }
 
+  /** Hall da Fama: turmas encerradas do professor (mural público, sem PIN). */
+  @Public()
+  @Get('professor/:username/hall')
+  hall(@Param('username') username: string) {
+    return this.portalService.hall(username);
+  }
+
+  /** Mural público de uma turma encerrada (roster + ranking final, sem PIN). */
+  @Public()
+  @Get('turma/:turmaId/hall')
+  hallTurma(@Param('turmaId') turmaId: string) {
+    return this.portalService.hallTurma(turmaId);
+  }
+
   @Public()
   @Post('turma/:turmaId/alunos')
   desbloquear(
