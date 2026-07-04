@@ -22,7 +22,12 @@ export class PortalService {
    */
   async turmasAtivas(username: string): Promise<{
     professor: { nome: string; username: string; avatarUrl?: string };
-    turmas: Array<{ turmaId: string; nome: string; cor?: string }>;
+    turmas: Array<{
+      turmaId: string;
+      nome: string;
+      cor?: string;
+      pinLength: number;
+    }>;
   }> {
     const professor = await this.professorService.findByUsername(username);
     if (!professor) {
@@ -38,7 +43,13 @@ export class PortalService {
       },
       turmas: turmas
         .filter((t) => t.contaComoAtiva(hoje))
-        .map((t) => ({ turmaId: t.id, nome: t.nome, cor: t.cor })),
+        // `pinLength` diz ao portal quantos slots de PIN exibir (2 Smart / 6 legado).
+        .map((t) => ({
+          turmaId: t.id,
+          nome: t.nome,
+          cor: t.cor,
+          pinLength: t.pinTurma?.length ?? 6,
+        })),
     };
   }
 
@@ -56,11 +67,15 @@ export class PortalService {
     }
     const alunos = await this.alunoRepo.findByTurma(turmaId);
     const cfg = turma.configPontuacao;
+    // Quantos slots o portal exibe no PIN do aluno (2 Smart / 4 legado).
+    const pinAlunoLength =
+      alunos.find((a) => a.pinAcesso)?.pinAcesso?.length ?? 4;
     return {
       turmaId,
       turmaNome: turma.nome,
       alunos: alunos.map((a) => ({ id: a.id, nome: a.nome })),
       config: { nomePontuacao: cfg.nomePontuacao, rankingAtivo: cfg.rankingAtivo },
+      pinAlunoLength,
     };
   }
 }
