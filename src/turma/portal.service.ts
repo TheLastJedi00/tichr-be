@@ -16,19 +16,30 @@ export class PortalService {
     private readonly alunoRepo: AlunoRepository,
   ) {}
 
-  /** Turmas **ativas** de um professor (por @username) para a busca do aluno. */
-  async turmasAtivas(
-    username: string,
-  ): Promise<Array<{ turmaId: string; nome: string; cor?: string }>> {
+  /**
+   * Dados do professor (com avatar) + suas turmas **ativas** para a busca do
+   * aluno. O avatar da a ancora visual do card de resultado no portal.
+   */
+  async turmasAtivas(username: string): Promise<{
+    professor: { nome: string; username: string; avatarUrl?: string };
+    turmas: Array<{ turmaId: string; nome: string; cor?: string }>;
+  }> {
     const professor = await this.professorService.findByUsername(username);
     if (!professor) {
       throw new NotFoundException('Professor nao encontrado.');
     }
     const hoje = hojeISO();
     const turmas = await this.turmaRepo.findByProfessor(professor.uid);
-    return turmas
-      .filter((t) => t.contaComoAtiva(hoje))
-      .map((t) => ({ turmaId: t.id, nome: t.nome, cor: t.cor }));
+    return {
+      professor: {
+        nome: professor.nomeExibicao ?? professor.username ?? username,
+        username: professor.username ?? username,
+        avatarUrl: professor.avatarUrl,
+      },
+      turmas: turmas
+        .filter((t) => t.contaComoAtiva(hoje))
+        .map((t) => ({ turmaId: t.id, nome: t.nome, cor: t.cor })),
+    };
   }
 
   /**

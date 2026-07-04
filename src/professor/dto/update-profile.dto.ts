@@ -31,6 +31,12 @@ export class UpdateProfileDto {
   @MaxLength(300)
   bio?: string;
 
+  /** URL publica da foto de perfil (devolvida pelo Firebase Storage). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  avatarUrl?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(30)

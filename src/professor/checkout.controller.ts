@@ -1,7 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { UpgradePlanoDto } from './dto/upgrade-plano.dto';
-import { ProfessorService } from './professor.service';
+import { ProfessorService, ProfessorView } from './professor.service';
 
 /**
  * Transacoes de assinatura (mock — sem gateway de pagamento real ainda).
@@ -13,13 +13,20 @@ export class CheckoutController {
 
   /** Compra uma vaga avulsa (+1 slot adicional). */
   @Post('slot-avulso')
-  comprarSlotAvulso(@ProfessorId() uid: string) {
-    return this.professorService.comprarSlotAvulso(uid);
+  async comprarSlotAvulso(@ProfessorId() uid: string): Promise<ProfessorView> {
+    return ProfessorService.montarView(
+      await this.professorService.comprarSlotAvulso(uid),
+    );
   }
 
   /** Faz upgrade/downgrade do plano do professor. */
   @Post('upgrade')
-  upgrade(@ProfessorId() uid: string, @Body() dto: UpgradePlanoDto) {
-    return this.professorService.alterarPlano(uid, dto.plano);
+  async upgrade(
+    @ProfessorId() uid: string,
+    @Body() dto: UpgradePlanoDto,
+  ): Promise<ProfessorView> {
+    return ProfessorService.montarView(
+      await this.professorService.alterarPlano(uid, dto.plano),
+    );
   }
 }
