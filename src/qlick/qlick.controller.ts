@@ -40,6 +40,16 @@ export class QlickController {
     return this.qlickService.atualizar(professorId, id, dto);
   }
 
+  /** Atribui (substitui) as turmas do Qlick — N:N (biblioteca ↔ turmas). */
+  @Put(':id/turmas')
+  atribuirTurmas(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: { turmaIds: string[] },
+  ) {
+    return this.qlickService.atribuirTurmas(professorId, id, dto.turmaIds ?? []);
+  }
+
   @Delete(':id')
   remover(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.qlickService.remover(professorId, id);

@@ -49,6 +49,12 @@ export class CreateQlickDto {
   @IsString()
   turmaId?: string;
 
+  /** Turmas atribuídas ao Qlick (N:N). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  turmaIds?: string[];
+
   @IsOptional()
   @IsInt()
   @Min(5)

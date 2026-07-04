@@ -69,20 +69,53 @@ export class QlickService {
   async criar(professorId: string, dto: CreateQlickDto): Promise<QlickEntity> {
     await this.assertPhd(professorId);
     this.validarPerguntas(dto);
-    if (dto.turmaId) {
-      await this.turmaService.buscarTurma(professorId, dto.turmaId); // valida posse
-    }
+    const turmaIds = await this.validarTurmas(professorId, dto);
     return this.repo.create(
       new QlickEntity({
         professorId,
         titulo: dto.titulo.trim(),
         disciplina: dto.disciplina,
         topicoId: dto.topicoId,
-        turmaId: dto.turmaId,
+        turmaIds,
+        turmaId: turmaIds[0], // mantém o campo legado apontando p/ a 1ª turma
         duracaoSegundos: dto.duracaoSegundos ?? 60,
         perguntas: this.perguntasPlanas(dto),
       }),
     );
+  }
+
+  /** Valida a posse de todas as turmas atribuídas (N:N) e devolve os IDs únicos. */
+  private async validarTurmas(
+    professorId: string,
+    dto: { turmaId?: string; turmaIds?: string[] },
+  ): Promise<string[]> {
+    const ids = [
+      ...new Set([
+        ...(dto.turmaIds ?? []),
+        ...(dto.turmaId ? [dto.turmaId] : []),
+      ]),
+    ];
+    for (const turmaId of ids) {
+      await this.turmaService.buscarTurma(professorId, turmaId); // valida posse
+    }
+    return ids;
+  }
+
+  /** Atribui (substitui) as turmas do Qlick — usado pelo "Adicionar Jogo" da turma. */
+  async atribuirTurmas(
+    professorId: string,
+    id: string,
+    turmaIds: string[],
+  ): Promise<QlickEntity> {
+    const qlick = await this.obter(professorId, id); // valida posse do Qlick
+    const ids = await this.validarTurmas(professorId, { turmaIds });
+    await this.repo.update(id, {
+      turmaIds: ids,
+      turmaId: ids[0] ?? null,
+    } as Partial<QlickEntity>);
+    qlick.turmaIds = ids;
+    qlick.turmaId = ids[0];
+    return qlick;
   }
 
   async atualizar(
@@ -92,14 +125,13 @@ export class QlickService {
   ): Promise<QlickEntity> {
     const qlick = await this.obter(professorId, id);
     this.validarPerguntas(dto);
-    if (dto.turmaId) {
-      await this.turmaService.buscarTurma(professorId, dto.turmaId);
-    }
+    const turmaIds = await this.validarTurmas(professorId, dto);
     const dados = {
       titulo: dto.titulo.trim(),
       disciplina: dto.disciplina ?? null,
       topicoId: dto.topicoId ?? null,
-      turmaId: dto.turmaId ?? null,
+      turmaIds,
+      turmaId: turmaIds[0] ?? null,
       duracaoSegundos: dto.duracaoSegundos ?? 60,
       perguntas: this.perguntasPlanas(dto),
     };
