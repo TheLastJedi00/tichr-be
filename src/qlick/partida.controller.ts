@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { PartidaService } from './partida.service';
 
@@ -11,8 +11,9 @@ export class PartidaController {
   criar(
     @ProfessorId() professorId: string,
     @Param('qlickId') qlickId: string,
+    @Body() dto: { turmaId?: string },
   ) {
-    return this.partidaService.criar(professorId, qlickId);
+    return this.partidaService.criar(professorId, qlickId, dto?.turmaId);
   }
 
   @Get('partidas/:id')
