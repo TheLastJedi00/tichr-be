@@ -6,6 +6,7 @@ import { WorIaService } from './wor-ia.service';
 import { WorJogoController } from './wor-jogo.controller';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorJogoService } from './wor-jogo.service';
+import { WorGameService } from './wor-game.service';
 import { WorMatchController } from './wor-match.controller';
 import { WorMatchRepository } from './wor-match.repository';
 import { WorMatchService } from './wor-match.service';
@@ -21,6 +22,7 @@ import { WorMatchService } from './wor-match.service';
     WorIaService,
     WorMatchService,
     WorMatchRepository,
+    WorGameService,
   ],
 })
 export class WorModule {}
