@@ -250,15 +250,18 @@ export class AdminService {
     return { uid, planoAtual: plano };
   }
 
-  /** Concede/revoga acesso de admin via custom claim do Firebase. */
+  /**
+   * Concede/revoga acesso de admin gravando `isAdmin` no doc do professor
+   * (fonte de verdade no Firestore). Vale na hora, sem exigir re-login.
+   */
   async definirAdmin(
     uid: string,
     conceder: boolean,
   ): Promise<{ uid: string; admin: boolean }> {
-    await this.firebase.auth.setCustomUserClaims(
-      uid,
-      conceder ? { admin: true } : { admin: null },
-    );
+    await this.db
+      .collection('professores')
+      .doc(uid)
+      .set({ isAdmin: conceder }, { merge: true });
     return { uid, admin: conceder };
   }
 
