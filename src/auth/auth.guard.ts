@@ -59,7 +59,14 @@ export class AuthGuard implements CanActivate {
   private async resolveUser(token: string): Promise<RequestUser> {
     try {
       const decoded = await this.authService.verifyToken(token);
-      return { uid: decoded.uid, role: 'PROFESSOR' };
+      const admin =
+        decoded.admin === true || this.authService.isAdminEmail(decoded.email);
+      return {
+        uid: decoded.uid,
+        role: 'PROFESSOR',
+        email: decoded.email,
+        admin,
+      };
     } catch {
       // nao e um token de professor; tenta como aluno abaixo.
     }

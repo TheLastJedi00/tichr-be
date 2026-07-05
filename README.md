@@ -47,6 +47,7 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
+| `ADMIN_EMAILS` | Lista (separada por vírgula) de e-mails com acesso ao **backoffice**. Bootstrap: quem estiver aqui vira admin mesmo sem custom claim. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -312,9 +313,34 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
 | `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, refreshToken, expiresIn, uid, email }` |
+| `POST` | `/auth/signup` **(pública)** | `{ email, password }` | `{ token, … }` — **cadastro frictionless**: cria a conta no Identity Toolkit, provisiona `professores/{uid}` (plano ESTAGIARIO) e já devolve o token (409 `EMAIL_EXISTS`) |
 | `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo } }` — JWT de aluno + config da turma |
 | `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config, pinAlunoLength }` — info da tela de login do aluno (`pinAlunoLength` = quantos slots de PIN exibir) |
 | `GET` | `/` **(pública)** | — | health check |
+
+### Backoffice — Admin (`AdminGuard`)
+Todas exigem a **flag `admin`** no principal (custom claim `admin` do Firebase **ou** e-mail em `ADMIN_EMAILS`), resolvida no `AuthGuard` e verificada pelo `AdminGuard`.
+
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/admin/ping` | — | `{ admin: true }` — sonda usada pelo guard do front |
+| `GET` | `/admin/metrics` | — | `{ totalProfessores, ativos, desativados, porPlano }` |
+| `GET` | `/admin/usuarios?busca=` | — | `UsuarioAdminView[]` — professores + uso (`turmasAtivas`, `alunos`, `qlicks`); filtra por nome/username/e-mail |
+| `GET` | `/admin/usuarios/:uid` | — | `UsuarioAdminView` |
+| `POST` | `/admin/usuarios/:uid/reset-senha` | — | dispara e-mail de redefinição (Identity Toolkit `sendOobCode`) |
+| `POST` | `/admin/usuarios/:uid/limpar-dados` | — | apaga turmas/alunos/qlicks do professor (mantém o login) |
+| `DELETE` | `/admin/usuarios/:uid?hard=` | — | `soft` (flag `desativadoEm`) ou `hard` (dados + `deleteUser` no Auth) |
+| `PATCH` | `/admin/usuarios/:uid/plano` | `{ plano }` | override manual de plano (sem cobrança) |
+| `POST` | `/admin/usuarios/:uid/admin` | `{ conceder }` | concede/revoga admin via `setCustomUserClaims` |
+
+### Cupons
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/admin/cupons` **(admin)** | — | `CupomEntity[]` |
+| `POST` | `/admin/cupons` **(admin)** | `CreateCupomDto` | cria cupom (`PLANO_GRATIS` ou `MESES_GRATIS`) |
+| `PATCH` | `/admin/cupons/:id` **(admin)** | `UpdateCupomDto` | ativa/desativa, ajusta limite |
+| `DELETE` | `/admin/cupons/:id` **(admin)** | — | remove |
+| `POST` | `/checkout/cupom` (professor) | `{ codigo }` | aplica o cupom ao próprio perfil (transação: revalida limite + incrementa `usos`) |
 
 ### Turmas
 | Método | Rota | Corpo | Resposta |
@@ -694,3 +720,34 @@ gravada no doc apenas ao entrar em `RANKING_PARCIAL`. As respostas cruas ficam e
 `qlick_partidas`; todo o resto (incluindo `qlick_respostas`, `qlicks`, `alunos`,
 `xp_logs`) é `read:false, write:false` — o Admin SDK ignora as rules e continua com acesso
 total. Assim, mesmo lendo o realtime, o aluno não alcança as respostas nem forja pontos.
+
+### Painel Administrativo (backoffice) e cupons
+O backoffice é um módulo isolado (`AdminModule`) protegido pelo `AdminGuard`. O
+papel de admin é uma **flag ortogonal** ao `role` (um admin continua sendo
+`PROFESSOR` nas rotas normais): o `AuthGuard` marca `admin` no principal quando o
+ID token traz o **custom claim `admin: true`** ou quando o e-mail está em
+`ADMIN_EMAILS`. O front decide exibir o atalho "Painel Admin" pelo `GET /admin/ping`.
+
+- **Métricas** (`AdminService.metrics`): lê `professores` + `turmas` e agrega em
+  memória (total, ativos = ≥1 turma vigente via `TurmaEntity.contaComoAtiva`,
+  desativados e distribuição por plano).
+- **CRM** (`GET /admin/usuarios`): junta `professores` + uso (`turmas`/`alunos`/`qlicks`)
+  e os e-mails do Firebase Auth (`getUsers` em lotes). Busca por nome/username/e-mail.
+- **Ações**: reset de senha (Identity Toolkit `sendOobCode`), limpar dados
+  (apaga turmas/alunos/qlicks, mantém o login), soft-delete (`desativadoEm`) ou
+  hard-delete (dados + `deleteUser`), override de plano e concessão de admin.
+- **Cupons** (`CupomModule`): `PLANO_GRATIS` (concede um plano) ou `MESES_GRATIS`
+  (define `cortesiaAte = hoje + meses`). A aplicação (`POST /checkout/cupom`) roda
+  numa **transação** que revalida o limite (`maxUsos`) e incrementa `usos`.
+
+**Como criar/promover um administrador (Firebase):**
+1. **Bootstrap por e-mail** (mais simples): adicione o e-mail do professor em
+   `ADMIN_EMAILS` (env) e faça o redeploy. No próximo login ele já é admin.
+2. **Custom claim** (permanente, por usuário): com um admin já ativo, use o próprio
+   painel — abra o professor em **/admin/usuarios** e clique em **"Tornar admin"**
+   (chama `POST /admin/usuarios/:uid/admin { conceder: true }` →
+   `setCustomUserClaims(uid, { admin: true })`). O usuário precisa **renovar o token**
+   (re-login) para o claim valer. Para revogar, use "Revogar admin".
+3. **Manualmente via Admin SDK** (sem painel), rode uma vez com a service account:
+   `getAuth().setCustomUserClaims('<uid>', { admin: true })` (o `<uid>` está no
+   Firebase Console → Authentication).

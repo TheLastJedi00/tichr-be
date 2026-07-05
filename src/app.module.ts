@@ -9,6 +9,8 @@ import { ProfessorModule } from './professor/professor.module';
 import { PlanoAulaModule } from './plano-aula/plano-aula.module';
 import { QlickModule } from './qlick/qlick.module';
 import { HomeModule } from './home/home.module';
+import { AdminModule } from './admin/admin.module';
+import { CupomModule } from './cupom/cupom.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { HomeModule } from './home/home.module';
     PlanoAulaModule,
     QlickModule,
     HomeModule,
+    AdminModule,
+    CupomModule,
   ],
   controllers: [AppController],
   providers: [AppService],
