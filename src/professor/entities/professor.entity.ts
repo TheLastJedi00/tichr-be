@@ -64,8 +64,16 @@ export class ProfessorEntity {
    */
   isAdmin?: boolean;
 
+  /** Última geração de dicas por IA do Tichr Wor (ISO). Base do rate limit 1×/dia. */
+  worIaUltimoUso?: string;
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
+  }
+
+  /** Verdadeiro se o professor já usou a IA do Wor no dia `hojeISO` (YYYY-MM-DD). */
+  usouIaWorHoje(hojeISO: string): boolean {
+    return (this.worIaUltimoUso ?? '').slice(0, 10) === hojeISO;
   }
 
   get temNome(): boolean {
