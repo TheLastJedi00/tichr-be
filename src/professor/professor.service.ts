@@ -19,6 +19,8 @@ export interface ProfessorView {
   slotsAdicionaisComprados: number;
   podeAlterarUsername: boolean;
   diasParaTrocarUsername: number;
+  /** Se o principal autenticado tem acesso ao backoffice (flag do token). */
+  isAdmin: boolean;
 }
 
 @Injectable()
@@ -31,7 +33,7 @@ export class ProfessorService {
   }
 
   /** Monta a "view" serializavel do perfil (campos + derivados da trava). */
-  static montarView(p: ProfessorEntity): ProfessorView {
+  static montarView(p: ProfessorEntity, isAdmin = false): ProfessorView {
     return {
       uid: p.uid,
       nomeExibicao: p.nomeExibicao,
@@ -44,12 +46,13 @@ export class ProfessorService {
       slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
       podeAlterarUsername: p.podeAlterarUsername(),
       diasParaTrocarUsername: p.diasParaTrocarUsername(),
+      isAdmin,
     };
   }
 
   /** Perfil do professor ja no formato de view (para os controllers). */
-  async getProfileView(uid: string): Promise<ProfessorView> {
-    return ProfessorService.montarView(await this.getProfile(uid));
+  async getProfileView(uid: string, isAdmin = false): Promise<ProfessorView> {
+    return ProfessorService.montarView(await this.getProfile(uid), isAdmin);
   }
 
   /** Normaliza o handle: remove '@' inicial e baixa a caixa. */
