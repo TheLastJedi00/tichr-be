@@ -51,6 +51,12 @@ export class ProfessorEntity {
   /** Vagas de turma compradas avulsas, somadas ao limite base do plano. */
   slotsAdicionaisComprados = 0;
 
+  /** Marca de soft-delete (ISO). Preenchido = conta desativada pelo admin. */
+  desativadoEm?: string;
+
+  /** Meses de cortesia concedidos por cupom (ISO da data limite), se houver. */
+  cortesiaAte?: string;
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
   }
