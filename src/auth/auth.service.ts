@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -18,6 +20,8 @@ export interface TurmaConfigPublica {
 
 const IDENTITY_TOOLKIT_URL =
   'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
+const SIGNUP_URL =
+  'https://identitytoolkit.googleapis.com/v1/accounts:signUp';
 
 export interface LoginResult {
   token: string;
@@ -44,6 +48,20 @@ export class AuthService {
   /** Verifica um JWT customizado de aluno e devolve o payload. */
   verifyStudentToken(token: string): StudentTokenPayload {
     return this.jwt.verify<StudentTokenPayload>(token);
+  }
+
+  /** E-mails com acesso de administrador via bootstrap (env `ADMIN_EMAILS`). */
+  private adminEmails(): string[] {
+    return (this.config.get<string>('ADMIN_EMAILS') ?? '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  /** Verdadeiro se o e-mail esta na lista de bootstrap de administradores. */
+  isAdminEmail(email?: string | null): boolean {
+    if (!email) return false;
+    return this.adminEmails().includes(email.toLowerCase());
   }
 
   /**
@@ -128,6 +146,61 @@ export class AuthService {
         xpTotal: data.xpTotal ?? 0,
       },
       turma: this.configPublica(turmaSnap.data()),
+    };
+  }
+
+  /**
+   * Cadastro frictionless: cria o usuario no Identity Toolkit (o backend e o
+   * dono da Web API key), provisiona o doc `professores/{uid}` minimo
+   * (plano ESTAGIARIO) e devolve o ID token para auto-login imediato.
+   */
+  async signup(email: string, password: string): Promise<LoginResult> {
+    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
+    if (!apiKey) {
+      throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
+    }
+
+    const response = await fetch(`${SIGNUP_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    });
+
+    const data = (await response.json()) as {
+      idToken?: string;
+      refreshToken?: string;
+      expiresIn?: string;
+      localId?: string;
+      email?: string;
+      error?: { message?: string };
+    };
+
+    if (!response.ok || !data.idToken || !data.localId) {
+      const code = data.error?.message ?? '';
+      if (code === 'EMAIL_EXISTS') {
+        throw new ConflictException('Esse e-mail ja esta cadastrado.');
+      }
+      if (code.startsWith('WEAK_PASSWORD')) {
+        throw new BadRequestException('Senha muito fraca (minimo 6 caracteres).');
+      }
+      throw new BadRequestException('Nao foi possivel criar a conta.');
+    }
+
+    // Provisiona o perfil minimo (ESTAGIARIO); nome/username/foto vem no soft-block.
+    await this.firebase.firestore
+      .collection('professores')
+      .doc(data.localId)
+      .set(
+        { planoAtual: 'ESTAGIARIO', slotsAdicionaisComprados: 0 },
+        { merge: true },
+      );
+
+    return {
+      token: data.idToken,
+      refreshToken: data.refreshToken ?? '',
+      expiresIn: Number(data.expiresIn ?? 3600),
+      uid: data.localId,
+      email: data.email ?? email,
     };
   }
 
