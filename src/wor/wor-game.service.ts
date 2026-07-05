@@ -214,8 +214,15 @@ export class WorGameService {
       WorMatchEntity.normalizar(palavra.trim());
 
     if (acertou) {
-      team.curar(WOR.CURA_MASSIVA);
-      await this.matches.atualizarTeam(matchId, team.id, { hp: team.hp });
+      if (team.isHorde) {
+        // Usurpação: a Horda rouba o castelo do líder (maior HP entre não-hordas).
+        await this.usurpar(matchId, team);
+      } else {
+        // Triunfo: Cura Massiva.
+        team.curar(WOR.CURA_MASSIVA);
+        await this.matches.atualizarTeam(matchId, team.id, { hp: team.hp });
+      }
+      // A palavra foi decifrada: encerra a onda e avança.
       await this.avancarOnda(matchId);
       return this.view(matchId);
     }
@@ -229,6 +236,46 @@ export class WorGameService {
     await this.matches.atualizar(matchId, {
       turnoEquipeId: this.proximoTurno(match),
     });
+    return this.view(matchId);
+  }
+
+  /**
+   * Usurpação: a Horda `invasora` toma o castelo da equipe de MAIOR HP (o líder),
+   * que vira a nova Horda. Se não houver líder (todos hordas), a invasora reergue
+   * o próprio castelo com HP cheio.
+   */
+  private async usurpar(matchId: string, invasora: WorTeamEntity): Promise<void> {
+    const teams = await this.matches.listarTeams(matchId);
+    const lider = teams
+      .filter((t) => t.id !== invasora.id && !t.isHorde && t.hp > 0)
+      .sort((a, b) => b.hp - a.hp)[0];
+
+    if (!lider) {
+      await this.matches.atualizarTeam(matchId, invasora.id, {
+        hp: WOR.HP_INICIAL,
+        isHorde: false,
+      });
+      return;
+    }
+
+    // A invasora assume o castelo (HP) do líder e a liderança; o líder vira Horda.
+    await this.matches.atualizarTeam(matchId, invasora.id, {
+      hp: lider.hp,
+      isHorde: false,
+    });
+    await this.matches.atualizarTeam(matchId, lider.id, {
+      hp: 0,
+      isHorde: true,
+    });
+  }
+
+  /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
+  async pularPalavra(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    if (match.professorId !== professorId) {
+      throw new ForbiddenException('Essa partida não é sua.');
+    }
+    await this.avancarOnda(matchId);
     return this.view(matchId);
   }
 
