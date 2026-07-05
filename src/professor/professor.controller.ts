@@ -1,6 +1,5 @@
 import { Body, Controller, Get, Put, Query } from '@nestjs/common';
-import { CurrentUser, ProfessorId } from '../auth/current-user.decorator';
-import type { RequestUser } from '../auth/auth.types';
+import { ProfessorId } from '../auth/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfessorService, ProfessorView } from './professor.service';
 
@@ -9,8 +8,8 @@ export class ProfessorController {
   constructor(private readonly professorService: ProfessorService) {}
 
   @Get()
-  getProfile(@CurrentUser() user: RequestUser): Promise<ProfessorView> {
-    return this.professorService.getProfileView(user.uid, !!user.admin);
+  getProfile(@ProfessorId() uid: string): Promise<ProfessorView> {
+    return this.professorService.getProfileView(uid);
   }
 
   /** Disponibilidade do @username (debounce da tela de Configuracoes). */
