@@ -11,6 +11,7 @@ import { QlickModule } from './qlick/qlick.module';
 import { HomeModule } from './home/home.module';
 import { AdminModule } from './admin/admin.module';
 import { CupomModule } from './cupom/cupom.module';
+import { WorModule } from './wor/wor.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CupomModule } from './cupom/cupom.module';
     HomeModule,
     AdminModule,
     CupomModule,
+    WorModule,
   ],
   controllers: [AppController],
   providers: [AppService],

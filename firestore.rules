@@ -17,6 +17,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Tichr Wor: estado fragmentado (raiz + subcoleção `teams`). Leitura pública
+    // (dados não sensíveis — a palavra/dicas secretas ficam em `wor_jogos`, fechada);
+    // o aluno escuta só o próprio time e a raiz. Escrita SOMENTE pelo backend.
+    match /matches/{matchId} {
+      allow read: if true;
+      allow write: if false;
+      match /teams/{teamId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+
     // Todas as demais coleções (turmas, alunos, qlicks, etc.) ficam fechadas ao
     // cliente — só o Admin SDK do backend as acessa.
     match /{document=**} {

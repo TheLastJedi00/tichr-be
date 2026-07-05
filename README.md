@@ -47,6 +47,7 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
+| `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração de dicas por IA do **Tichr Wor**; sem ela, dicas manuais. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -752,3 +753,57 @@ Assim, promover/revogar vale **na hora** — sem redeploy e sem re-login.
 > Segurança: o `isAdmin` só é escrito pelo backend (Admin SDK) ou pelo dono no
 > Console — o `UpdateProfileDto` não expõe o campo e o `ValidationPipe` roda com
 > `whitelist`/`forbidNonWhitelisted`, então um professor não se auto-promove.
+
+---
+
+## Tichr Wor (guerra de castelos, PvP em tempo real)
+
+Releitura competitiva da forca: equipes decifram palavras defendendo o **HP** de
+suas fortalezas ao longo de várias **ondas** (o dano persiste entre palavras).
+Mesmo padrão do Qlick — definição em coleção própria + jogo ao vivo lido pelo
+cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
+
+### Estrutura de dados
+- **`wor_jogos`** (arsenal, server-only): `professorId`, `nome`, `disciplina?`,
+  `topico`, `palavras: [{ id, palavra, dicas[] }]` (até 3 dicas por palavra).
+- **Estado fragmentado da partida** (leitura pública, escrita negada):
+  - **`matches/{id}`** (raiz): `status` (LOBBY/EM_ANDAMENTO/ENCERRADO), `ondaIndex`,
+    `mascara[]` (letra / `_` / espaço), `letrasTentadas[]`, `cartasVisiveis[]`,
+    `turnoEquipeId`, `ordemEquipes[]`, `aguardandoDilema`, `inscritos[]`, `vencedorEquipeId`.
+    **Não** guarda o segredo (palavra/dicas ficam em `wor_jogos`).
+  - **`matches/{id}/teams/{teamId}`**: `hp`, `isHorde`, `cor`, `nome`, `membros[]`.
+    O **aluno escuta só o próprio time** → dano/cura dispara barato; o **professor**
+    escuta a raiz + todos os times (1 leitura por ação no telão).
+
+### Endpoints — Arsenal & IA (professor)
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET/POST/PUT/DELETE` | `/wor/jogos[/:id]` | CRUD do arsenal (posse validada) |
+| `POST` | `/wor/jogos/dicas` | Gera 3 dicas por **IA (Gemini)** — **rate limit 1×/dia/professor** (429 `IA_RATE_LIMIT`); 503 `IA_INDISPONIVEL` sem `GEMINI_API_KEY` |
+
+### Endpoints — Partida (professor / orquestrador)
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/wor/jogos/:jogoId/partida` `{ turmaId }` | cria a partida (lobby) amarrada a uma turma |
+| `GET` | `/wor/matches/:id` | estado (raiz + times) |
+| `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
+| `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
+| `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
+
+### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick)
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/aluno/wor` | partida ativa da turma do aluno |
+| `POST` | `/aluno/wor/:id/entrar` | inscreve o aluno no lobby |
+| `POST` | `/aluno/wor/:id/letra` `{ letra }` | chuta letra — erro = **Dano do Sistema** + passa turno; acerto = revela + **Dilema Tático** |
+| `POST` | `/aluno/wor/:id/dilema` `{ acao, alvoEquipeId? }` | **Atacar** rival ou **Comprar Dica** (revela carta) |
+| `POST` | `/aluno/wor/:id/arriscar` `{ palavra }` | **Risco Heroico** (cura + encerra onda) / **Invasão** da Horda (usurpação) |
+
+### Regras (constantes em `WOR`, ajustáveis)
+HP inicial **100** · Dano do Sistema **10** · Ataque **15** · Dano Crítico **30** ·
+Cura Massiva **40** · até **3 cartas**. **Horda:** HP 0 → só pode Invasão; se acertar,
+**rouba o castelo do líder** (maior HP), que vira a nova Horda. Vitória: maior HP ao fim das ondas.
+
+### Env & rules
+- **`GEMINI_API_KEY`** (Vercel): habilita a geração de dicas por IA (sem ela, dicas manuais).
+- `firestore.rules`: `matches/**` **leitura pública, escrita negada** (o Admin SDK ignora).

@@ -120,4 +120,9 @@ export class ProfessorService {
   async alterarPlano(uid: string, plano: PlanoAtual): Promise<ProfessorEntity> {
     return this.repo.upsert(uid, { planoAtual: plano });
   }
+
+  /** Registra o uso da IA do Tichr Wor agora (base do rate limit diario). */
+  async marcarUsoIaWor(uid: string): Promise<void> {
+    await this.repo.upsert(uid, { worIaUltimoUso: new Date().toISOString() });
+  }
 }
