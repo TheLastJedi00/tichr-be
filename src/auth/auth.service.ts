@@ -50,20 +50,6 @@ export class AuthService {
     return this.jwt.verify<StudentTokenPayload>(token);
   }
 
-  /** E-mails com acesso de administrador via bootstrap (env `ADMIN_EMAILS`). */
-  private adminEmails(): string[] {
-    return (this.config.get<string>('ADMIN_EMAILS') ?? '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-  }
-
-  /** Verdadeiro se o e-mail esta na lista de bootstrap de administradores. */
-  isAdminEmail(email?: string | null): boolean {
-    if (!email) return false;
-    return this.adminEmails().includes(email.toLowerCase());
-  }
-
   /**
    * Info publica para a tela de login do aluno: nome da turma + lista de nomes
    * (sem PINs) para o aluno se localizar no dropdown.

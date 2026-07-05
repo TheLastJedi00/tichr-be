@@ -72,17 +72,4 @@ describe('AuthService — cadastro e admin', () => {
       );
     });
   });
-
-  describe('isAdminEmail (bootstrap ADMIN_EMAILS)', () => {
-    it('reconhece e-mails da lista (case-insensitive) e ignora o resto', () => {
-      const svc = new AuthService(
-        {} as FirebaseService,
-        fakeConfig({ ADMIN_EMAILS: 'boss@tichr.com, dev@tichr.com' }),
-        {} as JwtService,
-      );
-      expect(svc.isAdminEmail('BOSS@tichr.com')).toBe(true);
-      expect(svc.isAdminEmail('rando@x.com')).toBe(false);
-      expect(svc.isAdminEmail(undefined)).toBe(false);
-    });
-  });
 });
