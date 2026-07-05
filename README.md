@@ -47,7 +47,6 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
-| `ADMIN_EMAILS` | Lista (separada por vírgula) de e-mails com acesso ao **backoffice**. Bootstrap: quem estiver aqui vira admin mesmo sem custom claim. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -319,7 +318,7 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 | `GET` | `/` **(pública)** | — | health check |
 
 ### Backoffice — Admin (`AdminGuard`)
-Todas exigem a **flag `admin`** no principal (custom claim `admin` do Firebase **ou** e-mail em `ADMIN_EMAILS`), resolvida no `AuthGuard` e verificada pelo `AdminGuard`.
+Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de verdade), verificado pelo `AdminGuard` (leitura por chamada, só nas rotas `/admin/*`).
 
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
@@ -331,7 +330,7 @@ Todas exigem a **flag `admin`** no principal (custom claim `admin` do Firebase *
 | `POST` | `/admin/usuarios/:uid/limpar-dados` | — | apaga turmas/alunos/qlicks do professor (mantém o login) |
 | `DELETE` | `/admin/usuarios/:uid?hard=` | — | `soft` (flag `desativadoEm`) ou `hard` (dados + `deleteUser` no Auth) |
 | `PATCH` | `/admin/usuarios/:uid/plano` | `{ plano }` | override manual de plano (sem cobrança) |
-| `POST` | `/admin/usuarios/:uid/admin` | `{ conceder }` | concede/revoga admin via `setCustomUserClaims` |
+| `POST` | `/admin/usuarios/:uid/admin` | `{ conceder }` | concede/revoga admin gravando `professores/{uid}.isAdmin` (vale na hora, sem re-login) |
 
 ### Cupons
 | Método | Rota | Corpo | Resposta |
@@ -723,10 +722,11 @@ total. Assim, mesmo lendo o realtime, o aluno não alcança as respostas nem for
 
 ### Painel Administrativo (backoffice) e cupons
 O backoffice é um módulo isolado (`AdminModule`) protegido pelo `AdminGuard`. O
-papel de admin é uma **flag ortogonal** ao `role` (um admin continua sendo
-`PROFESSOR` nas rotas normais): o `AuthGuard` marca `admin` no principal quando o
-ID token traz o **custom claim `admin: true`** ou quando o e-mail está em
-`ADMIN_EMAILS`. O front decide exibir o atalho "Painel Admin" pelo `GET /admin/ping`.
+acesso admin é **centralizado no Firestore**: o campo **`professores/{uid}.isAdmin`**
+é a **fonte de verdade**. O `AdminGuard` lê esse campo a cada chamada de `/admin/*`
+(um admin continua sendo `PROFESSOR` nas rotas normais). O front decide exibir o
+atalho "Painel Admin" pelo `GET /admin/ping` e pelo `isAdmin` do `GET /profile`.
+Assim, promover/revogar vale **na hora** — sem redeploy e sem re-login.
 
 - **Métricas** (`AdminService.metrics`): lê `professores` + `turmas` e agrega em
   memória (total, ativos = ≥1 turma vigente via `TurmaEntity.contaComoAtiva`,
@@ -740,14 +740,15 @@ ID token traz o **custom claim `admin: true`** ou quando o e-mail está em
   (define `cortesiaAte = hoje + meses`). A aplicação (`POST /checkout/cupom`) roda
   numa **transação** que revalida o limite (`maxUsos`) e incrementa `usos`.
 
-**Como criar/promover um administrador (Firebase):**
-1. **Bootstrap por e-mail** (mais simples): adicione o e-mail do professor em
-   `ADMIN_EMAILS` (env) e faça o redeploy. No próximo login ele já é admin.
-2. **Custom claim** (permanente, por usuário): com um admin já ativo, use o próprio
-   painel — abra o professor em **/admin/usuarios** e clique em **"Tornar admin"**
-   (chama `POST /admin/usuarios/:uid/admin { conceder: true }` →
-   `setCustomUserClaims(uid, { admin: true })`). O usuário precisa **renovar o token**
-   (re-login) para o claim valer. Para revogar, use "Revogar admin".
-3. **Manualmente via Admin SDK** (sem painel), rode uma vez com a service account:
-   `getAuth().setCustomUserClaims('<uid>', { admin: true })` (o `<uid>` está no
-   Firebase Console → Authentication).
+**Como criar/promover um administrador (Firestore):**
+1. **Primeiro admin (bootstrap manual):** faça login uma vez com a conta
+   (garante o doc `professores/{uid}`), pegue o **uid** no Firebase Console →
+   **Authentication**, e no Firestore abra `professores/{uid}` e adicione o campo
+   **`isAdmin`** (boolean) = **true**. Recarregue o app — sem redeploy, sem re-login.
+2. **Demais admins (pelo painel):** com um admin já ativo, abra **/admin/usuarios**,
+   selecione o professor e clique em **"Tornar admin"** (`POST /admin/usuarios/:uid/admin
+   { conceder: true }` → grava `isAdmin: true` no doc). Para revogar, "Revogar admin".
+
+> Segurança: o `isAdmin` só é escrito pelo backend (Admin SDK) ou pelo dono no
+> Console — o `UpdateProfileDto` não expõe o campo e o `ValidationPipe` roda com
+> `whitelist`/`forbidNonWhitelisted`, então um professor não se auto-promove.

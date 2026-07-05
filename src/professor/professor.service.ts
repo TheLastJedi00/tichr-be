@@ -33,7 +33,7 @@ export class ProfessorService {
   }
 
   /** Monta a "view" serializavel do perfil (campos + derivados da trava). */
-  static montarView(p: ProfessorEntity, isAdmin = false): ProfessorView {
+  static montarView(p: ProfessorEntity): ProfessorView {
     return {
       uid: p.uid,
       nomeExibicao: p.nomeExibicao,
@@ -46,13 +46,14 @@ export class ProfessorService {
       slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
       podeAlterarUsername: p.podeAlterarUsername(),
       diasParaTrocarUsername: p.diasParaTrocarUsername(),
-      isAdmin,
+      // Admin vem do proprio documento (fonte de verdade no Firestore).
+      isAdmin: p.isAdmin ?? false,
     };
   }
 
   /** Perfil do professor ja no formato de view (para os controllers). */
-  async getProfileView(uid: string, isAdmin = false): Promise<ProfessorView> {
-    return ProfessorService.montarView(await this.getProfile(uid), isAdmin);
+  async getProfileView(uid: string): Promise<ProfessorView> {
+    return ProfessorService.montarView(await this.getProfile(uid));
   }
 
   /** Normaliza o handle: remove '@' inicial e baixa a caixa. */

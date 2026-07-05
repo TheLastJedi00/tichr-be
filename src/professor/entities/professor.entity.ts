@@ -57,6 +57,13 @@ export class ProfessorEntity {
   /** Meses de cortesia concedidos por cupom (ISO da data limite), se houver. */
   cortesiaAte?: string;
 
+  /**
+   * Acesso ao backoffice. **Fonte de verdade do admin** (Firestore): gravado só
+   * pelo Admin SDK (backend) ou manualmente pelo dono no Firestore Console — o
+   * `UpdateProfileDto` não expõe o campo, então o professor não se auto-promove.
+   */
+  isAdmin?: boolean;
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
   }

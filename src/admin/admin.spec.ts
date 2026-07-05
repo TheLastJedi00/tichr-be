@@ -106,4 +106,23 @@ describe('AdminService — metricas e CRM', () => {
     expect(r).toHaveLength(1);
     expect(r[0].uid).toBe('p1');
   });
+
+  describe('definirAdmin (grava isAdmin no doc do professor)', () => {
+    it('escreve { isAdmin } com merge na coleção professores', async () => {
+      const setDoc = jest.fn().mockResolvedValue(undefined);
+      const firebase = {
+        firestore: { collection: () => ({ doc: () => ({ set: setDoc }) }) },
+      } as unknown as FirebaseService;
+      const svc = new AdminService(firebase, config);
+
+      await expect(svc.definirAdmin('u1', true)).resolves.toEqual({
+        uid: 'u1',
+        admin: true,
+      });
+      expect(setDoc).toHaveBeenCalledWith({ isAdmin: true }, { merge: true });
+
+      await svc.definirAdmin('u1', false);
+      expect(setDoc).toHaveBeenLastCalledWith({ isAdmin: false }, { merge: true });
+    });
+  });
 });
