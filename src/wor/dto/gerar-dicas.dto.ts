@@ -2,10 +2,11 @@ import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 /** Pedido de geração de dicas por IA para uma palavra secreta. */
 export class GerarDicasDto {
+  /** Nome do tópico do plano de aula (contexto p/ a IA), quando houver. */
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(80)
-  topico: string;
+  topico?: string;
 
   @IsString()
   @MinLength(1)

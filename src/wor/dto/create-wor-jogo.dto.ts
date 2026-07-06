@@ -34,10 +34,20 @@ export class CreateWorJogoDto {
   @MaxLength(80)
   disciplina?: string;
 
+  /** Tópico do plano de aula (opcional) — guarda só o ID do `Topico`. */
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  @MaxLength(80)
-  topico: string;
+  topicoId?: string;
+
+  @IsOptional()
+  @IsString()
+  turmaId?: string;
+
+  /** Turmas atribuídas à batalha (N:N). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  turmaIds?: string[];
 
   @IsArray()
   @ValidateNested({ each: true })

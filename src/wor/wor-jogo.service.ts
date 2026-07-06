@@ -1,5 +1,11 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { ProfessorService } from '../professor/professor.service';
+import { TurmaService } from '../turma/turma.service';
 import { PalavraWor, WorJogoEntity } from './entities/wor-jogo.entity';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { CreateWorJogoDto, PalavraWorDto } from './dto/create-wor-jogo.dto';
@@ -7,14 +13,48 @@ import { CreateWorJogoDto, PalavraWorDto } from './dto/create-wor-jogo.dto';
 /** CRUD do arsenal (definição de batalhas do Tichr Wor). */
 @Injectable()
 export class WorJogoService {
-  constructor(private readonly repo: WorJogoRepository) {}
+  constructor(
+    private readonly repo: WorJogoRepository,
+    private readonly professorService: ProfessorService,
+    private readonly turmaService: TurmaService,
+  ) {}
 
-  listar(professorId: string): Promise<WorJogoEntity[]> {
+  /** Criar/rodar qualquer jogo é exclusivo do plano PhD (padrão do ecossistema). */
+  private async assertPhd(professorId: string): Promise<void> {
+    const professor = await this.professorService.getProfile(professorId);
+    if (!professor.podeGamificar) {
+      throw new ForbiddenException({
+        code: 'WOR_LOCKED',
+        message: 'O Tichr Wor é exclusivo do plano PhD.',
+      });
+    }
+  }
+
+  /** Valida a posse de todas as turmas atribuídas (N:N) e devolve os IDs únicos. */
+  private async validarTurmas(
+    professorId: string,
+    dto: { turmaId?: string; turmaIds?: string[] },
+  ): Promise<string[]> {
+    const ids = [
+      ...new Set([
+        ...(dto.turmaIds ?? []),
+        ...(dto.turmaId ? [dto.turmaId] : []),
+      ]),
+    ];
+    for (const turmaId of ids) {
+      await this.turmaService.buscarTurma(professorId, turmaId); // valida posse
+    }
+    return ids;
+  }
+
+  async listar(professorId: string): Promise<WorJogoEntity[]> {
+    await this.assertPhd(professorId);
     return this.repo.findByProfessor(professorId);
   }
 
   /** Busca garantindo posse (404 se não existe, 403 se é de outro professor). */
   async obter(professorId: string, id: string): Promise<WorJogoEntity> {
+    await this.assertPhd(professorId);
     const jogo = await this.repo.findById(id);
     if (!jogo) throw new NotFoundException('Batalha não encontrada.');
     if (jogo.professorId !== professorId) {
@@ -23,14 +63,20 @@ export class WorJogoService {
     return jogo;
   }
 
-  criar(professorId: string, dto: CreateWorJogoDto): Promise<WorJogoEntity> {
-    return this.repo.create({
-      professorId,
-      nome: dto.nome.trim(),
-      disciplina: dto.disciplina?.trim(),
-      topico: dto.topico.trim(),
-      palavras: WorJogoService.normalizarPalavras(dto.palavras),
-    } as Omit<WorJogoEntity, 'id'>);
+  async criar(professorId: string, dto: CreateWorJogoDto): Promise<WorJogoEntity> {
+    await this.assertPhd(professorId);
+    const turmaIds = await this.validarTurmas(professorId, dto);
+    return this.repo.create(
+      new WorJogoEntity({
+        professorId,
+        nome: dto.nome.trim(),
+        disciplina: dto.disciplina?.trim(),
+        topicoId: dto.topicoId,
+        turmaIds,
+        turmaId: turmaIds[0], // mantém o campo legado apontando p/ a 1ª turma
+        palavras: WorJogoService.normalizarPalavras(dto.palavras),
+      }),
+    );
   }
 
   async atualizar(
@@ -39,12 +85,15 @@ export class WorJogoService {
     dto: CreateWorJogoDto,
   ): Promise<WorJogoEntity> {
     await this.obter(professorId, id);
+    const turmaIds = await this.validarTurmas(professorId, dto);
     await this.repo.update(id, {
       nome: dto.nome.trim(),
-      disciplina: dto.disciplina?.trim(),
-      topico: dto.topico.trim(),
+      disciplina: dto.disciplina?.trim() ?? null,
+      topicoId: dto.topicoId ?? null,
+      turmaIds,
+      turmaId: turmaIds[0] ?? null,
       palavras: WorJogoService.normalizarPalavras(dto.palavras),
-    });
+    } as Partial<WorJogoEntity>);
     return (await this.repo.findById(id))!;
   }
 
