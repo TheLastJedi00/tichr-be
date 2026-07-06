@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { embaralhar } from '../common/shuffle.util';
+import { ProfessorService } from '../professor/professor.service';
+import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { WorMatchEntity } from './entities/wor-match.entity';
@@ -22,6 +24,8 @@ export class WorMatchService {
   constructor(
     private readonly jogos: WorJogoRepository,
     private readonly matches: WorMatchRepository,
+    private readonly professorService: ProfessorService,
+    private readonly turmaRepo: TurmaRepository,
   ) {}
 
   private async assertProfessor(
@@ -36,12 +40,23 @@ export class WorMatchService {
     return match;
   }
 
-  /** Cria a partida (lobby) para uma turma, montando a onda 1 da palavra secreta. */
+  /**
+   * Cria a partida (lobby) montando a onda 1 da palavra secreta. A turma é
+   * derivada do vínculo da batalha, como no Qlick: sem escolha explícita, cai na
+   * única turma atribuída; com várias, o professor informa qual rodar. Exige PhD.
+   */
   async criar(
     professorId: string,
     jogoId: string,
-    turmaId: string,
+    turmaId?: string,
   ): Promise<WorMatchEntity> {
+    const professor = await this.professorService.getProfile(professorId);
+    if (!professor.podeGamificar) {
+      throw new ForbiddenException({
+        code: 'WOR_LOCKED',
+        message: 'O Tichr Wor é exclusivo do plano PhD.',
+      });
+    }
     const jogo = await this.jogos.findById(jogoId);
     if (!jogo) throw new NotFoundException('Batalha não encontrada.');
     if (jogo.professorId !== professorId) {
@@ -51,11 +66,13 @@ export class WorMatchService {
       throw new BadRequestException('Adicione ao menos uma palavra ao arsenal.');
     }
 
+    const escolhida = await this.resolverTurma(professorId, jogo.turmas, turmaId);
+
     const primeira = jogo.palavras[0];
     return this.matches.criar({
       jogoId,
       professorId,
-      turmaId,
+      turmaId: escolhida,
       nome: jogo.nome,
       status: 'LOBBY',
       criadaEm: new Date().toISOString(),
@@ -72,6 +89,39 @@ export class WorMatchService {
       inscritos: [],
       vencedorEquipeId: null,
     });
+  }
+
+  /**
+   * Escolhe a turma da partida (N:N): a informada, ou — na ausência — a única
+   * turma atribuída à batalha. Valida que a turma pertence à batalha, é do
+   * professor e não está encerrada. Espelha o `PartidaService.criar` do Qlick.
+   */
+  private async resolverTurma(
+    professorId: string,
+    turmasDoJogo: string[],
+    turmaId?: string,
+  ): Promise<string | undefined> {
+    const escolhida =
+      turmaId ?? (turmasDoJogo.length === 1 ? turmasDoJogo[0] : undefined);
+    if (turmaId && !turmasDoJogo.includes(turmaId)) {
+      throw new BadRequestException({
+        code: 'TURMA_NAO_ATRIBUIDA',
+        message: 'Esta batalha não está atribuída a essa turma.',
+      });
+    }
+    if (escolhida) {
+      const turma = await this.turmaRepo.findById(escolhida);
+      if (!turma || turma.professorId !== professorId) {
+        throw new NotFoundException('Turma não encontrada.');
+      }
+      if (turma.encerradaManualmente) {
+        throw new BadRequestException({
+          code: 'TURMA_ENCERRADA',
+          message: 'Turma encerrada — não é possível iniciar jogos.',
+        });
+      }
+    }
+    return escolhida;
   }
 
   /** Visão pública para a turma (aluno/projetor): raiz + equipes. */

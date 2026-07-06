@@ -1,8 +1,20 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { WorMatchEntity } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { WorMatchService } from './wor-match.service';
 import { WorMatchRepository } from './wor-match.repository';
 import { WorJogoRepository } from './wor-jogo.repository';
+
+const professorFake = (plano: 'PHD' | 'MESTRE' = 'PHD') =>
+  ({
+    getProfile: jest
+      .fn()
+      .mockResolvedValue(new ProfessorEntity({ planoAtual: plano })),
+  }) as never;
+
+const turmaRepoFake = (turma: unknown = { id: 't1', professorId: 'p1' }) =>
+  ({ findById: jest.fn().mockResolvedValue(turma) }) as never;
 
 describe('Tichr Wor — partida (Fase 3)', () => {
   describe('WorMatchEntity', () => {
@@ -73,6 +85,8 @@ describe('Tichr Wor — partida (Fase 3)', () => {
       const service = new WorMatchService(
         {} as WorJogoRepository,
         repo,
+        professorFake('PHD'),
+        turmaRepoFake(),
       );
       await service.distribuir('p1', 'm1', 2);
 
@@ -87,8 +101,79 @@ describe('Tichr Wor — partida (Fase 3)', () => {
     it('rejeita menos de 2 equipes', async () => {
       const match = new WorMatchEntity({ id: 'm1', professorId: 'p1', status: 'LOBBY', inscritos: [] });
       const repo = { buscar: jest.fn().mockResolvedValue(match) } as unknown as WorMatchRepository;
-      const service = new WorMatchService({} as WorJogoRepository, repo);
+      const service = new WorMatchService(
+        {} as WorJogoRepository,
+        repo,
+        professorFake('PHD'),
+        turmaRepoFake(),
+      );
       await expect(service.distribuir('p1', 'm1', 1)).rejects.toThrow();
+    });
+  });
+
+  describe('WorMatchService.criar (turma derivada + PhD, como no Qlick)', () => {
+    const jogo = {
+      id: 'j1',
+      professorId: 'p1',
+      nome: 'Batalha',
+      palavras: [{ id: 'w', palavra: 'REI', dicas: ['dica'] }],
+      turmaIds: ['t1'],
+      get turmas() {
+        return ['t1'];
+      },
+    };
+
+    const build = (
+      overrides: {
+        jogo?: unknown;
+        plano?: 'PHD' | 'MESTRE';
+        turma?: unknown;
+        criar?: jest.Mock;
+      } = {},
+    ) => {
+      const criar = overrides.criar ?? jest.fn().mockResolvedValue({ id: 'm1' });
+      const jogos = {
+        findById: jest.fn().mockResolvedValue(overrides.jogo ?? jogo),
+      } as unknown as WorJogoRepository;
+      const matches = { criar } as unknown as WorMatchRepository;
+      const service = new WorMatchService(
+        jogos,
+        matches,
+        professorFake(overrides.plano ?? 'PHD'),
+        turmaRepoFake(overrides.turma ?? { id: 't1', professorId: 'p1' }),
+      );
+      return { service, criar };
+    };
+
+    it('bloqueia criar partida para não-PhD (403 WOR_LOCKED)', async () => {
+      const { service } = build({ plano: 'MESTRE' });
+      await expect(service.criar('p1', 'j1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('deriva a única turma da batalha quando nenhuma é informada', async () => {
+      const { service, criar } = build();
+      await service.criar('p1', 'j1');
+      expect(criar).toHaveBeenCalledWith(
+        expect.objectContaining({ turmaId: 't1' }),
+      );
+    });
+
+    it('rejeita turma não atribuída à batalha (TURMA_NAO_ATRIBUIDA)', async () => {
+      const { service } = build();
+      await expect(service.criar('p1', 'j1', 'outra')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('rejeita turma encerrada (TURMA_ENCERRADA)', async () => {
+      const { service } = build({
+        turma: { id: 't1', professorId: 'p1', encerradaManualmente: true },
+      });
+      await expect(service.criar('p1', 'j1', 't1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 });
