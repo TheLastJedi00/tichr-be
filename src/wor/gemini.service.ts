@@ -22,7 +22,7 @@ export class GeminiService {
    * usando o tópico/disciplina como contexto. Retorna sempre um array de 3.
    */
   async gerarDicas(
-    topico: string,
+    topico: string | undefined,
     palavra: string,
     disciplina?: string,
   ): Promise<string[]> {
@@ -37,7 +37,7 @@ export class GeminiService {
     const prompt = [
       'Você cria dicas para um jogo de adivinhação de palavras (estilo forca) em português do Brasil.',
       disciplina ? `Disciplina: ${disciplina}.` : '',
-      `Tópico da aula: ${topico}.`,
+      topico ? `Tópico da aula: ${topico}.` : '',
       `Palavra secreta: "${palavra}".`,
       'Gere EXATAMENTE 3 dicas progressivas, da MAIS DIFÍCIL (1) para a MAIS FÁCIL (3).',
       'As dicas NÃO podem conter a própria palavra secreta.',

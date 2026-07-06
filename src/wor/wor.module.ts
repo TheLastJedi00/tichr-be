@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
+import { TurmaModule } from '../turma/turma.module';
 import { AlunoWorController } from './aluno-wor.controller';
 import { GeminiService } from './gemini.service';
 import { WorIaService } from './wor-ia.service';
@@ -13,7 +14,7 @@ import { WorMatchService } from './wor-match.service';
 
 /** Módulo independente do Tichr Wor (arsenal + IA de dicas + partidas). */
 @Module({
-  imports: [ProfessorModule],
+  imports: [ProfessorModule, TurmaModule],
   controllers: [WorJogoController, WorMatchController, AlunoWorController],
   providers: [
     WorJogoService,

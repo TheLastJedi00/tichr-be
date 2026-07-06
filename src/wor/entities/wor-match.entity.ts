@@ -25,7 +25,8 @@ export class WorMatchEntity {
   id: string;
   jogoId: string;
   professorId: string;
-  turmaId: string;
+  /** Turma da partida (opcional, como no Qlick — derivada do vínculo da batalha). */
+  turmaId?: string | null;
   nome: string;
 
   status: StatusMatch = 'LOBBY';
