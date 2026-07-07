@@ -43,6 +43,35 @@ export interface AcaoMembro {
   ordem: number;
 }
 
+/** Tempo-limite de uma rodada (turno de equipe). Cronômetro visível no cliente. */
+export const LIMITE_RODADA_MS = 60 * 1000;
+
+/** Snapshot público de uma equipe na raiz (o aluno vê os castelos rivais barato). */
+export interface PlacarEquipe {
+  id: string;
+  nome: string;
+  cor: string;
+  hp: number;
+  isHorde: boolean;
+}
+
+/** Resultado da última rodada resolvida — reveal para todos + quem atacou quem. */
+export interface ResumoRodada {
+  /** Incrementa a cada rodada resolvida (o cliente detecta rodada nova). */
+  seq: number;
+  equipeId: string;
+  equipeNome: string;
+  /** Membros que acertaram a letra nesta rodada. */
+  acertadores: { nome: string; letra: string }[];
+  acao: 'ATACAR' | 'DICA' | 'NADA';
+  alvoEquipeId?: string;
+  alvoNome?: string;
+  dano?: number;
+  critico?: boolean;
+  /** A rodada foi encerrada por tempo esgotado. */
+  porTempo?: boolean;
+}
+
 /**
  * Estado GLOBAL (raiz `matches/{id}`) de uma batalha do Tichr Wor. É lido pelo
  * cliente (professor e alunos), então **NÃO** guarda o segredo: a palavra e as
@@ -81,6 +110,13 @@ export class WorMatchEntity {
    * resolve (dano/dica + passa turno) quando todos os membros da equipe agiram.
    */
   acoesRodada: AcaoMembro[] = [];
+  /** Início do turno/rodada atual (ISO) — base do cronômetro de 1 min no cliente. */
+  rodadaIniciadaEm?: string | null;
+
+  /** Snapshot de todas as equipes (castelos) — todos leem da raiz, sem custo por equipe. */
+  placar: PlacarEquipe[] = [];
+  /** Resultado da última rodada resolvida (reveal + quem atacou). */
+  resumoRodada?: ResumoRodada | null;
 
   inscritos: InscritoWor[] = [];
   vencedorEquipeId?: string | null;

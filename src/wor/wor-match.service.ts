@@ -85,6 +85,7 @@ export class WorMatchService {
       turnoEquipeId: null,
       ordemEquipes: [],
       acoesRodada: [],
+      placar: [],
       inscritos: [],
       vencedorEquipeId: null,
     });
@@ -205,7 +206,14 @@ export class WorMatchService {
         membros: membrosPorEquipe[i],
       });
     }
-    await this.matches.atualizar(matchId, { ordemEquipes });
+    const placar = ordemEquipes.map((id, i) => ({
+      id,
+      nome: `Equipe ${i + 1}`,
+      cor: CORES_TEAM[i],
+      hp: WOR.HP_INICIAL,
+      isHorde: false,
+    }));
+    await this.matches.atualizar(matchId, { ordemEquipes, placar });
     return this.view(matchId);
   }
 
@@ -219,6 +227,7 @@ export class WorMatchService {
     await this.matches.atualizar(matchId, {
       status: 'EM_ANDAMENTO',
       turnoEquipeId: match.ordemEquipes[0],
+      rodadaIniciadaEm: new Date().toISOString(),
     });
     return this.view(matchId);
   }
