@@ -9,25 +9,33 @@ import { TurmaEntity } from '../turma/entities/turma.entity';
 describe('Regras de plano e cota', () => {
   describe('ProfessorEntity.limiteTurmas', () => {
     it('usa a base do plano quando nao ha slots comprados', () => {
-      expect(new ProfessorEntity({ planoAtual: 'ESTAGIARIO' }).limiteTurmas).toBe(2);
-      expect(new ProfessorEntity({ planoAtual: 'GRADUADO' }).limiteTurmas).toBe(5);
+      expect(new ProfessorEntity({ planoAtual: 'ESTAGIARIO' }).limiteTurmas).toBe(5);
+      expect(new ProfessorEntity({ planoAtual: 'GRADUADO' }).limiteTurmas).toBe(99);
     });
 
-    it('soma os slots avulsos ao limite base', () => {
+    it('soma os slots avulsos ao limite base (Estagiario)', () => {
       const prof = new ProfessorEntity({
         planoAtual: 'ESTAGIARIO',
         slotsAdicionaisComprados: 3,
       });
-      expect(prof.limiteTurmas).toBe(5);
+      expect(prof.limiteTurmas).toBe(8);
     });
 
-    it('e ilimitado para Mestre e PhD', () => {
-      expect(new ProfessorEntity({ planoAtual: 'MESTRE' }).limiteTurmas).toBe(Infinity);
-      expect(new ProfessorEntity({ planoAtual: 'PHD' }).limiteTurmas).toBe(Infinity);
+    it('limita ao teto tecnico do PIN (99) mesmo com slots avulsos', () => {
+      const prof = new ProfessorEntity({
+        planoAtual: 'ESTAGIARIO',
+        slotsAdicionaisComprados: 200,
+      });
+      expect(prof.limiteTurmas).toBe(99);
+    });
+
+    it('pagos ficam no teto de 99 (Mestre e PhD nao sao ilimitados)', () => {
+      expect(new ProfessorEntity({ planoAtual: 'MESTRE' }).limiteTurmas).toBe(99);
+      expect(new ProfessorEntity({ planoAtual: 'PHD' }).limiteTurmas).toBe(99);
     });
 
     it('cai para ESTAGIARIO por padrao (perfil recem-criado)', () => {
-      expect(new ProfessorEntity({ uid: 'u1' }).limiteTurmas).toBe(2);
+      expect(new ProfessorEntity({ uid: 'u1' }).limiteTurmas).toBe(5);
     });
   });
 

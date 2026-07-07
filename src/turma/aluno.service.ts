@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { hojeISO } from '../common/date.util';
 import { LIMITE_ALUNOS_TURMA, proximoPinCurto } from '../common/pin.util';
+import { ProfessorService } from '../professor/professor.service';
 import { AlunoEntity } from './entities/aluno.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
 import { TurmaEntity } from './entities/turma.entity';
@@ -23,7 +24,23 @@ export class AlunoService {
     private readonly sessaoRepo: SessaoRepository,
     private readonly equipeRepo: EquipeRepository,
     private readonly xpService: XpService,
+    private readonly professorService: ProfessorService,
   ) {}
+
+  /**
+   * O cadastro nominal de alunos e um recurso do plano Mestre em diante
+   * (Estagiario e Graduado focam em agenda/planejamento, sem gerir individuos).
+   */
+  private async assertPodeCadastrarAlunos(professorId: string): Promise<void> {
+    const professor = await this.professorService.getProfile(professorId);
+    if (!professor.atendePlano('MESTRE')) {
+      throw new ForbiddenException({
+        code: 'PLANO_LOCKED',
+        message: 'O cadastro de alunos exige o plano Mestre ou superior.',
+        minimo: 'MESTRE',
+      });
+    }
+  }
 
   /** Perfil do proprio aluno (portal). Sincroniza a base passiva antes. */
   async perfil(alunoId: string): Promise<AlunoEntity> {
@@ -114,6 +131,7 @@ export class AlunoService {
     turmaId: string,
     nomes: string[],
   ): Promise<AlunoEntity[]> {
+    await this.assertPodeCadastrarAlunos(professorId);
     const turma = await this.assertTurma(professorId, turmaId);
     if (turma.encerradaManualmente) {
       throw new BadRequestException({
@@ -190,6 +208,7 @@ export class AlunoService {
     alunoId: string,
     nome: string,
   ): Promise<AlunoEntity> {
+    await this.assertPodeCadastrarAlunos(professorId);
     await this.assertTurma(professorId, turmaId);
     const aluno = await this.alunoRepo.findById(alunoId);
     if (!aluno || aluno.turmaId !== turmaId) {

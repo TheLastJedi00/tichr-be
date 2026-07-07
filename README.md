@@ -228,7 +228,7 @@ Escopo geral (Syllabus) de uma disciplina — um por `(professor, disciplina)`.
 | `contextoGeral` | string | texto macro (objetivos, ementa, bibliografia) |
 
 ### `topicos`
-Backlog de tópicos de uma disciplina (microplanejamento, Mestre+).
+Backlog de tópicos de uma disciplina (microplanejamento, Graduado+).
 
 | Campo | Tipo | Observação |
 |---|---|---|
@@ -371,8 +371,8 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
 | `GET` | `/turmas/:turmaId/alunos` | — | `AlunoEntity[]` |
-| `POST` | `/turmas/:turmaId/alunos` | `{ nomes: string[] }` | `AlunoEntity[]` — cadastro **em lote** (gera PIN/turma) |
-| `PATCH` | `/turmas/:turmaId/alunos/:alunoId` | `{ nome }` | `AlunoEntity` — **renomeia** o aluno |
+| `POST` | `/turmas/:turmaId/alunos` | `{ nomes: string[] }` | `AlunoEntity[]` — cadastro **em lote** (gera PIN/turma). **403 `PLANO_LOCKED`** se `< MESTRE` |
+| `PATCH` | `/turmas/:turmaId/alunos/:alunoId` | `{ nome }` | `AlunoEntity` — **renomeia** o aluno. **403 `PLANO_LOCKED`** se `< MESTRE` |
 | `DELETE` | `/turmas/:turmaId/alunos/:alunoId` | — | `{ removido: true }` |
 | `PATCH` | `/turmas/:turmaId/alunos/:alunoId/equipe` | `{ equipeId: string \| null }` | `AlunoEntity` — move o aluno para uma equipe (drop) ou de volta ao pool (`null`) |
 | `POST` | `/turmas/:turmaId/alunos/:alunoId/xp` | `{ pontos, motivo? }` | `{ alunoId, xpTotal }` — grava log + atualiza total. **403 `GAMIFICACAO_LOCKED`** se não-PhD; **400** se `pontuacaoAtiva=false` |
@@ -417,7 +417,7 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 |---|---|---|---|
 | `GET` | `/planos-aula` | — | `PlanoAulaEntity[]` (403 `PLANO_LOCKED` se `< GRADUADO`) |
 | `PUT` | `/planos-aula` | `{ disciplina, contextoGeral }` | `PlanoAulaEntity` — upsert do escopo geral por disciplina |
-| `GET` | `/topicos?disciplina=` | — | `TopicoEntity[]` (403 se `< MESTRE`) |
+| `GET` | `/topicos?disciplina=` | — | `TopicoEntity[]` (403 `PLANO_LOCKED` se `< GRADUADO`) |
 | `POST` | `/topicos` | `{ disciplina, nomes: string[] }` | `TopicoEntity[]` — lote |
 | `DELETE` | `/topicos/:id` | — | `{ removido: true }` — limpa as alocações do tópico |
 | `GET` | `/turmas/:turmaId/alocacoes` | — | `AlocacaoEntity[]` |
@@ -539,11 +539,15 @@ Cada plano tem um **limite base** de turmas ativas simultâneas, somado às vaga
 
 | Plano | Limite base |
 |---|---|
-| `ESTAGIARIO` | 2 |
-| `GRADUADO` | 5 |
-| `MESTRE` / `PHD` | ilimitado |
+| `ESTAGIARIO` | 5 |
+| `GRADUADO` / `MESTRE` / `PHD` | 99 |
 
-`limite = base(plano) + slotsAdicionaisComprados`. Uma turma **ocupa cota**
+Nenhum plano é ilimitado: o **teto técnico é 99** porque o PIN da turma é de **2 dígitos**
+(`01`–`99`) e não pode repetir entre turmas ativas (`LIMITE_TURMAS_ATIVAS`). `LIMITE_BASE_PLANO`
+dos pagos referencia esse pool, e `ProfessorEntity.limiteTurmas` faz
+`min(base + slots, 99)`.
+
+`limite = min(base(plano) + slotsAdicionaisComprados, 99)`. Uma turma **ocupa cota**
 (`TurmaEntity.contaComoAtiva`) quando **não** foi encerrada manualmente **e** seu
 cronograma ainda está vigente — módulos deixam de contar quando a `dataFimPrevista`
 passa; grades fixas contam sempre. Ao criar turma, o **`PlanosGuard`** compara
@@ -666,9 +670,10 @@ desabilita o campo exibindo a microcópia. Salvar outros campos mantendo o mesmo
 
 O **Plano de Aula** escala com o plano do professor (`PlanoAulaModule`, independente):
 
-- **Graduado — escopo geral:** um texto macro (Syllabus) por disciplina (`planos_aula`,
-  upsert em `PUT /planos-aula`). `403 PLANO_LOCKED` para o Estagiário.
-- **Mestre — tópicos + alocação:** o professor cria um backlog de **tópicos** (`topicos`) e os
+- **Graduado — escopo geral + quadro modular:** um texto macro (Syllabus) por disciplina
+  (`planos_aula`, upsert em `PUT /planos-aula`) **e** o backlog de **tópicos** (`topicos`) com a
+  **alocação** arrasta-e-solta — tudo já no Graduado. `403 PLANO_LOCKED` para o Estagiário.
+- **Tópicos + alocação:** o professor cria um backlog de **tópicos** (`topicos`) e os
   **aloca** às aulas por arrastar-e-soltar. A alocação (`alocacoes`) é ancorada no
   **`numeroAula`**, não na data — como a reprojeção regenera as sessões mantendo o `numero`, o
   **tópico desliza junto com a aula** automaticamente quando a grade recalcula. Excluir um

@@ -14,7 +14,7 @@ import { TurmaService } from './turma.service';
  * request.user) e barra a criacao de turma quando o professor ja atingiu o
  * limite de turmas ativas do seu nivel academico.
  *
- * Limite = base do plano (2 Estagiario / 5 Graduado / ilimitado Mestre e PhD)
+ * Limite = base do plano (5 Estagiario / 99 nos pagos, teto do PIN de 2 digitos)
  * + slots avulsos comprados. Ao estourar, lanca 403 com code 'LIMIT_REACHED'.
  */
 @Injectable()
@@ -30,11 +30,6 @@ export class PlanosGuard implements CanActivate {
 
     const profile = await this.professorService.getProfile(uid);
     const limite = profile.limiteTurmas;
-
-    // Planos ilimitados (Mestre/PhD) nunca esbarram na cota.
-    if (limite === Infinity) {
-      return true;
-    }
 
     const ativas = await this.turmaService.contarTurmasAtivas(uid);
     if (ativas >= limite) {
