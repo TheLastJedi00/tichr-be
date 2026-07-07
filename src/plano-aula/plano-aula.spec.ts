@@ -5,7 +5,9 @@ import { TopicoEntity } from './entities/topico.entity';
 import { AlocacaoService } from './alocacao.service';
 import { TopicoService } from './topico.service';
 
-const professorFake = (plano: 'ESTAGIARIO' | 'MESTRE' | 'PHD' = 'MESTRE') =>
+const professorFake = (
+  plano: 'ESTAGIARIO' | 'GRADUADO' | 'MESTRE' | 'PHD' = 'GRADUADO',
+) =>
   ({
     getProfile: jest
       .fn()
@@ -34,7 +36,7 @@ describe('TopicoService', () => {
     expect(criados.map((t) => t.nome)).toEqual(['CSS']);
   });
 
-  it('bloqueia quando o professor nao e Mestre', async () => {
+  it('bloqueia abaixo do plano Graduado (Estagiario)', async () => {
     const service = new TopicoService(
       {} as never,
       {} as never,
@@ -43,6 +45,20 @@ describe('TopicoService', () => {
     await expect(service.listar('p1', 'Web')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('permite o quadro modular ja no plano Graduado', async () => {
+    const topicoRepo = {
+      findByDisciplina: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockImplementation(async (t) => t),
+    };
+    const service = new TopicoService(
+      topicoRepo as never,
+      {} as never,
+      professorFake('GRADUADO'),
+    );
+    const criados = await service.adicionar('p1', 'Web', ['HTML', 'CSS']);
+    expect(criados.map((t) => t.nome)).toEqual(['HTML', 'CSS']);
   });
 
   it('ao remover, limpa as alocacoes do topico', async () => {

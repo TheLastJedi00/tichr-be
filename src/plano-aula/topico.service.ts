@@ -12,13 +12,13 @@ export class TopicoService {
     private readonly professorService: ProfessorService,
   ) {}
 
-  private async assertMestre(professorId: string): Promise<void> {
+  private async assertGraduado(professorId: string): Promise<void> {
     const professor = await this.professorService.getProfile(professorId);
-    if (!professor.atendePlano('MESTRE')) {
+    if (!professor.atendePlano('GRADUADO')) {
       throw new ForbiddenException({
         code: 'PLANO_LOCKED',
-        message: 'A gestão de tópicos exige o plano Mestre ou superior.',
-        minimo: 'MESTRE',
+        message: 'A gestão de tópicos exige o plano Graduado ou superior.',
+        minimo: 'GRADUADO',
       });
     }
   }
@@ -27,7 +27,7 @@ export class TopicoService {
     professorId: string,
     disciplina: string,
   ): Promise<TopicoEntity[]> {
-    await this.assertMestre(professorId);
+    await this.assertGraduado(professorId);
     return this.topicoRepo.findByDisciplina(professorId, disciplina);
   }
 
@@ -37,7 +37,7 @@ export class TopicoService {
     disciplina: string,
     nomes: string[],
   ): Promise<TopicoEntity[]> {
-    await this.assertMestre(professorId);
+    await this.assertGraduado(professorId);
     const disc = disciplina.trim();
     const existentes = new Set(
       (await this.topicoRepo.findByDisciplina(professorId, disc)).map(
@@ -62,7 +62,7 @@ export class TopicoService {
     professorId: string,
     topicoId: string,
   ): Promise<{ removido: boolean }> {
-    await this.assertMestre(professorId);
+    await this.assertGraduado(professorId);
     await this.alocacaoRepo.deleteByTopico(topicoId);
     await this.topicoRepo.delete(topicoId);
     return { removido: true };
