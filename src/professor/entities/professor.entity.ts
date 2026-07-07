@@ -1,15 +1,21 @@
+import { LIMITE_TURMAS_ATIVAS } from '../../common/pin.util';
+
 /** Nivel academico/assinatura do professor. */
 export type PlanoAtual = 'ESTAGIARIO' | 'GRADUADO' | 'MESTRE' | 'PHD';
 
 /**
  * Limite base de turmas ativas simultaneas por plano.
- * `Infinity` = ilimitado (Mestre e PhD).
+ *
+ * O teto tecnico e 99 para todos os planos pagos: o PIN da turma e de 2 digitos
+ * ('01'..'99') e nao pode repetir entre turmas ativas (pool `LIMITE_TURMAS_ATIVAS`).
+ * Por isso nenhum plano e "ilimitado" — Mestre/PhD tambem sao 99. O Estagiario
+ * fica na carga reduzida de 5.
  */
 export const LIMITE_BASE_PLANO: Record<PlanoAtual, number> = {
-  ESTAGIARIO: 2,
-  GRADUADO: 5,
-  MESTRE: Infinity,
-  PHD: Infinity,
+  ESTAGIARIO: 5,
+  GRADUADO: LIMITE_TURMAS_ATIVAS,
+  MESTRE: LIMITE_TURMAS_ATIVAS,
+  PHD: LIMITE_TURMAS_ATIVAS,
 };
 
 /** Hierarquia dos planos (indice = nivel). */
@@ -109,11 +115,12 @@ export class ProfessorEntity {
   }
 
   /**
-   * Limite efetivo de turmas ativas: base do plano + slots avulsos comprados.
-   * Retorna Infinity para planos ilimitados (Mestre/PhD).
+   * Limite efetivo de turmas ativas: base do plano + slots avulsos comprados,
+   * sempre limitado ao teto tecnico do PIN de 2 digitos (99). Nenhum plano e
+   * ilimitado — o pool de PINs curtos e o teto real.
    */
   get limiteTurmas(): number {
     const base = LIMITE_BASE_PLANO[this.planoAtual] ?? LIMITE_BASE_PLANO.ESTAGIARIO;
-    return base + (this.slotsAdicionaisComprados ?? 0);
+    return Math.min(base + (this.slotsAdicionaisComprados ?? 0), LIMITE_TURMAS_ATIVAS);
   }
 }
