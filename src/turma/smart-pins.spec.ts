@@ -57,6 +57,7 @@ describe('Smart PINs (2 dígitos)', () => {
         {} as never,
         {} as never,
         {} as never,
+        { getProfile: async () => ({ atendePlano: () => true }) } as never,
       );
       return { service, criados };
     };

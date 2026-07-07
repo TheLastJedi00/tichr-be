@@ -53,6 +53,7 @@ describe('Hall da Fama — encerramento e read-only', () => {
         {} as never,
         {} as never,
         {} as never,
+        { getProfile: async () => ({ atendePlano: () => true }) } as never,
       );
 
       await expect(
@@ -77,6 +78,7 @@ describe('Hall da Fama — encerramento e read-only', () => {
         {} as never,
         {} as never,
         {} as never,
+        { getProfile: async () => ({ atendePlano: () => true }) } as never,
       );
 
       const alunos = await service.adicionar('p1', 't1', ['Ana']);

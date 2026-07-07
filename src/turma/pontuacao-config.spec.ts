@@ -97,6 +97,7 @@ describe('Config de pontuacao', () => {
         {} as never,
         {} as never,
         {} as never,
+        { getProfile: async () => ({ atendePlano: () => true }) } as never,
       );
       await expect(service.ranking('t1')).rejects.toBeInstanceOf(
         ForbiddenException,

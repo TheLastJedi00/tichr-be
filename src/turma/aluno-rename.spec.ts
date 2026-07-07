@@ -21,6 +21,7 @@ describe('AlunoService.renomear', () => {
       {} as never,
       {} as never,
       {} as never,
+      { getProfile: async () => ({ atendePlano: () => true }) } as never,
     );
     return { service, alunoRepo };
   };
