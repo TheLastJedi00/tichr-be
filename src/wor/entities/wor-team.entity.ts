@@ -5,8 +5,11 @@ export interface MembroTeam {
   nome: string;
 }
 
-/** Cores das fortalezas (temática épica). */
-export const CORES_TEAM = ['#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#7c3aed', '#0891b2'];
+/** Cores das fortalezas (temática épica). Até 10 equipes (turmas grandes). */
+export const CORES_TEAM = [
+  '#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#7c3aed',
+  '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5',
+];
 
 /**
  * Estado LOCAL de uma equipe (`matches/{id}/teams/{teamId}`) — os dados de

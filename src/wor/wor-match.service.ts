@@ -11,7 +11,7 @@ import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { WorMatchEntity } from './entities/wor-match.entity';
 import { CORES_TEAM, WorTeamEntity } from './entities/wor-team.entity';
-import { WOR } from './entities/wor-match.entity';
+import { WOR, tamanhoEquipe } from './entities/wor-match.entity';
 
 export interface MatchView {
   match: WorMatchEntity;
@@ -84,8 +84,7 @@ export class WorMatchService {
       totalCartas: primeira.dicas.length,
       turnoEquipeId: null,
       ordemEquipes: [],
-      aguardandoDilema: false,
-      dilemaEquipeId: null,
+      acoesRodada: [],
       inscritos: [],
       vencedorEquipeId: null,
     });
@@ -161,24 +160,29 @@ export class WorMatchService {
     return this.view(matchId);
   }
 
-  /** Distribui os inscritos em N equipes (round-robin embaralhado). */
+  /**
+   * Distribui os inscritos em equipes com **tamanho automático** pelo nº de
+   * alunos na sala: duplas a partir de 4, trios a partir de 6, quartetos a
+   * partir de 8 (máx. 4 por equipe). O professor só clica "Distribuir".
+   */
   async distribuir(
     professorId: string,
     matchId: string,
-    numeroEquipes: number,
   ): Promise<MatchView> {
     const match = await this.assertProfessor(matchId, professorId);
     if (match.status !== 'LOBBY') {
       throw new BadRequestException('A partida já começou.');
     }
-    if (numeroEquipes < 2 || numeroEquipes > CORES_TEAM.length) {
-      throw new BadRequestException(
-        `Escolha de 2 a ${CORES_TEAM.length} equipes.`,
-      );
+    const total = match.inscritos.length;
+    if (total < 2) {
+      throw new BadRequestException('São necessários pelo menos 2 alunos na sala.');
     }
-    if (match.inscritos.length < numeroEquipes) {
-      throw new BadRequestException('Alunos insuficientes para as equipes.');
-    }
+
+    const tamanho = tamanhoEquipe(total);
+    const numeroEquipes = Math.min(
+      Math.ceil(total / tamanho),
+      CORES_TEAM.length,
+    );
 
     const membrosPorEquipe: Array<typeof match.inscritos> = Array.from(
       { length: numeroEquipes },

@@ -3,7 +3,6 @@ import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { ArriscarDto } from './dto/arriscar.dto';
 import { ChutarLetraDto } from './dto/chutar-letra.dto';
-import { DilemaDto } from './dto/dilema.dto';
 import { EntrarWorDto } from './dto/entrar-wor.dto';
 import { WorGameService } from './wor-game.service';
 import { WorMatchService } from './wor-match.service';
@@ -35,24 +34,14 @@ export class AlunoWorController {
     return this.service.inscrever(alunoId, turmaId, matchId, dto.nome ?? 'Aluno');
   }
 
-  /** Chuta uma letra no turno da equipe. */
+  /** Chuta uma letra e vota a ação da equipe (atacar rival / comprar dica). */
   @Post(':matchId/letra')
   letra(
     @CurrentStudent() { alunoId }: Student,
     @Param('matchId') matchId: string,
     @Body() dto: ChutarLetraDto,
   ) {
-    return this.game.chutarLetra(alunoId, matchId, dto.letra);
-  }
-
-  /** Resolve o Dilema Tático (Atacar rival / Comprar Dica). */
-  @Post(':matchId/dilema')
-  dilema(
-    @CurrentStudent() { alunoId }: Student,
-    @Param('matchId') matchId: string,
-    @Body() dto: DilemaDto,
-  ) {
-    return this.game.resolverDilema(alunoId, matchId, dto.acao, dto.alvoEquipeId);
+    return this.game.chutarLetra(alunoId, matchId, dto.letra, dto.acao, dto.alvoEquipeId);
   }
 
   /** Risco Heroico / Invasão: tenta a palavra inteira. */

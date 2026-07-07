@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
-import { DistribuirDto } from './dto/distribuir.dto';
 import { WorGameService } from './wor-game.service';
 import { WorMatchService } from './wor-match.service';
 
@@ -28,12 +27,8 @@ export class WorMatchController {
   }
 
   @Post('matches/:id/distribuir')
-  distribuir(
-    @ProfessorId() uid: string,
-    @Param('id') id: string,
-    @Body() dto: DistribuirDto,
-  ) {
-    return this.service.distribuir(uid, id, dto.numeroEquipes);
+  distribuir(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.service.distribuir(uid, id);
   }
 
   @Post('matches/:id/iniciar')

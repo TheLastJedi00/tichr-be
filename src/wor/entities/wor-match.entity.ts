@@ -1,18 +1,46 @@
-/** Constantes de balanceamento (v1). Centralizadas para tuning posterior. */
+/** Constantes de balanceamento. Centralizadas para tuning posterior. */
 export const WOR = {
-  HP_INICIAL: 100,
-  DANO_SISTEMA: 10,
-  DANO_ATAQUE: 15,
-  DANO_CRITICO: 30,
-  CURA_MASSIVA: 40,
+  HP_INICIAL: 1000,
+  /** Ataque padrão (rodada normal). */
+  DANO_ATAQUE: 100,
+  /** Ataque crítico (rodada em que TODOS os membros acertaram a letra). */
+  DANO_CRITICO: 200,
+  /** Cura ao acertar a palavra inteira (Risco Heroico). */
+  CURA_MASSIVA: 400,
   MAX_CARTAS: 3,
 } as const;
+
+/** Tamanho-alvo de equipe pelo nº de alunos na sala (máx. 4 por equipe). */
+export function tamanhoEquipe(alunos: number): number {
+  if (alunos < 4) return 1;
+  if (alunos < 6) return 2;
+  if (alunos < 8) return 3;
+  return 4;
+}
 
 export type StatusMatch = 'LOBBY' | 'EM_ANDAMENTO' | 'ENCERRADO';
 
 export interface InscritoWor {
   alunoId: string;
   nome: string;
+}
+
+/** Voto do membro (só conta se ele acertou a letra). */
+export type VotoRodada =
+  | { tipo: 'ATACAR'; alvoEquipeId: string }
+  | { tipo: 'DICA' };
+
+/** Ação de um membro na rodada da sua equipe. */
+export interface AcaoMembro {
+  alunoId: string;
+  /** 'LETRA' = chutou uma letra; 'ARRISCAR' = tentou a palavra e errou. */
+  tipo: 'LETRA' | 'ARRISCAR';
+  letra?: string;
+  acertou: boolean;
+  /** Voto (atacar rival ou comprar dica); só apurado se `acertou`. */
+  voto?: VotoRodada;
+  /** Ordem de chegada na rodada (desempate da votação). */
+  ordem: number;
 }
 
 /**
@@ -45,12 +73,14 @@ export class WorMatchEntity {
   /** Quantas cartas existem nesta palavra (para saber se ainda há o que comprar). */
   totalCartas = 0;
 
-  /** Turno e fluxo do dilema. */
+  /** Turno (por equipe) e ordem de round-robin. */
   turnoEquipeId?: string | null;
   ordemEquipes: string[] = [];
-  /** Após um acerto de letra, a equipe deve escolher o Dilema Tático. */
-  aguardandoDilema = false;
-  dilemaEquipeId?: string | null;
+  /**
+   * Ações já feitas pelos membros da equipe do turno NESTA rodada. A rodada
+   * resolve (dano/dica + passa turno) quando todos os membros da equipe agiram.
+   */
+  acoesRodada: AcaoMembro[] = [];
 
   inscritos: InscritoWor[] = [];
   vencedorEquipeId?: string | null;

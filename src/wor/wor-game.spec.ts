@@ -7,7 +7,7 @@ import { WorJogoEntity } from './entities/wor-jogo.entity';
 
 /**
  * Repositório fake stateful: guarda match + teams em memória e aplica os
- * `atualizar`/`atualizarTeam`, permitindo testar o fluxo do core loop de ponta a ponta.
+ * `atualizar`/`atualizarTeam`, permitindo testar o core loop de ponta a ponta.
  */
 function fakeRepos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEntity[]) {
   const matches = {
@@ -24,105 +24,139 @@ function fakeRepos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEnt
       if (t) Object.assign(t, dados);
     },
   } as unknown as WorMatchRepository;
-  const jogos = {
-    findById: async () => jogo,
-  } as unknown as WorJogoRepository;
-  return { service: new WorGameService(jogos, matches), match, teams };
+  const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
+  return new WorGameService(jogos, matches);
 }
 
-function cenario() {
-  const jogo = new WorJogoEntity({
-    id: 'j1',
-    palavras: [
-      { id: 'w1', palavra: 'REI', dicas: ['d1', 'd2', 'd3'] },
-      { id: 'w2', palavra: 'ARTE', dicas: ['x1'] },
-    ],
-  });
+const JOGO = new WorJogoEntity({
+  id: 'j1',
+  palavras: [
+    { id: 'w1', palavra: 'ARTE', dicas: ['d1', 'd2', 'd3'] },
+    { id: 'w2', palavra: 'REI', dicas: ['x1'] },
+  ],
+});
+
+/** Monta um cenário EM_ANDAMENTO na onda 0 (ARTE) com as equipes dadas. */
+function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
   const match = new WorMatchEntity({
     id: 'm1',
     jogoId: 'j1',
     status: 'EM_ANDAMENTO',
     ondaIndex: 0,
     totalOndas: 2,
-    mascara: ['_', '_', '_'],
+    mascara: ['_', '_', '_', '_'],
     letrasTentadas: [],
     cartasVisiveis: ['d1'],
     totalCartas: 3,
-    ordemEquipes: ['equipe-1', 'equipe-2'],
-    turnoEquipeId: 'equipe-1',
-    aguardandoDilema: false,
+    ordemEquipes: teams.map((t) => t.id),
+    turnoEquipeId: turno,
+    acoesRodada: [],
   });
-  const teams = [
-    new WorTeamEntity({ id: 'equipe-1', hp: 100, membros: [{ alunoId: 'a1', nome: 'A' }] }),
-    new WorTeamEntity({ id: 'equipe-2', hp: 100, membros: [{ alunoId: 'a2', nome: 'B' }] }),
-  ];
-  return fakeRepos(jogo, match, teams);
+  return { service: fakeRepos(JOGO, match, teams), match, teams };
 }
 
-describe('WorGameService — core loop (Fase 4)', () => {
-  it('erro na letra: Dano do Sistema no próprio castelo + passa o turno', async () => {
-    const { service, match, teams } = cenario();
-    await service.chutarLetra('a1', 'm1', 'Z');
-    expect(teams[0].hp).toBe(100 - WOR.DANO_SISTEMA);
+const time = (id: string, membros: string[], hp = WOR.HP_INICIAL, isHorde = false) =>
+  new WorTeamEntity({
+    id,
+    hp,
+    isHorde,
+    membros: membros.map((a) => ({ alunoId: a, nome: a.toUpperCase() })),
+  });
+
+describe('WorGameService — rodada por membros', () => {
+  it('erro na letra: SEM dano ao próprio castelo + passa o turno', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'Z', 'ATACAR', 'equipe-2');
+    expect(teams[0].hp).toBe(WOR.HP_INICIAL); // não perde HP por errar letra
     expect(match.turnoEquipeId).toBe('equipe-2');
     expect(match.letrasTentadas).toContain('Z');
   });
 
-  it('acerto da letra abre o Dilema Tático (sem completar)', async () => {
-    const { service, match } = cenario();
-    await service.chutarLetra('a1', 'm1', 'R');
-    expect(match.mascara).toEqual(['R', '_', '_']);
-    expect(match.aguardandoDilema).toBe(true);
-    expect(match.dilemaEquipeId).toBe('equipe-1');
+  it('acerto (equipe de 1): ataca o rival votado com dano padrão (100)', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    expect(match.mascara).toEqual(['A', '_', '_', '_']);
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE); // 900 (solo nunca é crítico)
+    expect(match.turnoEquipeId).toBe('equipe-2');
   });
 
   it('rejeita jogar fora do turno', async () => {
-    const { service } = cenario();
-    await expect(service.chutarLetra('a2', 'm1', 'R')).rejects.toMatchObject({
-      response: { code: 'FORA_DO_TURNO' },
-    });
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service } = cenario(teams);
+    await expect(
+      service.chutarLetra('b1', 'm1', 'A', 'ATACAR', 'equipe-1'),
+    ).rejects.toMatchObject({ response: { code: 'FORA_DO_TURNO' } });
   });
 
-  it('Dilema ATACAR causa dano no rival e passa o turno', async () => {
-    const { service, match, teams } = cenario();
-    await service.chutarLetra('a1', 'm1', 'R'); // abre dilema
-    await service.resolverDilema('a1', 'm1', 'ATACAR', 'equipe-2');
-    expect(teams[1].hp).toBe(100 - WOR.DANO_ATAQUE);
-    expect(match.aguardandoDilema).toBe(false);
-    expect(match.turnoEquipeId).toBe('equipe-2');
-  });
-
-  it('Dilema COMPRAR_DICA revela a próxima carta', async () => {
-    const { service, match } = cenario();
-    await service.chutarLetra('a1', 'm1', 'R');
-    await service.resolverDilema('a1', 'm1', 'COMPRAR_DICA');
+  it('acerto votando DICA revela a próxima carta', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'DICA');
     expect(match.cartasVisiveis).toEqual(['d1', 'd2']);
   });
 
-  it('arriscar certo: Cura Massiva + avança a onda', async () => {
-    const { service, match, teams } = cenario();
-    teams[0].hp = 50;
-    await service.arriscar('a1', 'm1', 'rei');
-    expect(teams[0].hp).toBe(Math.min(100, 50 + WOR.CURA_MASSIVA));
-    expect(match.ondaIndex).toBe(1);
-    expect(match.mascara).toEqual(['_', '_', '_', '_']); // ARTE mascarada
-  });
-
-  it('arriscar errado: Dano Crítico + passa o turno', async () => {
-    const { service, match, teams } = cenario();
-    await service.arriscar('a1', 'm1', 'rainha');
-    expect(teams[0].hp).toBe(100 - WOR.DANO_CRITICO);
+  it('crítico: os 2 membros acertam a letra → 200 no rival mais votado', async () => {
+    const teams = [
+      time('equipe-1', ['a1', 'a2']),
+      time('equipe-2', ['b1']),
+      time('equipe-3', ['c1']),
+    ];
+    const { service, match } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2'); // acumula (1/2)
+    await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'equipe-2'); // 2/2 → resolve
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO); // 800
+    expect(teams[2].hp).toBe(WOR.HP_INICIAL);
     expect(match.turnoEquipeId).toBe('equipe-2');
   });
 
-  it('completar a última onda encerra a partida com vencedor de maior HP', async () => {
-    const { service, match, teams } = cenario();
-    match.ondaIndex = 1; // última onda (ARTE)
-    match.mascara = ['A', 'R', 'T', '_'];
-    match.letrasTentadas = ['A', 'R', 'T'];
-    teams[0].hp = 70;
-    teams[1].hp = 90;
-    await service.chutarLetra('a1', 'm1', 'E'); // completa ARTE
+  it('não-crítico: um membro erra a letra → dano padrão (100)', async () => {
+    const teams = [time('equipe-1', ['a1', 'a2']), time('equipe-2', ['b1'])];
+    const { service } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2'); // acerta
+    await service.chutarLetra('a2', 'm1', 'Z', 'ATACAR', 'equipe-2'); // erra → resolve
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE); // 900 (não deu crítico)
+  });
+
+  it('votação: o rival mais votado (entre quem acertou) leva o dano', async () => {
+    const teams = [
+      time('equipe-1', ['a1', 'a2', 'a3']),
+      time('equipe-2', ['b1']),
+      time('equipe-3', ['c1']),
+    ];
+    const { service } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'equipe-3');
+    await service.chutarLetra('a3', 'm1', 'T', 'ATACAR', 'equipe-3'); // resolve
+    expect(teams[2].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO); // equipe-3, todos acertaram
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL);
+  });
+
+  it('arriscar certo: Cura Massiva + avança a onda', async () => {
+    const teams = [time('equipe-1', ['a1'], 500), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.arriscar('a1', 'm1', 'arte');
+    expect(teams[0].hp).toBe(Math.min(WOR.HP_INICIAL, 500 + WOR.CURA_MASSIVA)); // 900
+    expect(match.ondaIndex).toBe(1);
+    expect(match.mascara).toEqual(['_', '_', '_']); // REI mascarada
+  });
+
+  it('arriscar errado: Dano Crítico no próprio castelo + passa o turno', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.arriscar('a1', 'm1', 'rainha');
+    expect(teams[0].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO); // 800
+    expect(match.turnoEquipeId).toBe('equipe-2');
+  });
+
+  it('completar a última onda encerra a partida com o vencedor de maior HP', async () => {
+    const teams = [time('equipe-1', ['a1'], 700), time('equipe-2', ['b1'], 900)];
+    const { service, match } = cenario(teams);
+    match.ondaIndex = 1; // última onda (REI)
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'ATACAR', 'equipe-2'); // completa REI
     expect(match.status).toBe('ENCERRADO');
     expect(match.vencedorEquipeId).toBe('equipe-2');
   });
