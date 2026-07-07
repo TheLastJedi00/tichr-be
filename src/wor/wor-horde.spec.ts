@@ -42,7 +42,7 @@ describe('Tichr Wor — Horda e Usurpação (Fase 5)', () => {
       totalOndas: 2,
       ordemEquipes: ['equipe-1', 'equipe-2'],
       turnoEquipeId: 'equipe-1',
-      aguardandoDilema: false,
+      acoesRodada: [],
     });
     const teams = [
       new WorTeamEntity({ id: 'equipe-1', hp: 0, isHorde: true, membros: [{ alunoId: 'a1', nome: 'A' }] }),
@@ -54,7 +54,9 @@ describe('Tichr Wor — Horda e Usurpação (Fase 5)', () => {
   it('a Horda não pode chutar letra (só Invasão)', async () => {
     const { match, teams } = base();
     const svc = repos(jogo, match, teams);
-    await expect(svc.chutarLetra('a1', 'm1', 'R')).rejects.toThrow();
+    await expect(
+      svc.chutarLetra('a1', 'm1', 'R', 'ATACAR', 'equipe-2'),
+    ).rejects.toThrow();
   });
 
   it('Invasão certa: a Horda rouba o castelo do líder, que vira Horda', async () => {
@@ -78,7 +80,7 @@ describe('Tichr Wor — Horda e Usurpação (Fase 5)', () => {
     teams[0].isHorde = true;
     const svc = repos(jogo, match, teams);
     await svc.arriscar('a1', 'm1', 'RAINHA');
-    expect(teams[0].hp).toBe(0); // 20 - 30, clampa em 0
+    expect(teams[0].hp).toBe(0); // 20 - DANO_CRITICO, clampa em 0
   });
 
   it('pular (mestre) avança a onda', async () => {

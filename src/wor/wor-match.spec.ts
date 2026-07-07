@@ -52,15 +52,15 @@ describe('Tichr Wor — partida (Fase 3)', () => {
       expect(t.aplicarDano(5)).toBe(false); // já era horda
     });
 
-    it('cura respeitando o teto de 100', () => {
-      const t = new WorTeamEntity({ id: 'a', hp: 80 });
+    it('cura respeitando o teto de HP inicial (1000)', () => {
+      const t = new WorTeamEntity({ id: 'a', hp: 980 });
       t.curar(40);
-      expect(t.hp).toBe(100);
+      expect(t.hp).toBe(1000);
     });
   });
 
-  describe('WorMatchService.distribuir', () => {
-    it('cria N equipes e distribui os inscritos em round-robin', async () => {
+  describe('WorMatchService.distribuir (tamanho automático)', () => {
+    it('4 alunos → 2 duplas (tamanho automático por headcount)', async () => {
       const match = new WorMatchEntity({
         id: 'm1',
         professorId: 'p1',
@@ -69,6 +69,7 @@ describe('Tichr Wor — partida (Fase 3)', () => {
           { alunoId: 'a1', nome: 'A' },
           { alunoId: 'a2', nome: 'B' },
           { alunoId: 'a3', nome: 'C' },
+          { alunoId: 'a4', nome: 'D' },
         ],
       });
       const criados: Array<{ teamId: string; membros: unknown[] }> = [];
@@ -88,18 +89,22 @@ describe('Tichr Wor — partida (Fase 3)', () => {
         professorFake('PHD'),
         turmaRepoFake(),
       );
-      await service.distribuir('p1', 'm1', 2);
+      await service.distribuir('p1', 'm1');
 
-      expect(criados).toHaveLength(2);
-      const total = criados.reduce((s, c) => s + c.membros.length, 0);
-      expect(total).toBe(3); // todos os inscritos distribuídos
+      expect(criados).toHaveLength(2); // 4 alunos / 2 (dupla) = 2 equipes
+      criados.forEach((c) => expect(c.membros).toHaveLength(2));
       expect(repo.atualizar).toHaveBeenCalledWith('m1', {
         ordemEquipes: ['equipe-1', 'equipe-2'],
       });
     });
 
-    it('rejeita menos de 2 equipes', async () => {
-      const match = new WorMatchEntity({ id: 'm1', professorId: 'p1', status: 'LOBBY', inscritos: [] });
+    it('rejeita com menos de 2 alunos na sala', async () => {
+      const match = new WorMatchEntity({
+        id: 'm1',
+        professorId: 'p1',
+        status: 'LOBBY',
+        inscritos: [{ alunoId: 'a1', nome: 'A' }],
+      });
       const repo = { buscar: jest.fn().mockResolvedValue(match) } as unknown as WorMatchRepository;
       const service = new WorMatchService(
         {} as WorJogoRepository,
@@ -107,7 +112,7 @@ describe('Tichr Wor — partida (Fase 3)', () => {
         professorFake('PHD'),
         turmaRepoFake(),
       );
-      await expect(service.distribuir('p1', 'm1', 1)).rejects.toThrow();
+      await expect(service.distribuir('p1', 'm1')).rejects.toThrow();
     });
   });
 

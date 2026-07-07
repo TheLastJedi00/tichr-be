@@ -7,16 +7,24 @@ import {
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
-import { WOR, WorMatchEntity } from './entities/wor-match.entity';
+import {
+  AcaoMembro,
+  VotoRodada,
+  WOR,
+  WorMatchEntity,
+} from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { PalavraWor } from './entities/wor-jogo.entity';
 
-export type AcaoDilema = 'ATACAR' | 'COMPRAR_DICA';
+/** Ação de voto do membro ao chutar a letra: atacar um rival ou comprar dica. */
+export type VotoAcao = 'ATACAR' | 'DICA';
 
 /**
- * Motor de turnos do Tichr Wor: chutar letra, Dilema Tático, Risco Heroico e
- * avanço de onda. Todas as regras/dano ficam aqui e nas entidades; o cliente só
- * dispara POSTs. Segredo (palavra/dicas) vem de `wor_jogos` (server-only).
+ * Motor de turnos do Tichr Wor. O turno é por EQUIPE; dentro do turno, CADA
+ * membro age uma vez (chuta letra + vota o alvo, ou arrisca a palavra). A rodada
+ * resolve quando todos os membros agiram: revela as letras, apura o voto (rival
+ * mais votado entre quem acertou) e aplica o dano — crítico se todos acertaram.
+ * Segredo (palavra/dicas) vem de `wor_jogos` (server-only); o cliente só posta.
  */
 @Injectable()
 export class WorGameService {
@@ -25,7 +33,7 @@ export class WorGameService {
     private readonly matches: WorMatchRepository,
   ) {}
 
-  private async carregar(matchId: string) {
+  private async carregar(matchId: string): Promise<WorMatchEntity> {
     const match = await this.matches.buscar(matchId);
     if (!match) throw new NotFoundException('Partida não encontrada.');
     return match;
@@ -42,9 +50,7 @@ export class WorGameService {
     alunoId: string,
   ): Promise<{ team: WorTeamEntity; teams: WorTeamEntity[] }> {
     const teams = await this.matches.listarTeams(matchId);
-    const team = teams.find((t) =>
-      t.membros.some((m) => m.alunoId === alunoId),
-    );
+    const team = teams.find((t) => t.membros.some((m) => m.alunoId === alunoId));
     if (!team) throw new ForbiddenException('Você não está em nenhuma equipe.');
     return { team, teams };
   }
@@ -79,121 +85,77 @@ export class WorGameService {
     }
   }
 
-  /** Chuta uma letra. Erro = Dano do Sistema + passa turno; acerto = revela + Dilema. */
+  private assertNaoJogou(match: WorMatchEntity, alunoId: string): void {
+    if (match.acoesRodada.some((a) => a.alunoId === alunoId)) {
+      throw new BadRequestException('Você já jogou nesta rodada.');
+    }
+  }
+
+  /**
+   * Chuta uma letra e VOTA a ação da equipe (atacar um rival ou comprar dica).
+   * Acumula a ação do membro; a rodada só resolve quando todos os membros jogam.
+   */
   async chutarLetra(
     alunoId: string,
     matchId: string,
     letraRaw: string,
+    acao: VotoAcao,
+    alvoEquipeId?: string,
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     this.assertEmAndamento(match);
-    if (match.aguardandoDilema) {
-      throw new BadRequestException('Resolva o Dilema Tático primeiro.');
-    }
-    const { team } = await this.equipeDoAluno(matchId, alunoId);
+    const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     if (team.isHorde) {
-      throw new BadRequestException('A Horda só pode tentar a Invasão (arriscar a palavra).');
+      throw new BadRequestException(
+        'A Horda só pode tentar a Invasão (arriscar a palavra).',
+      );
     }
     this.assertTurno(match, team);
+    this.assertNaoJogou(match, alunoId);
 
     const letra = WorMatchEntity.normalizar(letraRaw);
     if (!/^[A-Z]$/.test(letra)) {
       throw new BadRequestException('Envie uma única letra.');
     }
-    if (match.letrasTentadas.includes(letra)) {
+    const letrasRodada = match.acoesRodada
+      .filter((a) => a.tipo === 'LETRA' && a.letra)
+      .map((a) => a.letra as string);
+    if (match.letrasTentadas.includes(letra) || letrasRodada.includes(letra)) {
       throw new BadRequestException('Essa letra já foi tentada.');
     }
 
+    const voto = this.montarVoto(team, teams, acao, alvoEquipeId);
     const { palavra } = await this.palavraDaOnda(match);
-    const letrasTentadas = [...match.letrasTentadas, letra];
     const acertou = this.reveladas(palavra, [letra]).size > 0;
 
-    if (!acertou) {
-      // Erro: Dano do Sistema no próprio castelo + passa o turno.
-      team.aplicarDano(WOR.DANO_SISTEMA);
-      await this.matches.atualizarTeam(matchId, team.id, {
-        hp: team.hp,
-        isHorde: team.isHorde,
-      });
-      await this.matches.atualizar(matchId, {
-        letrasTentadas,
-        turnoEquipeId: this.proximoTurno(match),
-      });
-      return this.view(matchId);
-    }
-
-    // Acerto: revela ocorrências. Se completou a palavra, encerra a onda.
-    const mascara = WorMatchEntity.mascarar(
-      palavra,
-      this.reveladas(palavra, letrasTentadas),
-    );
-    if (WorMatchEntity.estaCompleta(mascara)) {
-      await this.matches.atualizar(matchId, { letrasTentadas, mascara });
-      await this.avancarOnda(matchId);
-      return this.view(matchId);
-    }
-    // Senão, abre o Dilema Tático para a equipe.
-    await this.matches.atualizar(matchId, {
-      letrasTentadas,
-      mascara,
-      aguardandoDilema: true,
-      dilemaEquipeId: team.id,
-    });
-    return this.view(matchId);
+    const acoesRodada: AcaoMembro[] = [
+      ...match.acoesRodada,
+      { alunoId, tipo: 'LETRA', letra, acertou, voto, ordem: match.acoesRodada.length },
+    ];
+    return this.encerrarOuAcumular(matchId, team, acoesRodada);
   }
 
-  /** Resolve o Dilema Tático: Atacar um rival OU Comprar (revelar) uma Dica. */
-  async resolverDilema(
-    alunoId: string,
-    matchId: string,
-    acao: AcaoDilema,
+  /** Valida o voto do membro (atacar exige um rival existente e diferente da própria equipe). */
+  private montarVoto(
+    team: WorTeamEntity,
+    teams: WorTeamEntity[],
+    acao: VotoAcao,
     alvoEquipeId?: string,
-  ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
-    this.assertEmAndamento(match);
-    if (!match.aguardandoDilema) {
-      throw new BadRequestException('Não há Dilema Tático pendente.');
+  ): VotoRodada {
+    if (acao === 'DICA') return { tipo: 'DICA' };
+    if (!alvoEquipeId || alvoEquipeId === team.id) {
+      throw new BadRequestException('Escolha um castelo rival para atacar.');
     }
-    const { team } = await this.equipeDoAluno(matchId, alunoId);
-    if (match.dilemaEquipeId !== team.id) {
-      throw new ForbiddenException('O Dilema é de outra equipe.');
+    if (!teams.some((t) => t.id === alvoEquipeId)) {
+      throw new NotFoundException('Equipe alvo não encontrada.');
     }
-
-    if (acao === 'ATACAR') {
-      if (!alvoEquipeId || alvoEquipeId === team.id) {
-        throw new BadRequestException('Escolha um castelo rival para atacar.');
-      }
-      const alvo = await this.matches.buscarTeam(matchId, alvoEquipeId);
-      if (!alvo) throw new NotFoundException('Equipe alvo não encontrada.');
-      alvo.aplicarDano(WOR.DANO_ATAQUE);
-      await this.matches.atualizarTeam(matchId, alvo.id, {
-        hp: alvo.hp,
-        isHorde: alvo.isHorde,
-      });
-    } else {
-      // COMPRAR_DICA: revela a próxima carta (sacrifício do ataque).
-      const { dicas } = await this.palavraDaOnda(match);
-      if (match.cartasVisiveis.length >= dicas.length) {
-        throw new BadRequestException('Todas as cartas já foram reveladas.');
-      }
-      await this.matches.atualizar(matchId, {
-        cartasVisiveis: dicas.slice(0, match.cartasVisiveis.length + 1),
-      });
-    }
-
-    // Encerra o dilema e passa o turno.
-    await this.matches.atualizar(matchId, {
-      aguardandoDilema: false,
-      dilemaEquipeId: null,
-      turnoEquipeId: this.proximoTurno(match),
-    });
-    return this.view(matchId);
+    return { tipo: 'ATACAR', alvoEquipeId };
   }
 
   /**
-   * Risco Heroico / Invasão: tenta a palavra inteira. Acerto (castelo vivo) =
-   * Cura Massiva + encerra a onda; erro = Dano Crítico + passa o turno.
-   * (A Usurpação da Horda entra na Fase 5.)
+   * Risco Heroico / Invasão: um membro tenta a palavra inteira. Acerto → Cura
+   * Massiva (ou Usurpação se Horda) + encerra a onda. Erro → Dano Crítico no
+   * PRÓPRIO castelo; a ação conta para a rodada.
    */
   async arriscar(
     alunoId: string,
@@ -202,11 +164,9 @@ export class WorGameService {
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     this.assertEmAndamento(match);
-    if (match.aguardandoDilema) {
-      throw new BadRequestException('Resolva o Dilema Tático primeiro.');
-    }
     const { team } = await this.equipeDoAluno(matchId, alunoId);
     this.assertTurno(match, team);
+    this.assertNaoJogou(match, alunoId);
 
     const { palavra } = await this.palavraDaOnda(match);
     const acertou =
@@ -215,34 +175,147 @@ export class WorGameService {
 
     if (acertou) {
       if (team.isHorde) {
-        // Usurpação: a Horda rouba o castelo do líder (maior HP entre não-hordas).
         await this.usurpar(matchId, team);
       } else {
-        // Triunfo: Cura Massiva.
         team.curar(WOR.CURA_MASSIVA);
         await this.matches.atualizarTeam(matchId, team.id, { hp: team.hp });
       }
-      // A palavra foi decifrada: encerra a onda e avança.
+      await this.matches.atualizar(matchId, { acoesRodada: [] });
       await this.avancarOnda(matchId);
       return this.view(matchId);
     }
 
-    // Desastre: Dano Crítico + passa o turno.
+    // Erro: Dano Crítico no próprio castelo. A ação conta para a rodada.
     team.aplicarDano(WOR.DANO_CRITICO);
     await this.matches.atualizarTeam(matchId, team.id, {
       hp: team.hp,
       isHorde: team.isHorde,
     });
+    const acoesRodada: AcaoMembro[] = [
+      ...match.acoesRodada,
+      { alunoId, tipo: 'ARRISCAR', acertou: false, ordem: match.acoesRodada.length },
+    ];
+    return this.encerrarOuAcumular(matchId, team, acoesRodada);
+  }
+
+  /** Se todos os membros já jogaram, resolve a rodada; senão, só acumula. */
+  private async encerrarOuAcumular(
+    matchId: string,
+    team: WorTeamEntity,
+    acoesRodada: AcaoMembro[],
+  ): Promise<MatchView> {
+    if (acoesRodada.length >= team.membros.length) {
+      return this.resolverRodada(matchId, team, acoesRodada);
+    }
+    await this.matches.atualizar(matchId, { acoesRodada });
+    return this.view(matchId);
+  }
+
+  /**
+   * Resolve a rodada da equipe: revela as letras acertadas; se completou a
+   * palavra, encerra a onda; senão apura o voto (rival mais votado entre quem
+   * acertou) e aplica o dano (200 se todos acertaram e a equipe tem ≥2 membros;
+   * senão 100), ou revela uma dica se "comprar dica" venceu. Passa o turno.
+   */
+  private async resolverRodada(
+    matchId: string,
+    team: WorTeamEntity,
+    acoes: AcaoMembro[],
+  ): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    const { palavra, dicas } = await this.palavraDaOnda(match);
+
+    const letrasDaRodada = acoes
+      .filter((a) => a.tipo === 'LETRA' && a.letra)
+      .map((a) => a.letra as string);
+    const letrasTentadas = [...new Set([...match.letrasTentadas, ...letrasDaRodada])];
+    const mascara = WorMatchEntity.mascarar(
+      palavra,
+      this.reveladas(palavra, letrasTentadas),
+    );
+
+    // Palavra decifrada nesta rodada → encerra a onda.
+    if (WorMatchEntity.estaCompleta(mascara)) {
+      await this.matches.atualizar(matchId, {
+        letrasTentadas,
+        mascara,
+        acoesRodada: [],
+      });
+      await this.avancarOnda(matchId);
+      return this.view(matchId);
+    }
+
+    // Apura o voto entre quem acertou a letra.
+    const acertadores = acoes.filter((a) => a.tipo === 'LETRA' && a.acertou);
+    let cartasVisiveis = match.cartasVisiveis;
+    if (acertadores.length) {
+      const vencedor = this.apurarVoto(acertadores);
+      if (vencedor.tipo === 'DICA') {
+        if (match.cartasVisiveis.length < dicas.length) {
+          cartasVisiveis = dicas.slice(0, match.cartasVisiveis.length + 1);
+        }
+      } else {
+        const alvo = await this.matches.buscarTeam(matchId, vencedor.alvoEquipeId);
+        if (alvo) {
+          const todosAcertaram =
+            acoes.length === team.membros.length &&
+            acoes.every((a) => a.tipo === 'LETRA' && a.acertou);
+          const critico = todosAcertaram && team.membros.length >= 2;
+          alvo.aplicarDano(critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE);
+          await this.matches.atualizarTeam(matchId, alvo.id, {
+            hp: alvo.hp,
+            isHorde: alvo.isHorde,
+          });
+        }
+      }
+    }
+
     await this.matches.atualizar(matchId, {
+      letrasTentadas,
+      mascara,
+      cartasVisiveis,
+      acoesRodada: [],
       turnoEquipeId: this.proximoTurno(match),
     });
     return this.view(matchId);
   }
 
   /**
+   * Apura o voto dos acertadores: a ação mais votada vence. Empate → vale o voto
+   * do primeiro que acertou; se ele não estiver entre as empatadas (raro), sorteia.
+   */
+  private apurarVoto(acertadores: AcaoMembro[]): VotoRodada {
+    const chave = (v: VotoRodada) =>
+      v.tipo === 'DICA' ? 'DICA' : `ATACAR:${v.alvoEquipeId}`;
+    const contagem = new Map<string, number>();
+    for (const a of acertadores) {
+      if (!a.voto) continue;
+      const k = chave(a.voto);
+      contagem.set(k, (contagem.get(k) ?? 0) + 1);
+    }
+    const max = Math.max(...contagem.values());
+    const empatadas = [...contagem.entries()]
+      .filter(([, n]) => n === max)
+      .map(([k]) => k);
+
+    let vencedora: string;
+    if (empatadas.length === 1) {
+      vencedora = empatadas[0];
+    } else {
+      const primeiro = [...acertadores].sort((a, b) => a.ordem - b.ordem)[0];
+      const chavePrimeiro = primeiro.voto ? chave(primeiro.voto) : '';
+      vencedora = empatadas.includes(chavePrimeiro)
+        ? chavePrimeiro
+        : empatadas[Math.floor(Math.random() * empatadas.length)];
+    }
+    return vencedora === 'DICA'
+      ? { tipo: 'DICA' }
+      : { tipo: 'ATACAR', alvoEquipeId: vencedora.slice('ATACAR:'.length) };
+  }
+
+  /**
    * Usurpação: a Horda `invasora` toma o castelo da equipe de MAIOR HP (o líder),
-   * que vira a nova Horda. Se não houver líder (todos hordas), a invasora reergue
-   * o próprio castelo com HP cheio.
+   * que vira a nova Horda. Sem líder (todos hordas), reergue o próprio com HP cheio.
    */
   private async usurpar(matchId: string, invasora: WorTeamEntity): Promise<void> {
     const teams = await this.matches.listarTeams(matchId);
@@ -257,16 +330,11 @@ export class WorGameService {
       });
       return;
     }
-
-    // A invasora assume o castelo (HP) do líder e a liderança; o líder vira Horda.
     await this.matches.atualizarTeam(matchId, invasora.id, {
       hp: lider.hp,
       isHorde: false,
     });
-    await this.matches.atualizarTeam(matchId, lider.id, {
-      hp: 0,
-      isHorde: true,
-    });
+    await this.matches.atualizarTeam(matchId, lider.id, { hp: 0, isHorde: true });
   }
 
   /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
@@ -291,8 +359,7 @@ export class WorGameService {
       await this.matches.atualizar(matchId, {
         status: 'ENCERRADO',
         vencedorEquipeId: vencedor?.id ?? null,
-        aguardandoDilema: false,
-        dilemaEquipeId: null,
+        acoesRodada: [],
       });
       return;
     }
@@ -304,8 +371,7 @@ export class WorGameService {
       letrasTentadas: [],
       cartasVisiveis: palavra.dicas.slice(0, 1),
       totalCartas: palavra.dicas.length,
-      aguardandoDilema: false,
-      dilemaEquipeId: null,
+      acoesRodada: [],
       turnoEquipeId: match.ordemEquipes[0],
     });
   }
