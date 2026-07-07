@@ -41,4 +41,10 @@ export class WorMatchController {
   pular(@ProfessorId() uid: string, @Param('id') id: string) {
     return this.game.pularPalavra(uid, id);
   }
+
+  /** Cronômetro: encerra a rodada por tempo esgotado (projetor dispara ao zerar). */
+  @Post('matches/:id/tempo')
+  tempo(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.game.resolverPorTempo(uid, id);
+  }
 }

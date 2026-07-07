@@ -9,6 +9,8 @@ import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
 import {
   AcaoMembro,
+  LIMITE_RODADA_MS,
+  ResumoRodada,
   VotoRodada,
   WOR,
   WorMatchEntity,
@@ -221,6 +223,7 @@ export class WorGameService {
     matchId: string,
     team: WorTeamEntity,
     acoes: AcaoMembro[],
+    porTempo = false,
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     const { palavra, dicas } = await this.palavraDaOnda(match);
@@ -234,23 +237,37 @@ export class WorGameService {
       this.reveladas(palavra, letrasTentadas),
     );
 
-    // Palavra decifrada nesta rodada → encerra a onda.
+    const acertadores = acoes.filter((a) => a.tipo === 'LETRA' && a.acertou);
+    const resumo: ResumoRodada = {
+      seq: (match.resumoRodada?.seq ?? 0) + 1,
+      equipeId: team.id,
+      equipeNome: team.nome,
+      acertadores: acertadores.map((a) => ({
+        nome: this.nomeMembro(team, a.alunoId),
+        letra: a.letra as string,
+      })),
+      acao: 'NADA',
+      porTempo,
+    };
+
+    // Palavra decifrada nesta rodada → encerra a onda (o reveal é o avanço).
     if (WorMatchEntity.estaCompleta(mascara)) {
       await this.matches.atualizar(matchId, {
         letrasTentadas,
         mascara,
         acoesRodada: [],
+        resumoRodada: resumo,
       });
       await this.avancarOnda(matchId);
       return this.view(matchId);
     }
 
     // Apura o voto entre quem acertou a letra.
-    const acertadores = acoes.filter((a) => a.tipo === 'LETRA' && a.acertou);
     let cartasVisiveis = match.cartasVisiveis;
     if (acertadores.length) {
       const vencedor = this.apurarVoto(acertadores);
       if (vencedor.tipo === 'DICA') {
+        resumo.acao = 'DICA';
         if (match.cartasVisiveis.length < dicas.length) {
           cartasVisiveis = dicas.slice(0, match.cartasVisiveis.length + 1);
         }
@@ -261,11 +278,17 @@ export class WorGameService {
             acoes.length === team.membros.length &&
             acoes.every((a) => a.tipo === 'LETRA' && a.acertou);
           const critico = todosAcertaram && team.membros.length >= 2;
-          alvo.aplicarDano(critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE);
+          const dano = critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE;
+          alvo.aplicarDano(dano);
           await this.matches.atualizarTeam(matchId, alvo.id, {
             hp: alvo.hp,
             isHorde: alvo.isHorde,
           });
+          resumo.acao = 'ATACAR';
+          resumo.alvoEquipeId = alvo.id;
+          resumo.alvoNome = alvo.nome;
+          resumo.dano = dano;
+          resumo.critico = critico;
         }
       }
     }
@@ -276,8 +299,51 @@ export class WorGameService {
       cartasVisiveis,
       acoesRodada: [],
       turnoEquipeId: this.proximoTurno(match),
+      rodadaIniciadaEm: new Date().toISOString(),
+      resumoRodada: resumo,
     });
+    await this.refletirPlacar(matchId);
     return this.view(matchId);
+  }
+
+  /** Nome de um membro da equipe (para o resumo da rodada). */
+  private nomeMembro(team: WorTeamEntity, alunoId: string): string {
+    return team.membros.find((m) => m.alunoId === alunoId)?.nome ?? 'Aluno';
+  }
+
+  /** Grava na raiz o snapshot de todas as equipes (o aluno lê os castelos rivais barato). */
+  private async refletirPlacar(matchId: string): Promise<void> {
+    const teams = await this.matches.listarTeams(matchId);
+    await this.matches.atualizar(matchId, {
+      placar: teams.map((t) => ({
+        id: t.id,
+        nome: t.nome,
+        cor: t.cor,
+        hp: t.hp,
+        isHorde: t.isHorde,
+      })),
+    });
+  }
+
+  /**
+   * Encerra a rodada por TEMPO esgotado (cronômetro de 1 min). Disparado pelo
+   * projetor do professor; o backend valida o prazo antes de resolver.
+   */
+  async resolverPorTempo(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    if (match.professorId !== professorId) {
+      throw new ForbiddenException('Essa partida não é sua.');
+    }
+    this.assertEmAndamento(match);
+    if (!match.turnoEquipeId) return this.view(matchId);
+    const inicio = match.rodadaIniciadaEm ? Date.parse(match.rodadaIniciadaEm) : 0;
+    if (inicio && Date.now() - inicio < LIMITE_RODADA_MS - 2000) {
+      return this.view(matchId); // ainda não esgotou (margem p/ o relógio do cliente)
+    }
+    const teams = await this.matches.listarTeams(matchId);
+    const team = teams.find((t) => t.id === match.turnoEquipeId);
+    if (!team) return this.view(matchId);
+    return this.resolverRodada(matchId, team, match.acoesRodada, true);
   }
 
   /**
@@ -360,7 +426,9 @@ export class WorGameService {
         status: 'ENCERRADO',
         vencedorEquipeId: vencedor?.id ?? null,
         acoesRodada: [],
+        rodadaIniciadaEm: null,
       });
+      await this.refletirPlacar(matchId);
       return;
     }
 
@@ -373,7 +441,9 @@ export class WorGameService {
       totalCartas: palavra.dicas.length,
       acoesRodada: [],
       turnoEquipeId: match.ordemEquipes[0],
+      rodadaIniciadaEm: new Date().toISOString(),
     });
+    await this.refletirPlacar(matchId);
   }
 
   private async view(matchId: string): Promise<MatchView> {

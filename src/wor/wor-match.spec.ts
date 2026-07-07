@@ -93,9 +93,10 @@ describe('Tichr Wor — partida (Fase 3)', () => {
 
       expect(criados).toHaveLength(2); // 4 alunos / 2 (dupla) = 2 equipes
       criados.forEach((c) => expect(c.membros).toHaveLength(2));
-      expect(repo.atualizar).toHaveBeenCalledWith('m1', {
-        ordemEquipes: ['equipe-1', 'equipe-2'],
-      });
+      expect(repo.atualizar).toHaveBeenCalledWith(
+        'm1',
+        expect.objectContaining({ ordemEquipes: ['equipe-1', 'equipe-2'] }),
+      );
     });
 
     it('rejeita com menos de 2 alunos na sala', async () => {
