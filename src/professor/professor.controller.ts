@@ -1,11 +1,16 @@
-import { Body, Controller, Get, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Put, Query } from '@nestjs/common';
+import { AdminService } from '../admin/admin.service';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { ExcluirContaDto } from './dto/excluir-conta.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfessorService, ProfessorView } from './professor.service';
 
 @Controller('profile')
 export class ProfessorController {
-  constructor(private readonly professorService: ProfessorService) {}
+  constructor(
+    private readonly professorService: ProfessorService,
+    private readonly adminService: AdminService,
+  ) {}
 
   @Get()
   getProfile(@ProfessorId() uid: string): Promise<ProfessorView> {
@@ -26,5 +31,14 @@ export class ProfessorController {
     return ProfessorService.montarView(
       await this.professorService.updateProfile(uid, dto),
     );
+  }
+
+  /**
+   * Auto-exclusão da conta (direito LGPD). Exige a senha para reautenticação e
+   * faz o hard delete em cascata (turmas/alunos/jogos + login). Irreversível.
+   */
+  @Delete()
+  excluirConta(@ProfessorId() uid: string, @Body() dto: ExcluirContaDto) {
+    return this.adminService.excluirPropriaConta(uid, dto.senha);
   }
 }
