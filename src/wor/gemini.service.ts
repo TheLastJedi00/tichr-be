@@ -69,6 +69,39 @@ export class GeminiService {
     return GeminiService.extrairDicas(texto);
   }
 
+  /**
+   * Chamada genérica: envia um prompt e devolve o texto bruto do modelo. Sem
+   * chave ou resposta inválida → 503 `IA_INDISPONIVEL`. Usada por outros jogos
+   * (ex.: geração de perguntas do Qlick), que fazem o próprio parse.
+   */
+  async gerarTexto(prompt: string): Promise<string> {
+    const apiKey = this.config.get<string>('GEMINI_API_KEY');
+    if (!apiKey) {
+      throw new ServiceUnavailableException({
+        code: 'IA_INDISPONIVEL',
+        message: 'Geração por IA indisponível no momento.',
+      });
+    }
+    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7 },
+      }),
+    });
+    if (!res.ok) {
+      throw new ServiceUnavailableException({
+        code: 'IA_INDISPONIVEL',
+        message: 'A IA não respondeu. Tente novamente mais tarde.',
+      });
+    }
+    const data = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  }
+
   /** Parse robusto: tenta JSON; senão quebra por linhas. Garante 3 itens. */
   static extrairDicas(texto: string): string[] {
     let itens: string[] = [];
