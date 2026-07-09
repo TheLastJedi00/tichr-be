@@ -18,7 +18,7 @@ import { UpdateTurmaDto } from './dto/update-turma.dto';
 import { ExcecaoEntity } from './entities/excecao.entity';
 import { FeriasEntity } from './entities/ferias.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
-import { TurmaEntity } from './entities/turma.entity';
+import { NIVEIS_TURMA_DEFAULT, TurmaEntity } from './entities/turma.entity';
 import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
@@ -223,6 +223,12 @@ export class TurmaService {
       rotuloAdicionar:
         dto.rotuloAdicionar ?? turma.rotuloAdicionar ?? 'Adicionar',
       rotuloRemover: dto.rotuloRemover ?? turma.rotuloRemover ?? 'Remover',
+      nivelPrata: dto.nivelPrata ?? turma.nivelPrata ?? NIVEIS_TURMA_DEFAULT.prata,
+      nivelOuro: dto.nivelOuro ?? turma.nivelOuro ?? NIVEIS_TURMA_DEFAULT.ouro,
+      nivelDiamante:
+        dto.nivelDiamante ?? turma.nivelDiamante ?? NIVEIS_TURMA_DEFAULT.diamante,
+      nivelPlatina:
+        dto.nivelPlatina ?? turma.nivelPlatina ?? NIVEIS_TURMA_DEFAULT.platina,
     };
     Object.assign(turma, campos);
     await this.turmaRepo.update(turmaId, campos);

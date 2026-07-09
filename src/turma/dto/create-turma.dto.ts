@@ -82,4 +82,25 @@ export class CreateTurmaDto {
   @IsString()
   @MaxLength(24)
   rotuloRemover?: string;
+
+  // Limiares de nivel (XP para alcancar cada tier). Bronze e o piso 0.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  nivelPrata?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  nivelOuro?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  nivelDiamante?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  nivelPlatina?: number;
 }
