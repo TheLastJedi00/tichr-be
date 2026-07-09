@@ -73,6 +73,15 @@ export class ProfessorEntity {
   /** Última geração de dicas por IA do Tichr Wor (ISO). Base do rate limit 1×/dia. */
   worIaUltimoUso?: string;
 
+  /** Aceite dos Termos de Uso no cadastro (ISO). Registro de consentimento LGPD. */
+  aceiteTermosEm?: string;
+
+  /** Aceite da Política de Privacidade no cadastro (ISO). Registro LGPD. */
+  aceitePrivacidadeEm?: string;
+
+  /** Versão dos documentos legais aceita no cadastro (auditoria de consentimento). */
+  versaoDocumentosLegais?: string;
+
   constructor(partial: Partial<ProfessorEntity> = {}) {
     Object.assign(this, partial);
   }

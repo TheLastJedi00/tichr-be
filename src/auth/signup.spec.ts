@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, VERSAO_DOCUMENTOS_LEGAIS } from './auth.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -34,7 +34,7 @@ describe('AuthService — cadastro e admin', () => {
       );
     });
 
-    it('cria a conta, provisiona o professor ESTAGIARIO e devolve o token', async () => {
+    it('cria a conta com nome + consentimento, provisiona ESTAGIARIO e devolve o token', async () => {
       mockFetch(true, {
         idToken: 'tok',
         refreshToken: 'r',
@@ -43,22 +43,43 @@ describe('AuthService — cadastro e admin', () => {
         email: 'a@b.com',
       });
 
-      const res = await service.signup('a@b.com', 'segredo');
+      const res = await service.signup('a@b.com', 'segredo', '  Ana  ', true, true);
 
       expect(res.token).toBe('tok');
       expect(res.uid).toBe('uid1');
       expect(setDoc).toHaveBeenCalledWith(
-        { planoAtual: 'ESTAGIARIO', slotsAdicionaisComprados: 0 },
+        expect.objectContaining({
+          nomeExibicao: 'Ana', // trim aplicado
+          planoAtual: 'ESTAGIARIO',
+          slotsAdicionaisComprados: 0,
+          versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
+        }),
         { merge: true },
       );
+      const gravado = setDoc.mock.calls[0][0];
+      expect(typeof gravado.aceiteTermosEm).toBe('string');
+      expect(typeof gravado.aceitePrivacidadeEm).toBe('string');
+    });
+
+    it('rejeita sem aceite dos termos, antes de tocar a rede', async () => {
+      const fetchMock = jest.fn();
+      (global as unknown as { fetch: unknown }).fetch = fetchMock;
+      await expect(
+        service.signup('a@b.com', 'segredo', 'Ana', false, true),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.signup('a@b.com', 'segredo', 'Ana', true, false),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(setDoc).not.toHaveBeenCalled();
     });
 
     it('rejeita e-mail ja cadastrado (ConflictException) sem criar doc', async () => {
       mockFetch(false, { error: { message: 'EMAIL_EXISTS' } });
 
-      await expect(service.signup('a@b.com', 'segredo')).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await expect(
+        service.signup('a@b.com', 'segredo', 'Ana', true, true),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(setDoc).not.toHaveBeenCalled();
     });
 
@@ -67,9 +88,9 @@ describe('AuthService — cadastro e admin', () => {
         error: { message: 'WEAK_PASSWORD : Password should be at least 6 characters' },
       });
 
-      await expect(service.signup('a@b.com', '123')).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.signup('a@b.com', '123', 'Ana', true, true),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 });

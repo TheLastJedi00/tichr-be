@@ -1,11 +1,36 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import {
+  Equals,
+  IsBoolean,
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
-/** Cadastro frictionless: apenas e-mail e senha (perfil vem depois). */
+/**
+ * Cadastro: nome + e-mail + senha, com aceite obrigatorio dos documentos legais
+ * (Termos de Uso e Politica de Privacidade). O aceite e exigido tambem no
+ * servidor (defesa em profundidade) e registrado no perfil para conformidade LGPD.
+ */
 export class SignupDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Informe seu nome.' })
+  @MaxLength(80)
+  nome: string;
+
   @IsEmail({}, { message: 'Informe um e-mail valido.' })
   email: string;
 
   @IsString()
   @MinLength(6, { message: 'A senha deve ter ao menos 6 caracteres.' })
   password: string;
+
+  @IsBoolean()
+  @Equals(true, { message: 'E preciso aceitar os Termos de Uso.' })
+  aceiteTermos: boolean;
+
+  @IsBoolean()
+  @Equals(true, { message: 'E preciso aceitar a Politica de Privacidade.' })
+  aceitePrivacidade: boolean;
 }
