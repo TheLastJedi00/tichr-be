@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { plainToInstance } from 'class-transformer';
@@ -14,6 +15,8 @@ import { TurmaEntity } from '../turma/entities/turma.entity';
 
 const SEND_OOB_URL =
   'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode';
+const SIGN_IN_URL =
+  'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
 
 /** Visao geral do negocio (dashboard do backoffice). */
 export interface AdminMetrics {
@@ -214,6 +217,40 @@ export class AdminService {
     qlicks.docs.forEach((q) => batch.delete(q.ref));
     await batch.commit();
     return { turmas: turmas.size, qlicks: qlicks.size };
+  }
+
+  /**
+   * Auto-exclusão do titular: confirma a senha (reautenticação via Identity
+   * Toolkit) e faz o **hard delete** da própria conta (dados em cascata + doc do
+   * professor + usuário do Auth). Ação irreversível, disparada pelo próprio dono.
+   */
+  async excluirPropriaConta(
+    uid: string,
+    senha: string,
+  ): Promise<{ modo: 'soft' | 'hard' }> {
+    const user = await this.firebase.auth.getUser(uid);
+    if (!user.email) {
+      throw new BadRequestException('Usuario sem e-mail cadastrado.');
+    }
+    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
+    if (!apiKey) throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
+
+    const res = await fetch(`${SIGN_IN_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: user.email,
+        password: senha,
+        returnSecureToken: false,
+      }),
+    });
+    if (!res.ok) {
+      throw new UnauthorizedException({
+        code: 'SENHA_INVALIDA',
+        message: 'Senha incorreta. A conta nao foi excluida.',
+      });
+    }
+    return this.excluirUsuario(uid, true);
   }
 
   /** Soft delete (flag) ou hard delete (dados + login). */
