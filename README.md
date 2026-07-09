@@ -184,6 +184,9 @@ Perfil do professor.
 | `avatarUrl` | string? — URL pública da foto de perfil (Firebase Storage; vazio = placeholder) |
 | `planoAtual` | `'ESTAGIARIO' \| 'GRADUADO' \| 'MESTRE' \| 'PHD'` (default `ESTAGIARIO`) |
 | `slotsAdicionaisComprados` | number (default `0`) — vagas avulsas somadas ao limite do plano |
+| `aceiteTermosEm` | string? (ISO) — registro de consentimento dos Termos de Uso no cadastro (LGPD) |
+| `aceitePrivacidadeEm` | string? (ISO) — registro de consentimento da Política de Privacidade no cadastro (LGPD) |
+| `versaoDocumentosLegais` | string? — versão dos documentos legais aceita no cadastro (auditoria) |
 
 ### `alunos`
 Lista de chamada de uma turma (não é conta do Firebase). Ganha PIN e XP para o portal.
@@ -313,7 +316,7 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
 | `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, refreshToken, expiresIn, uid, email }` |
-| `POST` | `/auth/signup` **(pública)** | `{ email, password }` | `{ token, … }` — **cadastro frictionless**: cria a conta no Identity Toolkit, provisiona `professores/{uid}` (plano ESTAGIARIO) e já devolve o token (409 `EMAIL_EXISTS`) |
+| `POST` | `/auth/signup` **(pública)** | `{ nome, email, password, aceiteTermos, aceitePrivacidade }` | `{ token, … }` — **cadastro**: exige o **aceite** dos Termos de Uso e da Política de Privacidade (validado no DTO e no service; 400 sem aceite); cria a conta no Identity Toolkit e provisiona `professores/{uid}` (plano ESTAGIARIO) com `nomeExibicao` + **registro de consentimento LGPD** (`aceiteTermosEm`, `aceitePrivacidadeEm`, `versaoDocumentosLegais`); já devolve o token (409 `EMAIL_EXISTS`) |
 | `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo } }` — JWT de aluno + config da turma |
 | `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config, pinAlunoLength }` — info da tela de login do aluno (`pinAlunoLength` = quantos slots de PIN exibir) |
 | `GET` | `/` **(pública)** | — | health check |
