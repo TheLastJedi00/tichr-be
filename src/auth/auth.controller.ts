@@ -15,11 +15,17 @@ export class AuthController {
     return this.authService.login(dto.email, dto.password);
   }
 
-  /** Cadastro frictionless (plano Estagiario): cria a conta e ja devolve o token. */
+  /** Cadastro (plano Estagiario): cria a conta com nome + aceite legal e devolve o token. */
   @Public()
   @Post('signup')
   signup(@Body() dto: SignupDto) {
-    return this.authService.signup(dto.email, dto.password);
+    return this.authService.signup(
+      dto.email,
+      dto.password,
+      dto.nome,
+      dto.aceiteTermos,
+      dto.aceitePrivacidade,
+    );
   }
 
   /** Login do aluno via portal: turmaId + PIN -> JWT customizado. */

@@ -23,6 +23,9 @@ const IDENTITY_TOOLKIT_URL =
 const SIGNUP_URL =
   'https://identitytoolkit.googleapis.com/v1/accounts:signUp';
 
+/** Versao vigente dos documentos legais aceitos no cadastro (auditoria LGPD). */
+export const VERSAO_DOCUMENTOS_LEGAIS = 'v1';
+
 export interface LoginResult {
   token: string;
   refreshToken: string;
@@ -140,7 +143,18 @@ export class AuthService {
    * dono da Web API key), provisiona o doc `professores/{uid}` minimo
    * (plano ESTAGIARIO) e devolve o ID token para auto-login imediato.
    */
-  async signup(email: string, password: string): Promise<LoginResult> {
+  async signup(
+    email: string,
+    password: string,
+    nome: string,
+    aceiteTermos: boolean,
+    aceitePrivacidade: boolean,
+  ): Promise<LoginResult> {
+    if (!aceiteTermos || !aceitePrivacidade) {
+      throw new BadRequestException(
+        'E preciso aceitar os Termos de Uso e a Politica de Privacidade.',
+      );
+    }
     const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
     if (!apiKey) {
       throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
@@ -172,12 +186,20 @@ export class AuthService {
       throw new BadRequestException('Nao foi possivel criar a conta.');
     }
 
-    // Provisiona o perfil minimo (ESTAGIARIO); nome/username/foto vem no soft-block.
+    // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
+    const agora = new Date().toISOString();
     await this.firebase.firestore
       .collection('professores')
       .doc(data.localId)
       .set(
-        { planoAtual: 'ESTAGIARIO', slotsAdicionaisComprados: 0 },
+        {
+          nomeExibicao: nome.trim(),
+          planoAtual: 'ESTAGIARIO',
+          slotsAdicionaisComprados: 0,
+          aceiteTermosEm: agora,
+          aceitePrivacidadeEm: agora,
+          versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
+        },
         { merge: true },
       );
 
