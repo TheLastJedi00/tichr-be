@@ -134,13 +134,15 @@ export class XpService {
   }
 
   /**
-   * Credita ao XP dos alunos os pontos de uma partida do Tichr Qlick encerrada
-   * (motivo QLICK). O próprio Qlick é a opção de gamificar, então dispensa o
-   * gate de `pontuacaoAtiva`. Usa `increment` para somar sem corrida com a base.
+   * Credita ao XP dos alunos os pontos de uma partida encerrada (Tichr Qlick ou
+   * Wor, conforme `motivo`). O próprio jogo é a opção de gamificar (PhD), então
+   * dispensa o gate de `pontuacaoAtiva`. Usa `increment` para somar sem corrida
+   * com a base.
    */
   async creditarPartida(
     turmaId: string,
     pontosPorAluno: Array<{ alunoId: string; pontos: number }>,
+    motivo: 'QLICK' | 'WOR' = 'QLICK',
   ): Promise<void> {
     const validos = pontosPorAluno.filter((p) => p.pontos > 0);
     if (validos.length === 0) {
@@ -160,7 +162,7 @@ export class XpService {
         alunoId,
         turmaId,
         pontos,
-        motivo: 'QLICK',
+        motivo,
         data: new Date().toISOString(),
       });
     }

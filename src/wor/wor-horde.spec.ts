@@ -4,6 +4,10 @@ import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchEntity } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { WorJogoEntity } from './entities/wor-jogo.entity';
+import { XpService } from '../turma/xp.service';
+
+const fakeXp = () =>
+  ({ creditarPartida: async () => undefined }) as unknown as XpService;
 
 function repos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEntity[]) {
   const matches = {
@@ -20,7 +24,7 @@ function repos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEntity[
     },
   } as unknown as WorMatchRepository;
   const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
-  return new WorGameService(jogos, matches);
+  return new WorGameService(jogos, matches, fakeXp());
 }
 
 describe('Tichr Wor — Horda e Usurpação (Fase 5)', () => {

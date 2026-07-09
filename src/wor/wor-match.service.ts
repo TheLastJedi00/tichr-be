@@ -203,6 +203,7 @@ export class WorMatchService {
         cor: CORES_TEAM[i],
         hp: WOR.HP_INICIAL,
         isHorde: false,
+        pontos: 0,
         membros: membrosPorEquipe[i],
       });
     }
@@ -212,6 +213,7 @@ export class WorMatchService {
       cor: CORES_TEAM[i],
       hp: WOR.HP_INICIAL,
       isHorde: false,
+      pontos: 0,
     }));
     await this.matches.atualizar(matchId, { ordemEquipes, placar });
     return this.view(matchId);

@@ -24,6 +24,8 @@ export class WorTeamEntity {
   hp: number = WOR.HP_INICIAL;
   /** Castelo destruído → vira Horda Bárbara (só pode Invasão). */
   isHorde = false;
+  /** Pontos de combate acumulados (dano causado + bônus). Desempata e vira XP. */
+  pontos = 0;
   membros: MembroTeam[] = [];
 
   constructor(partial: Partial<WorTeamEntity> = {}) {

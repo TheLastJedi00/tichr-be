@@ -10,6 +10,18 @@ const HORIZONTE_GRADE_FIXA_DIAS = 120;
 const MAX_ITERACOES = 366 * 5;
 
 /**
+ * Limiares padrao (XP acumulado) para alcancar cada nivel do aluno. Bronze e o
+ * piso (0). Fonte unica de verdade dos defaults; o professor pode sobrescrever
+ * por turma. Ordem: Bronze -> Prata -> Ouro -> Diamante -> Platina (topo).
+ */
+export const NIVEIS_TURMA_DEFAULT = {
+  prata: 500,
+  ouro: 1000,
+  diamante: 2000,
+  platina: 4000,
+} as const;
+
+/**
  * Turma: agrupa as regras de recorrencia de um conjunto de aulas.
  * As propriedades refletem o documento salvo no Firestore.
  */
@@ -64,6 +76,12 @@ export class TurmaEntity {
   /** Rotulo do botao de remover pontos (ex.: 'Punir'). */
   rotuloRemover?: string;
 
+  /** Limiares de nivel (XP para alcancar Prata/Ouro/Diamante/Platina). Bronze = piso 0. */
+  nivelPrata?: number;
+  nivelOuro?: number;
+  nivelDiamante?: number;
+  nivelPlatina?: number;
+
   /** PIN de 6 digitos da turma (portal do aluno); gerado no cadastro. */
   pinTurma?: string;
 
@@ -82,13 +100,21 @@ export class TurmaEntity {
     rankingAtivo: boolean;
     rotuloAdicionar: string;
     rotuloRemover: string;
+    niveis: { prata: number; ouro: number; diamante: number; platina: number };
   } {
+    const d = NIVEIS_TURMA_DEFAULT;
+    // Normalizacao ascendente defensiva: prata < ouro < diamante < platina.
+    const prata = Math.max(1, this.nivelPrata ?? d.prata);
+    const ouro = Math.max(prata + 1, this.nivelOuro ?? d.ouro);
+    const diamante = Math.max(ouro + 1, this.nivelDiamante ?? d.diamante);
+    const platina = Math.max(diamante + 1, this.nivelPlatina ?? d.platina);
     return {
       pontuacaoAtiva: this.pontuacaoAtiva ?? true,
       nomePontuacao: this.nomePontuacao?.trim() || 'XP',
       rankingAtivo: this.rankingAtivo ?? true,
       rotuloAdicionar: this.rotuloAdicionar?.trim() || 'Adicionar',
       rotuloRemover: this.rotuloRemover?.trim() || 'Remover',
+      niveis: { prata, ouro, diamante, platina },
     };
   }
 

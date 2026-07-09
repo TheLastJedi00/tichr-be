@@ -26,7 +26,21 @@ describe('Config de pontuacao', () => {
         rankingAtivo: true,
         rotuloAdicionar: 'Adicionar',
         rotuloRemover: 'Remover',
+        niveis: { prata: 500, ouro: 1000, diamante: 2000, platina: 4000 },
       });
+    });
+
+    it('limiares de nivel: usa custom e normaliza ordem ascendente', () => {
+      const cfg = novaTurma({
+        nivelPrata: 300,
+        nivelOuro: 200, // fora de ordem → normaliza para > prata
+        nivelDiamante: 1500,
+        nivelPlatina: 1000, // fora de ordem → normaliza para > diamante
+      }).configPontuacao;
+      expect(cfg.niveis.prata).toBe(300);
+      expect(cfg.niveis.ouro).toBe(301);
+      expect(cfg.niveis.diamante).toBe(1500);
+      expect(cfg.niveis.platina).toBe(1501);
     });
 
     it('respeita config customizada (Aura / Moggar / Punir, sem ranking)', () => {
