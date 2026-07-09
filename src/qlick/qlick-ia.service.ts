@@ -57,11 +57,15 @@ export class QlickIaService {
     }
 
     const prompt = QlickIaService.montarPrompt(dto);
-    const texto = await this.gemini.gerarTexto(prompt);
+    const texto = await this.gemini.gerarTexto(prompt, {
+      json: true,
+      maxOutputTokens: 4096,
+    });
     const perguntas = QlickIaService.extrairPerguntas(texto);
     if (perguntas.length === 0) {
+      console.error(`[QlickIA] parse vazio. Trecho: ${texto.slice(0, 300)}`);
       throw new ServiceUnavailableException({
-        code: 'IA_INDISPONIVEL',
+        code: 'IA_SEM_RESULTADO',
         message: 'A IA não retornou perguntas válidas. Tente novamente com outra descrição.',
       });
     }
@@ -94,7 +98,9 @@ export class QlickIaService {
    * quando fora do range e limita a {@link QTD_PERGUNTAS}.
    */
   static extrairPerguntas(texto: string): PerguntaQlick[] {
-    const match = texto.match(/\[[\s\S]*\]/);
+    // Remove cercas markdown (```json … ```) que a IA às vezes adiciona.
+    const limpo = texto.replace(/```json/gi, '').replace(/```/g, '');
+    const match = limpo.match(/\[[\s\S]*\]/);
     if (!match) return [];
     let arr: unknown[];
     try {

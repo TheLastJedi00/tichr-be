@@ -70,36 +70,63 @@ export class GeminiService {
   }
 
   /**
-   * Chamada genérica: envia um prompt e devolve o texto bruto do modelo. Sem
-   * chave ou resposta inválida → 503 `IA_INDISPONIVEL`. Usada por outros jogos
-   * (ex.: geração de perguntas do Qlick), que fazem o próprio parse.
+   * Chamada genérica: envia um prompt e devolve o texto bruto do modelo. Códigos
+   * de 503 distintos para diagnóstico (`IA_SEM_CHAVE` / `IA_UPSTREAM`) e o motivo
+   * real do upstream é logado (visível nos logs do servidor). `opts.json` força a
+   * saída em JSON puro (structured output) e `maxOutputTokens` evita truncamento.
    */
-  async gerarTexto(prompt: string): Promise<string> {
+  async gerarTexto(
+    prompt: string,
+    opts?: { json?: boolean; maxOutputTokens?: number },
+  ): Promise<string> {
     const apiKey = this.config.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
       throw new ServiceUnavailableException({
-        code: 'IA_INDISPONIVEL',
-        message: 'Geração por IA indisponível no momento.',
+        code: 'IA_SEM_CHAVE',
+        message: 'Geração por IA indisponível (chave não configurada no servidor).',
       });
     }
+
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0.7,
+      maxOutputTokens: opts?.maxOutputTokens ?? 4096,
+    };
+    if (opts?.json) {
+      generationConfig.responseMimeType = 'application/json';
+    }
+
     const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7 },
+        generationConfig,
       }),
     });
+
     if (!res.ok) {
+      const detalhe = await res.text().catch(() => '');
+      console.error(`[Gemini] HTTP ${res.status}: ${detalhe.slice(0, 400)}`);
       throw new ServiceUnavailableException({
-        code: 'IA_INDISPONIVEL',
+        code: 'IA_UPSTREAM',
         message: 'A IA não respondeu. Tente novamente mais tarde.',
       });
     }
+
     const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+        finishReason?: string;
+      }>;
+      promptFeedback?: { blockReason?: string };
     };
-    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const texto = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    if (!texto) {
+      const finish = data.candidates?.[0]?.finishReason ?? '?';
+      const block = data.promptFeedback?.blockReason ?? '-';
+      console.error(`[Gemini] resposta vazia (finishReason=${finish}, block=${block})`);
+    }
+    return texto;
   }
 
   /** Parse robusto: tenta JSON; senão quebra por linhas. Garante 3 itens. */
