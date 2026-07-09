@@ -125,4 +125,9 @@ export class ProfessorService {
   async marcarUsoIaWor(uid: string): Promise<void> {
     await this.repo.upsert(uid, { worIaUltimoUso: new Date().toISOString() });
   }
+
+  /** Registra o uso da IA do Tichr Qlick agora (rate limit diario, separado do Wor). */
+  async marcarUsoIaQlick(uid: string): Promise<void> {
+    await this.repo.upsert(uid, { qlickIaUltimoUso: new Date().toISOString() });
+  }
 }

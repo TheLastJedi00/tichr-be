@@ -73,6 +73,9 @@ export class ProfessorEntity {
   /** Última geração de dicas por IA do Tichr Wor (ISO). Base do rate limit 1×/dia. */
   worIaUltimoUso?: string;
 
+  /** Última geração de perguntas por IA do Tichr Qlick (ISO). Rate limit 1×/dia (separado do Wor). */
+  qlickIaUltimoUso?: string;
+
   /** Aceite dos Termos de Uso no cadastro (ISO). Registro de consentimento LGPD. */
   aceiteTermosEm?: string;
 
@@ -89,6 +92,11 @@ export class ProfessorEntity {
   /** Verdadeiro se o professor já usou a IA do Wor no dia `hojeISO` (YYYY-MM-DD). */
   usouIaWorHoje(hojeISO: string): boolean {
     return (this.worIaUltimoUso ?? '').slice(0, 10) === hojeISO;
+  }
+
+  /** Verdadeiro se o professor já usou a IA do Qlick no dia `hojeISO` (YYYY-MM-DD). */
+  usouIaQlickHoje(hojeISO: string): boolean {
+    return (this.qlickIaUltimoUso ?? '').slice(0, 10) === hojeISO;
   }
 
   get temNome(): boolean {

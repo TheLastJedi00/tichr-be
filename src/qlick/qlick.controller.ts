@@ -9,12 +9,29 @@ import {
 } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CreateQlickDto } from './dto/create-qlick.dto';
+import { GerarPerguntasDto } from './dto/gerar-perguntas.dto';
+import { QlickIaService } from './qlick-ia.service';
 import { QlickService } from './qlick.service';
 
 /** Estúdio do Tichr Qlick: CRUD da definição do questionário (PhD). */
 @Controller('qlicks')
 export class QlickController {
-  constructor(private readonly qlickService: QlickService) {}
+  constructor(
+    private readonly qlickService: QlickService,
+    private readonly ia: QlickIaService,
+  ) {}
+
+  /**
+   * Geração de perguntas por IA (rota fixa antes das rotas com `:id`). Rate limit
+   * 1×/dia por professor (separado do Wor); PhD. Devolve um lote de perguntas.
+   */
+  @Post('ia/perguntas')
+  gerarPerguntas(
+    @ProfessorId() professorId: string,
+    @Body() dto: GerarPerguntasDto,
+  ) {
+    return this.ia.gerarPerguntas(professorId, dto);
+  }
 
   @Get()
   listar(@ProfessorId() professorId: string) {
