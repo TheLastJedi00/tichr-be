@@ -4,6 +4,26 @@ import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchEntity, WOR } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { WorJogoEntity } from './entities/wor-jogo.entity';
+import { XpService } from '../turma/xp.service';
+
+/** XpService fake: só registra o crédito de pontos para inspeção nos testes. */
+function fakeXp() {
+  const creditos: Array<{
+    turmaId: string;
+    pontos: Array<{ alunoId: string; pontos: number }>;
+    motivo?: string;
+  }> = [];
+  const xp = {
+    creditarPartida: async (
+      turmaId: string,
+      pontos: Array<{ alunoId: string; pontos: number }>,
+      motivo?: string,
+    ) => {
+      creditos.push({ turmaId, pontos, motivo });
+    },
+  } as unknown as XpService;
+  return { xp, creditos };
+}
 
 /**
  * Repositório fake stateful: guarda match + teams em memória e aplica os
@@ -25,7 +45,8 @@ function fakeRepos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEnt
     },
   } as unknown as WorMatchRepository;
   const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
-  return new WorGameService(jogos, matches);
+  const { xp, creditos } = fakeXp();
+  return { service: new WorGameService(jogos, matches, xp), creditos };
 }
 
 const JOGO = new WorJogoEntity({
@@ -52,7 +73,8 @@ function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
     turnoEquipeId: turno,
     acoesRodada: [],
   });
-  return { service: fakeRepos(JOGO, match, teams), match, teams };
+  const { service, creditos } = fakeRepos(JOGO, match, teams);
+  return { service, match, teams, creditos };
 }
 
 const time = (id: string, membros: string[], hp = WOR.HP_INICIAL, isHorde = false) =>
@@ -159,5 +181,53 @@ describe('WorGameService — rodada por membros', () => {
     await service.chutarLetra('a1', 'm1', 'I', 'ATACAR', 'equipe-2'); // completa REI
     expect(match.status).toBe('ENCERRADO');
     expect(match.vencedorEquipeId).toBe('equipe-2');
+  });
+
+  it('pontos: o dano causado vira pontos da equipe atacante', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2'); // 100 de dano
+    expect(teams[0].pontos).toBe(WOR.DANO_ATAQUE * WOR.PONTOS_POR_DANO); // 100
+    expect(teams[1].pontos).toBe(0); // quem apanhou não pontua
+  });
+
+  it('pontos: arriscar e acertar rende o bônus de arriscar', async () => {
+    const teams = [time('equipe-1', ['a1'], 500), time('equipe-2', ['b1'])];
+    const { service } = cenario(teams);
+    await service.arriscar('a1', 'm1', 'arte'); // acerta a palavra da onda 0
+    expect(teams[0].pontos).toBe(WOR.BONUS_ARRISCAR); // 300
+  });
+
+  it('desempate: HP igual → vence quem tem mais pontos', async () => {
+    const teams = [time('equipe-1', ['a1'], 1000), time('equipe-2', ['b1'], 1000)];
+    teams[0].pontos = 500; // equipe-1 causou mais dano ao longo do jogo
+    const { service, match } = cenario(teams);
+    match.ondaIndex = 1; // última onda (REI)
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA'); // completa REI (sem dano)
+    expect(match.status).toBe('ENCERRADO');
+    expect(teams[0].hp).toBe(teams[1].hp); // HP empatado
+    expect(match.vencedorEquipeId).toBe('equipe-1'); // desempatou por pontos
+  });
+
+  it('ranking: campeã credita cheio; demais, metade (motivo WOR)', async () => {
+    const teams = [time('equipe-1', ['a1'], 1000), time('equipe-2', ['b1'], 500)];
+    teams[0].pontos = 1000;
+    teams[1].pontos = 400;
+    const { service, match, creditos } = cenario(teams);
+    match.turmaId = 't1';
+    match.ondaIndex = 1; // última onda (REI)
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA'); // completa REI → encerra
+
+    expect(creditos).toHaveLength(1);
+    expect(creditos[0].motivo).toBe('WOR');
+    // eq1 (campeã ×1): (1000 + bônus HP 1000) * 0.1 = 200; eq2 (×0,5): (400 + 500) * 0.1 * 0.5 = 45
+    expect(creditos[0].pontos).toEqual([
+      { alunoId: 'a1', pontos: 200 },
+      { alunoId: 'b1', pontos: 45 },
+    ]);
   });
 });

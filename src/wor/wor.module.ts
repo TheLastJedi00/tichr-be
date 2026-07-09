@@ -14,6 +14,7 @@ import { WorMatchService } from './wor-match.service';
 
 /** Módulo independente do Tichr Wor (arsenal + IA de dicas + partidas). */
 @Module({
+  // TurmaModule exporta o XpService (crédito de pontos no ranking da sala).
   imports: [ProfessorModule, TurmaModule],
   controllers: [WorJogoController, WorMatchController, AlunoWorController],
   providers: [

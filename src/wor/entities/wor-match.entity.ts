@@ -8,6 +8,15 @@ export const WOR = {
   /** Cura ao acertar a palavra inteira (Risco Heroico). */
   CURA_MASSIVA: 400,
   MAX_CARTAS: 3,
+  // ===== Pontuação (desempate por pontos + crédito no ranking da sala) =====
+  /** Pontos ganhos por ponto de dano causado a um rival (100 normal / 200 crít). */
+  PONTOS_POR_DANO: 1,
+  /** Bônus por arriscar a palavra inteira e acertar (Risco Heroico / Invasão). */
+  BONUS_ARRISCAR: 300,
+  /** Bônus de intactez no fim: `+hp * fator` (recompensa terminar de pé). */
+  BONUS_HP_FATOR: 1,
+  /** Conversão pontos-de-jogo → XP da sala (campeã ×1, demais ×0,5). */
+  XP_POR_PONTO: 0.1,
 } as const;
 
 /** Tamanho-alvo de equipe pelo nº de alunos na sala (máx. 4 por equipe). */
@@ -53,6 +62,8 @@ export interface PlacarEquipe {
   cor: string;
   hp: number;
   isHorde: boolean;
+  /** Pontos de combate acumulados (dano causado + bônus) — barra acima do HP. */
+  pontos: number;
 }
 
 /** Resultado da última rodada resolvida — reveal para todos + quem atacou quem. */

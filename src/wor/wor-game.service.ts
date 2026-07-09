@@ -17,6 +17,7 @@ import {
 } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { PalavraWor } from './entities/wor-jogo.entity';
+import { XpService } from '../turma/xp.service';
 
 /** Ação de voto do membro ao chutar a letra: atacar um rival ou comprar dica. */
 export type VotoAcao = 'ATACAR' | 'DICA';
@@ -33,6 +34,7 @@ export class WorGameService {
   constructor(
     private readonly jogos: WorJogoRepository,
     private readonly matches: WorMatchRepository,
+    private readonly xp: XpService,
   ) {}
 
   private async carregar(matchId: string): Promise<WorMatchEntity> {
@@ -182,6 +184,9 @@ export class WorGameService {
         team.curar(WOR.CURA_MASSIVA);
         await this.matches.atualizarTeam(matchId, team.id, { hp: team.hp });
       }
+      // Arriscar tudo e acertar rende pontos extras (desempate + ranking).
+      team.pontos = (team.pontos ?? 0) + WOR.BONUS_ARRISCAR;
+      await this.matches.atualizarTeam(matchId, team.id, { pontos: team.pontos });
       await this.matches.atualizar(matchId, { acoesRodada: [] });
       await this.avancarOnda(matchId);
       return this.view(matchId);
@@ -284,6 +289,9 @@ export class WorGameService {
             hp: alvo.hp,
             isHorde: alvo.isHorde,
           });
+          // O dano causado vira pontos da equipe atacante (desempate + ranking).
+          team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
+          await this.matches.atualizarTeam(matchId, team.id, { pontos: team.pontos });
           resumo.acao = 'ATACAR';
           resumo.alvoEquipeId = alvo.id;
           resumo.alvoNome = alvo.nome;
@@ -321,6 +329,7 @@ export class WorGameService {
         cor: t.cor,
         hp: t.hp,
         isHorde: t.isHorde,
+        pontos: t.pontos ?? 0,
       })),
     });
   }
@@ -416,19 +425,12 @@ export class WorGameService {
   /** Avança para a próxima onda (palavra) ou encerra a partida. */
   async avancarOnda(matchId: string): Promise<void> {
     const match = await this.carregar(matchId);
+    if (match.status === 'ENCERRADO') return; // idempotência (não credita 2x)
     const proximo = match.ondaIndex + 1;
     const jogo = await this.jogos.findById(match.jogoId);
 
     if (!jogo || proximo >= jogo.palavras.length) {
-      const teams = await this.matches.listarTeams(matchId);
-      const vencedor = [...teams].sort((a, b) => b.hp - a.hp)[0];
-      await this.matches.atualizar(matchId, {
-        status: 'ENCERRADO',
-        vencedorEquipeId: vencedor?.id ?? null,
-        acoesRodada: [],
-        rodadaIniciadaEm: null,
-      });
-      await this.refletirPlacar(matchId);
+      await this.encerrarPartida(match);
       return;
     }
 
@@ -444,6 +446,49 @@ export class WorGameService {
       rodadaIniciadaEm: new Date().toISOString(),
     });
     await this.refletirPlacar(matchId);
+  }
+
+  /**
+   * Encerra a partida: aplica o bônus de intactez (HP restante vira pontos),
+   * elege o vencedor por MAIOR HP com DESEMPATE por pontos, e credita os pontos
+   * no ranking da sala (campeã ×1, demais ×0,5) — refletindo no XP dos alunos.
+   */
+  private async encerrarPartida(match: WorMatchEntity): Promise<void> {
+    const matchId = match.id;
+    const teams = await this.matches.listarTeams(matchId);
+
+    // Bônus de fim: terminar intacto rende pontos (reforça o desempate).
+    for (const t of teams) {
+      t.pontos = (t.pontos ?? 0) + Math.round(t.hp * WOR.BONUS_HP_FATOR);
+      await this.matches.atualizarTeam(matchId, t.id, { pontos: t.pontos });
+    }
+
+    // Vencedor = maior HP; empate desempatado por pontos (reduz empates ~a zero).
+    const vencedor = [...teams].sort(
+      (a, b) => b.hp - a.hp || (b.pontos ?? 0) - (a.pontos ?? 0),
+    )[0];
+
+    await this.matches.atualizar(matchId, {
+      status: 'ENCERRADO',
+      vencedorEquipeId: vencedor?.id ?? null,
+      acoesRodada: [],
+      rodadaIniciadaEm: null,
+    });
+    await this.refletirPlacar(matchId);
+
+    // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick).
+    if (match.turmaId && vencedor) {
+      const creditos: Array<{ alunoId: string; pontos: number }> = [];
+      for (const t of teams) {
+        const fator = t.id === vencedor.id ? 1 : 0.5;
+        const ganho = Math.round((t.pontos ?? 0) * WOR.XP_POR_PONTO * fator);
+        if (ganho <= 0) continue;
+        for (const m of t.membros) {
+          creditos.push({ alunoId: m.alunoId, pontos: ganho });
+        }
+      }
+      await this.xp.creditarPartida(match.turmaId, creditos, 'WOR');
+    }
   }
 
   private async view(matchId: string): Promise<MatchView> {
