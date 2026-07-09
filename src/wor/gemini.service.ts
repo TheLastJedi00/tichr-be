@@ -1,8 +1,10 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+const GEMINI_BASE =
+  'https://generativelanguage.googleapis.com/v1beta/models';
+/** Modelo padrão quando `GEMINI_MODEL` não está no ambiente. */
+const GEMINI_MODEL_PADRAO = 'gemini-3.5-flash';
 
 /**
  * Provedor de IA (Gemini). Abstrai a REST do Google. A chave (`GEMINI_API_KEY`)
@@ -15,6 +17,13 @@ export class GeminiService {
 
   disponivel(): boolean {
     return !!this.config.get<string>('GEMINI_API_KEY');
+  }
+
+  /** Endpoint do modelo configurado (`GEMINI_MODEL`) ou o padrão. */
+  private endpoint(): string {
+    const modelo =
+      this.config.get<string>('GEMINI_MODEL')?.trim() || GEMINI_MODEL_PADRAO;
+    return `${GEMINI_BASE}/${modelo}:generateContent`;
   }
 
   /**
@@ -46,7 +55,7 @@ export class GeminiService {
       .filter(Boolean)
       .join('\n');
 
-    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    const res = await fetch(`${this.endpoint()}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -95,7 +104,7 @@ export class GeminiService {
       generationConfig.responseMimeType = 'application/json';
     }
 
-    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    const res = await fetch(`${this.endpoint()}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
