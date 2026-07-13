@@ -1,35 +1,58 @@
-import { HttpException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { GeminiService } from './gemini.service';
 import { WorIaService } from './wor-ia.service';
 import { ProfessorService } from '../professor/professor.service';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
 
-describe('IA de dicas do Wor', () => {
-  describe('GeminiService.extrairDicas', () => {
-    it('parseia um array JSON e limita a 3', () => {
-      const r = GeminiService.extrairDicas('lixo ["a","b","c","d"] fim');
-      expect(r).toEqual(['a', 'b', 'c']);
+describe('IA do arsenal do Wor', () => {
+  describe('WorIaService.extrairArsenal', () => {
+    it('parseia o array JSON e limita a 5 palavras e 3 dicas', () => {
+      const arr = Array.from({ length: 6 }, (_, i) => ({
+        palavra: `P${i}`,
+        dicas: ['a', 'b', 'c', 'd'],
+      }));
+      const r = WorIaService.extrairArsenal(JSON.stringify(arr));
+      expect(r).toHaveLength(5);
+      expect(r[0]).toEqual({ palavra: 'P0', dicas: ['a', 'b', 'c'] });
     });
 
-    it('cai para quebra por linhas quando não há JSON', () => {
-      const r = GeminiService.extrairDicas('1. primeira\n2) segunda\n- terceira');
-      expect(r).toEqual(['primeira', 'segunda', 'terceira']);
+    it('ignora cercas markdown e itens sem palavra ou sem dicas', () => {
+      const texto =
+        '```json\n[{"palavra":"","dicas":["a"]},{"palavra":"REI","dicas":[]},{"palavra":"GUILHOTINA","dicas":["x","y","z"]}]\n```';
+      expect(WorIaService.extrairArsenal(texto)).toEqual([
+        { palavra: 'GUILHOTINA', dicas: ['x', 'y', 'z'] },
+      ]);
+    });
+
+    it('devolve vazio quando não há JSON parseável', () => {
+      expect(WorIaService.extrairArsenal('desculpe, não consegui')).toEqual([]);
     });
   });
 
-  describe('WorIaService (rate limit)', () => {
+  describe('WorIaService (plano e rate limit)', () => {
     const hoje = new Date().toISOString().slice(0, 10);
+    const dto = { instrucao: 'termos da Revolução Francesa', disciplina: 'História' };
+    const resposta = JSON.stringify([
+      { palavra: 'GUILHOTINA', dicas: ['a', 'b', 'c'] },
+    ]);
 
     function make(opts: {
       disponivel: boolean;
       usouHoje: boolean;
+      phd?: boolean;
+      texto?: string;
     }) {
       const gemini = {
         disponivel: () => opts.disponivel,
-        gerarDicas: jest.fn().mockResolvedValue(['a', 'b', 'c']),
+        gerarTexto: jest.fn().mockResolvedValue(opts.texto ?? resposta),
       } as unknown as GeminiService;
       const prof = new ProfessorEntity({
         uid: 'u1',
+        planoAtual: opts.phd === false ? 'ESTAGIARIO' : 'PHD',
         worIaUltimoUso: opts.usouHoje ? `${hoje}T10:00:00.000Z` : undefined,
       });
       const marcar = jest.fn().mockResolvedValue(undefined);
@@ -37,49 +60,64 @@ describe('IA de dicas do Wor', () => {
         getProfile: jest.fn().mockResolvedValue(prof),
         marcarUsoIaWor: marcar,
       } as unknown as ProfessorService;
-      return {
-        service: new WorIaService(gemini, professores),
-        gemini,
-        marcar,
-      };
+      return { service: new WorIaService(gemini, professores), gemini, marcar };
     }
 
     it('503 quando a IA está indisponível (sem chave)', async () => {
       const { service } = make({ disponivel: false, usouHoje: false });
-      await expect(
-        service.gerarDicas('u1', { topico: 't', palavra: 'rei' }),
-      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(service.gerarArsenal('u1', dto)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
+
+    it('403 quando o professor não é PhD', async () => {
+      const { service, marcar } = make({
+        disponivel: true,
+        usouHoje: false,
+        phd: false,
+      });
+      await expect(service.gerarArsenal('u1', dto)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(marcar).not.toHaveBeenCalled();
     });
 
     it('429 quando já usou hoje', async () => {
       const { service, marcar } = make({ disponivel: true, usouHoje: true });
-      await expect(
-        service.gerarDicas('u1', { topico: 't', palavra: 'rei' }),
-      ).rejects.toMatchObject({ response: { code: 'IA_RATE_LIMIT' } });
+      await expect(service.gerarArsenal('u1', dto)).rejects.toMatchObject({
+        response: { code: 'IA_RATE_LIMIT' },
+      });
+      await expect(service.gerarArsenal('u1', dto)).rejects.toBeInstanceOf(
+        HttpException,
+      );
       expect(marcar).not.toHaveBeenCalled();
     });
 
-    it('gera e marca o uso quando liberado', async () => {
-      const { service, gemini, marcar } = make({ disponivel: true, usouHoje: false });
-      const r = await service.gerarDicas('u1', {
-        topico: 'Revolução Francesa',
-        palavra: 'guilhotina',
-        disciplina: 'História',
+    it('não consome a cota quando a IA devolve algo inválido', async () => {
+      const { service, marcar } = make({
+        disponivel: true,
+        usouHoje: false,
+        texto: 'nada útil aqui',
       });
-      expect(r.dicas).toEqual(['a', 'b', 'c']);
-      expect(gemini.gerarDicas).toHaveBeenCalledWith(
-        'Revolução Francesa',
-        'guilhotina',
-        'História',
-      );
-      expect(marcar).toHaveBeenCalledWith('u1');
+      await expect(service.gerarArsenal('u1', dto)).rejects.toMatchObject({
+        response: { code: 'IA_SEM_RESULTADO' },
+      });
+      expect(marcar).not.toHaveBeenCalled();
     });
 
-    it('lança HttpException (429) tipada no rate limit', async () => {
-      const { service } = make({ disponivel: true, usouHoje: true });
-      await expect(
-        service.gerarDicas('u1', { topico: 't', palavra: 'rei' }),
-      ).rejects.toBeInstanceOf(HttpException);
+    it('gera o arsenal e marca o uso quando liberado', async () => {
+      const { service, gemini, marcar } = make({
+        disponivel: true,
+        usouHoje: false,
+      });
+      const r = await service.gerarArsenal('u1', dto);
+      expect(r.palavras).toEqual([
+        { palavra: 'GUILHOTINA', dicas: ['a', 'b', 'c'] },
+      ]);
+      const prompt = (gemini.gerarTexto as jest.Mock).mock.calls[0][0] as string;
+      expect(prompt).toContain('História');
+      expect(prompt).toContain('termos da Revolução Francesa');
+      expect(marcar).toHaveBeenCalledWith('u1');
     });
   });
 });
