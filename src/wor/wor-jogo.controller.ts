@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CreateWorJogoDto } from './dto/create-wor-jogo.dto';
-import { GerarDicasDto } from './dto/gerar-dicas.dto';
+import { GerarArsenalDto } from './dto/gerar-arsenal.dto';
 import { UpdateWorJogoDto } from './dto/update-wor-jogo.dto';
 import { WorJogoService } from './wor-jogo.service';
 import { WorIaService } from './wor-ia.service';
@@ -22,10 +22,10 @@ export class WorJogoController {
     private readonly ia: WorIaService,
   ) {}
 
-  /** Gera 3 dicas por IA (rate limit 1×/dia). Sub-rota fixa antes de :id. */
-  @Post('dicas')
-  gerarDicas(@ProfessorId() uid: string, @Body() dto: GerarDicasDto) {
-    return this.ia.gerarDicas(uid, dto);
+  /** Forja o arsenal por IA — 5 palavras com 3 dicas (rate limit 1×/dia). Sub-rota fixa antes de :id. */
+  @Post('arsenal')
+  gerarArsenal(@ProfessorId() uid: string, @Body() dto: GerarArsenalDto) {
+    return this.ia.gerarArsenal(uid, dto);
   }
 
   @Get()
