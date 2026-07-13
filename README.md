@@ -47,7 +47,7 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
-| `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração de dicas por IA do **Tichr Wor**; sem ela, dicas manuais. |
+| `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração por IA do **Tichr Wor** (arsenal) e do **Tichr Qlick** (perguntas); sem ela, criação manual. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -787,7 +787,7 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET/POST/PUT/DELETE` | `/wor/jogos[/:id]` | CRUD do arsenal (posse validada) |
-| `POST` | `/wor/jogos/dicas` | Gera 3 dicas por **IA (Gemini)** — **rate limit 1×/dia/professor** (429 `IA_RATE_LIMIT`); 503 `IA_INDISPONIVEL` sem `GEMINI_API_KEY` |
+| `POST` | `/wor/jogos/arsenal` `{ instrucao, disciplina?, topico? }` | Forja o arsenal por **IA (Gemini)** — **5 palavras com 3 dicas** cada, a partir da instrução do professor + contexto. Exclusivo do **PhD** (403 `WOR_LOCKED`); **rate limit 1×/dia/professor** (429 `IA_RATE_LIMIT`, cota só consumida quando a IA devolve um arsenal válido); 503 `IA_INDISPONIVEL`/`IA_SEM_RESULTADO` |
 
 ### Endpoints — Partida (professor / orquestrador)
 | Método | Rota | Descrição |
@@ -813,5 +813,5 @@ Cura Massiva **40** · até **3 cartas**. **Horda:** HP 0 → só pode Invasão;
 **rouba o castelo do líder** (maior HP), que vira a nova Horda. Vitória: maior HP ao fim das ondas.
 
 ### Env & rules
-- **`GEMINI_API_KEY`** (Vercel): habilita a geração de dicas por IA (sem ela, dicas manuais).
+- **`GEMINI_API_KEY`** (Vercel): habilita a geração do arsenal por IA (sem ela, palavras e dicas manuais).
 - `firestore.rules`: `matches/**` **leitura pública, escrita negada** (o Admin SDK ignora).
