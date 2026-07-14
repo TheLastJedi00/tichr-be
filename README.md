@@ -28,6 +28,8 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Gamificação (XP, ranking e config)](#gamificação-xp-ranking-e-config)
   - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
+- [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
+- [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
 
 ---
 
@@ -847,3 +849,101 @@ restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração do arsenal por IA (sem ela, palavras e dicas manuais).
 - `firestore.rules`: `matches/**` **leitura pública, escrita negada** (o Admin SDK ignora).
+
+---
+
+## Tichr Isolateus (dedução social + defesa pedagógica)
+
+Uma vila isolada, um infiltrado. A turma responde questões da matéria para defender
+os 6 setores e debate para descobrir quem é a **Ameaça**. Exclusivo do plano **PhD**
+(`ISOLATEUS_LOCKED`).
+
+### A regra que governa o desenho: o segredo nunca toca o Firestore
+
+O jogo só existe enquanto ninguém souber quem é o Alienígena. Por isso o estado é
+partido em **duas coleções**: o cliente escuta uma, e a outra ele nem consegue ler.
+Nenhuma informação oculta transita pela rede até o navegador — nem no `onSnapshot`,
+nem em payload de resposta.
+
+### Estrutura de dados
+
+- **`isolateus_jogos`** (definição, server-only): `professorId`, `nome`, `disciplina?`,
+  `topicoId?`, `turmaId?` (legado), `turmaIds?[]`, `duracaoSegundos`, `questoes[]`
+  (`enunciado`, `alternativas[]`, `corretaIndex`). O `corretaIndex` mora aqui — coleção fechada.
+- **`isolateus_partidas`** (camada **pública**, lida por `onSnapshot`): `status`, `criadaEm`,
+  `esperanca` (0..100), `setores[]` (`id`, `nome`, `intacto`), `habitantes[]`
+  (`id` **opaco/UUID**, `nome`, `vivo`, `preso` — **sem marca de NPC**), `rodada`,
+  `totalRodadas`, `duracaoSegundos`, `faseIniciadaEm`, `questaoPublica` (**sem** a correta),
+  `corretaIndex` (só em `RESULTADO_RODADA`), `alerta`, `rumores[]`, `debate[]`,
+  `resumoRodada`, `quarentenaUsada`, `vereditoQuarentena`, `votosRecebidos`,
+  `inscritos[]` (**esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
+- **`isolateus_segredos`** (o **cofre**, deny-all): `alienAlunoId`, `vinculos[]`
+  (`habitanteId` → `alunoId`; sem `alunoId` = NPC), `acaoRodada`, `pontos{}`.
+- **`isolateus_respostas`** / **`isolateus_votos`** (deny-all): doc-id determinístico
+  (`{partidaId}_{rodada}_{alunoId}` / `{partidaId}_{alunoId}`) = idempotência.
+
+Partida e cofre são gravados no **mesmo `WriteBatch`** (`commitPartida`) — a vila nunca
+vê um alerta cuja ação ainda não foi registrada, nem o contrário.
+
+### Estados
+
+`LOBBY → TURNO_AMEACA → QUESTAO_ATIVA → RESULTADO_RODADA → (próxima noite) …`
+com desvio opcional para `QUARENTENA_DEBATE → QUARENTENA_VOTO` e saída em `ENCERRADO`.
+
+### Endpoints — Investigação & IA (professor)
+- `POST /isolateus/jogos/questoes` — gera **10 questões** por IA (Gemini). Rate limit
+  **1×/dia** com contador próprio (`isolateusIaUltimoUso`), separado do Qlick e do Wor;
+  a cota só é consumida no sucesso. Não persiste — devolve para o professor editar.
+- `GET|POST /isolateus/jogos` · `GET|PUT|DELETE /isolateus/jogos/:id`
+
+### Endpoints — Partida (professor / telão)
+- `POST /isolateus/jogos/:jogoId/partida` — cria no `LOBBY`.
+- `GET /isolateus/matches/:id`
+- `POST /isolateus/matches/:id/vetar/:alunoId` — auditoria do pseudônimo (aprovar é implícito).
+- `POST /isolateus/matches/:id/iniciar` — **o Despertar**: preenche a vila com NPCs e sorteia a Ameaça.
+- `POST /isolateus/matches/:id/tempo` — o telão fecha a fase cronometrada (**não há timer no servidor**;
+  o servidor revalida o prazo com margem de 2s).
+- `POST /isolateus/matches/:id/proxima` · `POST /isolateus/matches/:id/quarentena`
+
+### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick/Wor)
+- `GET /aluno/isolateus` — a investigação ativa da turma (janela de 12h).
+- `POST /aluno/isolateus/:id/entrar` — o **Voto de Silêncio**: entra com um pseudônimo.
+- `GET /aluno/isolateus/:id/painel` — **a única porta do segredo**: devolve o papel do aluno e,
+  **só para a Ameaça**, o `corretaIndex` da questão no ar e os disfarces (nomes de NPC).
+  O Aldeão recebe apenas o próprio papel — nem inspecionando o payload ele ganha vantagem.
+- `POST /aluno/isolateus/:id/acao` — Turno da Ameaça (`SABOTAR` um setor | `ABDUZIR` um morador).
+- `POST /aluno/isolateus/:id/resposta` — a defesa. **Abduzidos e presos continuam pontuando.**
+- `POST /aluno/isolateus/:id/rumor` — o rumor forjado da Ameaça (1×/noite, sob nome de NPC).
+- `POST /aluno/isolateus/:id/sinal` — o Sinal de Rádio anônimo de quem saiu da vila.
+- `POST /aluno/isolateus/:id/quarentena` · `/debate` · `/suspeito`
+
+### Regras (constantes em `ISOLATEUS`, ajustáveis)
+
+Mínimo de **4** investigadores reais. **Névoa de Guerra:** abaixo de 10 reais, a vila ganha
+`reais - 1` NPCs (nomes de `NOMES_NPC`); com 10+, nenhum. **A Ameaça é sempre um habitante real.**
+
+Esperança inicial **100** · sabotagem **−15** · abdução **−10** · inocente preso **−20**.
+Esperança em 0 = vitória da Ameaça.
+
+**Apuração:** votam os reais na vila + os NPCs (aleatório). No empate vale o **Instinto Humano** —
+ganha a alternativa mais votada pelos **reais**; persistindo, a de menor índice (determinístico).
+
+**Quarentena:** única por partida, convocada por qualquer real vivo ou pelo professor.
+Debate **90s** → votação **60s** (com avanço rápido no consenso). Prendeu a Ameaça → Vila vence;
+prendeu inocente → −20 de Esperança e **a identidade do preso permanece em segredo**.
+
+**Fim por esgotamento das questões (§8):** a **Ameaça é avaliada primeiro** (abduziu mais da metade
+da população **ou** destruiu mais de 3 setores); só então a Vila (mais de 3 setores intactos **ou**
+mais da metade sobreviveu). Sem nenhum critério batido, vence a Vila por resistência. O veredito
+carrega o **motivo técnico** exibido no card.
+
+**Economia de XP:** acerto **1000** + bônus de rapidez até **500** (proporcional ao tempo restante);
+sabotagem validada (a vila errou) credita **1000 à Ameaça**; o lado vencedor leva **+1000** de
+Vitória de Partida. Os pontos ficam no cofre e viram XP **1:1** no encerramento
+(`XpService.creditarPartida`, motivo `ISOLATEUS`).
+
+### Env & rules
+- **`GEMINI_API_KEY`** (Vercel): habilita a geração das 10 questões (sem ela, escrita manual).
+- `firestore.rules`: `isolateus_partidas/{id}` **leitura pública, escrita negada**;
+  `isolateus_segredos`, `isolateus_respostas` e `isolateus_votos` ficam no **deny-all** — é isso que
+  impede o DevTools de revelar o infiltrado.

@@ -142,7 +142,7 @@ export class XpService {
   async creditarPartida(
     turmaId: string,
     pontosPorAluno: Array<{ alunoId: string; pontos: number }>,
-    motivo: 'QLICK' | 'WOR' = 'QLICK',
+    motivo: 'QLICK' | 'WOR' | 'ISOLATEUS' = 'QLICK',
   ): Promise<void> {
     const validos = pontosPorAluno.filter((p) => p.pontos > 0);
     if (validos.length === 0) {
