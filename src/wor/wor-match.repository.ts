@@ -44,6 +44,28 @@ export class WorMatchRepository {
   }
 
   /**
+   * Escreve a raiz e as equipes num ÚNICO commit. É o que faz o Action Card
+   * (fan-out para todas as equipes) chegar junto do seu efeito — dano, cura,
+   * troca de turno — em vez de pingar nas telas em ordens diferentes.
+   */
+  async commitPartida(
+    matchId: string,
+    raiz: Partial<WorMatchEntity>,
+    equipes: Record<string, Partial<WorTeamEntity>> = {},
+  ): Promise<void> {
+    const batch = this.firebase.firestore.batch();
+    if (Object.keys(raiz).length) {
+      batch.set(this.col.doc(matchId), this.semId({ ...raiz }), { merge: true });
+    }
+    for (const [teamId, dados] of Object.entries(equipes)) {
+      batch.set(this.teamsCol(matchId).doc(teamId), this.semId({ ...dados }), {
+        merge: true,
+      });
+    }
+    await batch.commit();
+  }
+
+  /**
    * Partida não encerrada mais recente de uma turma (lobby ou em andamento),
    * desde que criada há pouco (janela de visibilidade de 12h) — o gatilho é o
    * professor ter rodado, sem depender do relógio do servidor. Espelha o Qlick.

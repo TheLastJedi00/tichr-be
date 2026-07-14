@@ -17,7 +17,32 @@ export const WOR = {
   BONUS_HP_FATOR: 1,
   /** Conversão pontos-de-jogo → XP da sala (campeã ×1, demais ×0,5). */
   XP_POR_PONTO: 0.1,
+  /** Duração do Action Card — e do congelamento do jogo enquanto ele está no ar. */
+  FREEZE_MS: 3000,
 } as const;
+
+/** Gatilhos narrados por um Action Card (interrupção global de 3s). */
+export type TipoAcaoGlobal =
+  | 'ATAQUE'
+  | 'CURA'
+  | 'USURPACAO'
+  | 'DANO_CRITICO'
+  | 'DICA';
+
+/**
+ * Evento de impacto narrado em TODAS as telas (alunos + telão) ao mesmo tempo.
+ * Vai por fan-out para a raiz e para cada equipe: o aluno escuta só o doc da
+ * própria equipe, então é lá que o card precisa chegar. O cliente detecta `seq`
+ * novo, exibe o card por `duracaoMs` e trava os inputs.
+ */
+export interface LastGlobalAction {
+  /** Incrementa a cada card emitido (o cliente detecta o evento novo). */
+  seq: number;
+  tipo: TipoAcaoGlobal;
+  mensagem: string;
+  duracaoMs: number;
+  em: string;
+}
 
 /** Tamanho-alvo de equipe pelo nº de alunos na sala (máx. 4 por equipe). */
 export function tamanhoEquipe(alunos: number): number {
@@ -128,6 +153,8 @@ export class WorMatchEntity {
   placar: PlacarEquipe[] = [];
   /** Resultado da última rodada resolvida (reveal + quem atacou). */
   resumoRodada?: ResumoRodada | null;
+  /** Último Action Card emitido (narração global + freeze de 3s). */
+  lastGlobalAction?: LastGlobalAction | null;
 
   inscritos: InscritoWor[] = [];
   vencedorEquipeId?: string | null;
