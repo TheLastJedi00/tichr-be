@@ -192,18 +192,24 @@ export class AdminService {
     return { email: user.email, enviado: true };
   }
 
-  /** Reset de dados: apaga turmas/alunos/qlicks do professor, mantem o login. */
+  /**
+   * Reset de dados: apaga turmas/alunos e TODAS as bibliotecas de jogos do
+   * professor, mantendo o login. É a mesma cascata usada na auto-exclusão da
+   * conta (LGPD), então nenhuma coleção de conteúdo pode ficar de fora — senão o
+   * material do professor sobrevive à exclusão da conta dele.
+   */
   async limparDados(
     uid: string,
-  ): Promise<{ turmas: number; qlicks: number }> {
+  ): Promise<{ turmas: number; qlicks: number; jogos: number }> {
     const turmas = await this.db
       .collection('turmas')
       .where('professorId', '==', uid)
       .get();
-    const qlicks = await this.db
-      .collection('qlicks')
-      .where('professorId', '==', uid)
-      .get();
+    const [qlicks, worJogos, isolateusJogos] = await Promise.all(
+      ['qlicks', 'wor_jogos', 'isolateus_jogos'].map((colecao) =>
+        this.db.collection(colecao).where('professorId', '==', uid).get(),
+      ),
+    );
 
     const batch = this.db.batch();
     for (const t of turmas.docs) {
@@ -214,9 +220,15 @@ export class AdminService {
         .get();
       alunos.docs.forEach((a) => batch.delete(a.ref));
     }
-    qlicks.docs.forEach((q) => batch.delete(q.ref));
+    for (const snap of [qlicks, worJogos, isolateusJogos]) {
+      snap.docs.forEach((d) => batch.delete(d.ref));
+    }
     await batch.commit();
-    return { turmas: turmas.size, qlicks: qlicks.size };
+    return {
+      turmas: turmas.size,
+      qlicks: qlicks.size,
+      jogos: qlicks.size + worJogos.size + isolateusJogos.size,
+    };
   }
 
   /**

@@ -29,8 +29,21 @@ service cloud.firestore {
       }
     }
 
-    // Todas as demais coleções (turmas, alunos, qlicks, etc.) ficam fechadas ao
-    // cliente — só o Admin SDK do backend as acessa.
+    // Tichr Isolateus: SÓ o documento da partida é público. Ele é montado para
+    // não entregar o mistério — nele não há o Alienígena, nem a marca de quem é
+    // NPC, nem a alternativa correta da questão no ar.
+    //
+    // O segredo (`isolateus_segredos`), as respostas (`isolateus_respostas`) e os
+    // votos da Quarentena (`isolateus_votos`) caem no deny-all abaixo, de
+    // propósito: fossem legíveis, bastaria abrir o DevTools para saber quem é o
+    // infiltrado. O aluno recebe a sua fatia por REST autenticado.
+    match /isolateus_partidas/{partidaId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Todas as demais coleções (turmas, alunos, qlicks, e os segredos do
+    // Isolateus) ficam fechadas ao cliente — só o Admin SDK do backend as acessa.
     match /{document=**} {
       allow read, write: if false;
     }
