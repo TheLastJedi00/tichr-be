@@ -12,6 +12,7 @@ import { HomeModule } from './home/home.module';
 import { AdminModule } from './admin/admin.module';
 import { CupomModule } from './cupom/cupom.module';
 import { WorModule } from './wor/wor.module';
+import { IsolateusModule } from './isolateus/isolateus.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { WorModule } from './wor/wor.module';
     AdminModule,
     CupomModule,
     WorModule,
+    IsolateusModule,
   ],
   controllers: [AppController],
   providers: [AppService],
