@@ -1,7 +1,12 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { FirebaseService } from '../firebase/firebase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PlanoAtual, ProfessorEntity } from './entities/professor.entity';
 import { ProfessorRepository } from './professor.repository';
+
+/** Teto do avatar ja comprimido pelo front (~50KB); a folga cobre variacao do JPEG. */
+const AVATAR_MAX_BYTES = 300 * 1024;
 
 /**
  * Perfil serializavel para o front: campos de dados + derivados da trava de
@@ -25,7 +30,50 @@ export interface ProfessorView {
 
 @Injectable()
 export class ProfessorService {
-  constructor(private readonly repo: ProfessorRepository) {}
+  constructor(
+    private readonly repo: ProfessorRepository,
+    private readonly firebase: FirebaseService,
+  ) {}
+
+  /**
+   * Sobe a foto de perfil via Admin SDK e persiste a URL no perfil. O upload
+   * passa a ser server-side: o cliente nao tem sessao do Firebase Auth, entao o
+   * Storage nega escrita anonima — quem grava e o backend, dono das credenciais.
+   * Retorna a view atualizada (o front ja recebe o avatarUrl novo).
+   */
+  async uploadAvatar(
+    uid: string,
+    arquivo?: { buffer: Buffer; mimetype: string; size: number },
+  ): Promise<ProfessorView> {
+    if (!arquivo) {
+      throw new BadRequestException('Arquivo de imagem ausente.');
+    }
+    if (!arquivo.mimetype.startsWith('image/')) {
+      throw new BadRequestException('O arquivo precisa ser uma imagem.');
+    }
+    if (arquivo.size > AVATAR_MAX_BYTES) {
+      throw new BadRequestException('Imagem muito grande (maximo 300KB).');
+    }
+
+    const caminho = `avatars/${uid}.jpg`;
+    // Token de download aleatorio: reproduz o formato de URL publica que o SDK web
+    // gerava, sem depender das storage.rules (que negam leitura fora deste fluxo).
+    const token = randomUUID();
+    const blob = this.firebase.bucket.file(caminho);
+    await blob.save(arquivo.buffer, {
+      resumable: false,
+      contentType: 'image/jpeg',
+      metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+    });
+
+    const bucketName = this.firebase.bucket.name;
+    const avatarUrl =
+      `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/` +
+      `${encodeURIComponent(caminho)}?alt=media&token=${token}`;
+
+    await this.repo.upsert(uid, { avatarUrl });
+    return ProfessorService.montarView(await this.getProfile(uid));
+  }
 
   /** Retorna o perfil do professor, ou um perfil vazio (so uid) se ainda nao existir. */
   async getProfile(uid: string): Promise<ProfessorEntity> {
