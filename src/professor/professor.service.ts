@@ -130,4 +130,11 @@ export class ProfessorService {
   async marcarUsoIaQlick(uid: string): Promise<void> {
     await this.repo.upsert(uid, { qlickIaUltimoUso: new Date().toISOString() });
   }
+
+  /** Registra o uso da IA do Tichr Isolateus agora (rate limit diario, contador proprio). */
+  async marcarUsoIaIsolateus(uid: string): Promise<void> {
+    await this.repo.upsert(uid, {
+      isolateusIaUltimoUso: new Date().toISOString(),
+    });
+  }
 }
