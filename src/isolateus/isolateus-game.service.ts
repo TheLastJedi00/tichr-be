@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import {
+  ISOLATEUS,
   IsolateusMatchEntity,
   Rumor,
 } from './entities/isolateus-match.entity';
@@ -48,6 +50,7 @@ export class IsolateusGameService {
   constructor(
     private readonly matches: IsolateusMatchRepository,
     private readonly jogos: IsolateusJogoRepository,
+    private readonly xp: XpService,
   ) {}
 
   /** Carrega a partida e o cofre juntos (nunca se usa um sem o outro). */
@@ -235,5 +238,465 @@ export class IsolateusGameService {
       texto,
       tipo: 'RUMOR' as const,
     }));
+  }
+
+  // ===== A Defesa =====
+
+  /**
+   * O voto na solução. Quem já foi abduzido ou preso **continua respondendo e
+   * pontuando** na sua tela hackeada (§7), mas o voto dele não defende mais a
+   * vila — ele não está lá.
+   */
+  async responder(
+    alunoId: string,
+    partidaId: string,
+    alternativaIndex: number,
+  ): Promise<{ registrada: boolean }> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.status !== 'QUESTAO_ATIVA') {
+      throw new BadRequestException('Não há problema em aberto.');
+    }
+    this.habitanteDoAluno(partida, segredo, alunoId); // barra quem não é da vila
+    const questao = await this.questaoDaRodada(partida);
+    if (!questao) {
+      throw new BadRequestException('A investigação ficou sem questões.');
+    }
+
+    const correta = alternativaIndex === questao.corretaIndex;
+    const tempoMs = partida.faseIniciadaEm
+      ? Date.now() - Date.parse(partida.faseIniciadaEm)
+      : 0;
+    const pontos = this.computarPontos(
+      correta,
+      tempoMs,
+      partida.duracaoSegundos,
+    );
+
+    const registrada = await this.matches.registrarResposta(
+      partidaId,
+      partida.rodada,
+      { alunoId, alternativaIndex, correta, pontos },
+    );
+    if (!registrada) {
+      return { registrada: false }; // já havia respondido esta rodada
+    }
+    await this.creditarPontos(segredo, alunoId, pontos);
+
+    // Avanço rápido: resolvido assim que todos os habitantes reais AINDA NA VILA
+    // tiverem votado (quem está fora responde por XP, mas não trava a rodada).
+    const respostas = await this.matches.lerRespostas(partidaId, partida.rodada);
+    const votantes = this.reaisNaVila(partida, segredo);
+    const votaram = respostas.filter((r) =>
+      votantes.some((v) => v.alunoId === r.alunoId),
+    );
+    if (votaram.length >= votantes.length) {
+      await this.resolverRodada(partida, segredo);
+    }
+    return { registrada: true };
+  }
+
+  private computarPontos(
+    correta: boolean,
+    tempoMs: number,
+    duracaoSegundos: number,
+  ): number {
+    if (!correta) return 0;
+    const janela = duracaoSegundos * 1000;
+    const fracao = Math.max(0, 1 - tempoMs / janela);
+    return (
+      ISOLATEUS.PONTOS_ACERTO + Math.round(fracao * ISOLATEUS.BONUS_RAPIDEZ)
+    );
+  }
+
+  /** Os habitantes reais que ainda estão na vila — os que de fato votam. */
+  private reaisNaVila(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Array<{ alunoId: string; habitanteId: string }> {
+    return partida.vivos
+      .map((h) => ({ habitanteId: h.id, alunoId: segredo.alunoDe(h.id) }))
+      .filter((v): v is { alunoId: string; habitanteId: string } => !!v.alunoId);
+  }
+
+  /** Acumula pontos no cofre (o placar só vira público no encerramento). */
+  private async creditarPontos(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+    pontos: number,
+  ): Promise<void> {
+    if (pontos <= 0) return;
+    const atual = segredo.pontos ?? {};
+    atual[alunoId] = (atual[alunoId] ?? 0) + pontos;
+    segredo.pontos = atual;
+    await this.matches.commitPartida(segredo.partidaId, {}, { pontos: atual });
+  }
+
+  // ===== A Guerra de Frequências =====
+
+  /**
+   * A Sabotagem de Frequência: a Ameaça conhece a solução verdadeira e transmite
+   * um argumento defendendo uma falsa, sob o nome de um NPC. Uma vez por rodada.
+   */
+  async forjarRumor(
+    alunoId: string,
+    partidaId: string,
+    texto: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (segredo.alienAlunoId !== alunoId) {
+      throw new ForbiddenException('Você é um Aldeão.');
+    }
+    if (partida.status !== 'QUESTAO_ATIVA') {
+      throw new BadRequestException('Não há transmissão em aberto.');
+    }
+    if (partida.rumores.some((r) => r.tipo === 'FORJADO')) {
+      throw new BadRequestException({
+        code: 'RUMOR_JA_ENVIADO',
+        message: 'Você já interceptou a comunicação nesta rodada.',
+      });
+    }
+
+    const disfarces = this.disfarces(partida, segredo);
+    const rumor: Rumor = {
+      id: randomUUID(),
+      autorNome: embaralhar(disfarces)[0],
+      texto: texto.trim().slice(0, 240),
+      tipo: 'FORJADO',
+    };
+    return this.publicarRumor(partida, rumor);
+  }
+
+  /**
+   * O Sinal Interceptado: quem foi abduzido ou preso hackeia a comunicação e
+   * tenta guiar os sobreviventes. Chega anônimo — se viesse assinado, a vila
+   * saberia quem está fora e por eliminação quem é NPC.
+   */
+  async sinalDeRadio(
+    alunoId: string,
+    partidaId: string,
+    texto: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (habitante.vivo && !habitante.preso) {
+      throw new BadRequestException('Você ainda está na vila.');
+    }
+    if (partida.status !== 'QUESTAO_ATIVA') {
+      throw new BadRequestException('Não há transmissão em aberto.');
+    }
+
+    const rumor: Rumor = {
+      id: randomUUID(),
+      autorNome: 'Sinal Interceptado',
+      texto: texto.trim().slice(0, 240),
+      tipo: 'SINAL',
+    };
+    return this.publicarRumor(partida, rumor);
+  }
+
+  private async publicarRumor(
+    partida: IsolateusMatchEntity,
+    rumor: Rumor,
+  ): Promise<IsolateusMatchEntity> {
+    const rumores = [...partida.rumores, rumor].slice(-40);
+    partida.rumores = rumores;
+    await this.matches.commitPartida(partida.id, { rumores });
+    return partida;
+  }
+
+  // ===== A Resolução =====
+
+  /** O projetor fecha a rodada quando o cronômetro zera (não há timer no servidor). */
+  async resolverPorTempo(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (partida.status !== 'QUESTAO_ATIVA' || !partida.faseIniciadaEm) {
+      return partida;
+    }
+    // Revalida o prazo no servidor: um cliente adiantado não fecha a rodada antes.
+    const decorrido = Date.now() - Date.parse(partida.faseIniciadaEm);
+    const limite = partida.duracaoSegundos * 1000 - ISOLATEUS.MARGEM_TEMPO_MS;
+    if (decorrido < limite) {
+      return partida;
+    }
+    return this.resolverRodada(partida, segredo);
+  }
+
+  /**
+   * Apura a votação da vila e materializa (ou não) a jogada da Ameaça.
+   *
+   * Votam os habitantes reais na vila e os NPCs — estes, randomicamente, no seu
+   * desespero. Como o acaso pode empatar, vale o **Instinto Humano** (§3): entre
+   * as alternativas empatadas, ganha a mais votada pelos habitantes REAIS; se o
+   * empate persistir, a de menor índice (determinístico, testável).
+   */
+  private async resolverRodada(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
+    const questao = await this.questaoDaRodada(partida);
+    if (!questao) {
+      throw new BadRequestException('A investigação ficou sem questões.');
+    }
+
+    const respostas = await this.matches.lerRespostas(
+      partida.id,
+      partida.rodada,
+    );
+    const votantes = this.reaisNaVila(partida, segredo);
+    const total = questao.alternativas.length;
+
+    const votosReais = new Array<number>(total).fill(0);
+    for (const v of votantes) {
+      const r = respostas.find((x) => x.alunoId === v.alunoId);
+      if (r && r.alternativaIndex < total) votosReais[r.alternativaIndex]++;
+    }
+
+    // Os NPCs decidem randomicamente (Névoa de Guerra).
+    const npcsVivos = partida.vivos.filter((h) => !segredo.alunoDe(h.id)).length;
+    const votosTotais = [...votosReais];
+    for (let i = 0; i < npcsVivos; i++) {
+      votosTotais[Math.floor(Math.random() * total)]++;
+    }
+
+    const escolhida = this.apurar(votosTotais, votosReais);
+    const defendida = escolhida === questao.corretaIndex;
+
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'RESULTADO_RODADA',
+      corretaIndex: questao.corretaIndex,
+      faseIniciadaEm: null,
+    };
+    const pontos = { ...(segredo.pontos ?? {}) };
+
+    if (defendida) {
+      dados.resumoRodada = {
+        seq: partida.rodada,
+        defendida: true,
+        texto: 'Defesa bem-sucedida! O setor resistiu e ninguém foi levado.',
+      };
+    } else {
+      // A vila errou: a jogada da Ameaça se materializa. E o infiltrado pontua
+      // como se tivesse acertado a questão — a sabotagem foi validada (§7).
+      const texto = this.aplicarSabotagem(partida, segredo);
+      dados.esperanca = partida.esperanca;
+      dados.setores = partida.setores;
+      dados.habitantes = partida.habitantes;
+      dados.resumoRodada = { seq: partida.rodada, defendida: false, texto };
+      pontos[segredo.alienAlunoId] =
+        (pontos[segredo.alienAlunoId] ?? 0) + ISOLATEUS.PONTOS_ACERTO;
+    }
+
+    Object.assign(partida, dados);
+    segredo.pontos = pontos;
+    segredo.acaoRodada = null;
+    await this.matches.commitPartida(partida.id, dados, {
+      pontos,
+      acaoRodada: null,
+    });
+
+    // A vila caiu? A Esperança zerada encerra a partida na hora.
+    if (partida.esperanca <= 0) {
+      return this.encerrar(partida, segredo, {
+        lado: 'AMEACA',
+        motivo:
+          'A AMEAÇA VENCEU: a Barra de Esperança chegou a zero. A vila não resistiu à invasão.',
+      });
+    }
+    return partida;
+  }
+
+  /**
+   * O Instinto Humano: no empate, o consenso dos habitantes reais tem peso
+   * soberano sobre o voto randômico dos NPCs.
+   */
+  private apurar(votosTotais: number[], votosReais: number[]): number {
+    const maximo = Math.max(...votosTotais);
+    const empatadas = votosTotais
+      .map((v, i) => ({ v, i }))
+      .filter((x) => x.v === maximo)
+      .map((x) => x.i);
+    if (empatadas.length === 1) return empatadas[0];
+
+    const maxReal = Math.max(...empatadas.map((i) => votosReais[i]));
+    return empatadas.find((i) => votosReais[i] === maxReal)!;
+  }
+
+  /** Materializa a jogada da Ameaça e devolve o texto do card global. */
+  private aplicarSabotagem(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): string {
+    const acao = segredo.acaoRodada;
+    if (!acao) {
+      return 'A vila errou a defesa, mas a Ameaça hesitou.';
+    }
+
+    if (acao.tipo === 'SABOTAR') {
+      const setor = partida.setores.find((s) => s.id === acao.alvoId);
+      if (setor?.intacto) {
+        setor.intacto = false;
+        partida.esperanca = Math.max(
+          0,
+          partida.esperanca - ISOLATEUS.DANO_SABOTAGEM,
+        );
+        return `A Vila sofreu danos: o ${setor.nome} está em ruínas.`;
+      }
+      return 'A sabotagem falhou por pouco.';
+    }
+
+    const alvo = partida.habitantes.find((h) => h.id === acao.alvoId);
+    if (alvo?.vivo && !alvo.preso) {
+      alvo.vivo = false;
+      partida.esperanca = Math.max(
+        0,
+        partida.esperanca - ISOLATEUS.DANO_ABDUCAO,
+      );
+      return `${alvo.nome} foi abduzido durante a noite.`;
+    }
+    return 'A abdução falhou por pouco.';
+  }
+
+  /** O professor avança para a próxima noite — ou o tempo simplesmente acaba. */
+  async proxima(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (partida.status !== 'RESULTADO_RODADA') {
+      throw new BadRequestException('Aguarde a resolução da rodada.');
+    }
+
+    const proxima = partida.rodada + 1;
+    if (proxima >= partida.totalRodadas) {
+      return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+    }
+
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'TURNO_AMEACA',
+      rodada: proxima,
+      questaoPublica: null,
+      corretaIndex: null,
+      alerta: null,
+      rumores: [],
+      resumoRodada: null,
+      faseIniciadaEm: null,
+    };
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partida.id, dados);
+    return partida;
+  }
+
+  // ===== O Veredito =====
+
+  /**
+   * Fim por esgotamento das questões (§8). A vila tem 6 setores; avalia-se o
+   * nível de destruição e de preservação.
+   *
+   * Os dois lados podem bater seu critério ao mesmo tempo (ex.: metade da vila
+   * abduzida **e** 4 setores intactos). A spec não desempata, então **a Ameaça é
+   * avaliada primeiro**: se a invasão atingiu qualquer um dos seus objetivos, ela
+   * venceu. Se nenhum lado atingir nada, a Vila vence por resistência — a
+   * invasão simplesmente fracassou.
+   */
+  private vereditoPorEsgotamento(partida: IsolateusMatchEntity) {
+    const totalHabitantes = partida.habitantes.length;
+    const fora = partida.habitantes.filter((h) => !h.vivo).length; // abduzidos
+    const danificados = ISOLATEUS.TOTAL_SETORES - partida.setoresIntactos;
+
+    if (fora > totalHabitantes / 2) {
+      return {
+        lado: 'AMEACA' as const,
+        motivo:
+          'A AMEAÇA VENCEU: o infiltrado conseguiu abduzir mais da metade da população no meio da noite.',
+      };
+    }
+    if (danificados > 3) {
+      return {
+        lado: 'AMEACA' as const,
+        motivo:
+          'A AMEAÇA VENCEU: a sabotagem foi implacável e o Alienígena destruiu mais de 3 setores vitais.',
+      };
+    }
+    if (partida.setoresIntactos > 3) {
+      return {
+        lado: 'VILA' as const,
+        motivo:
+          'A VILA VENCEU: vocês impediram a invasão e mantiveram mais de 3 setores intactos e seguros.',
+      };
+    }
+    return {
+      lado: 'VILA' as const,
+      motivo:
+        'A VILA VENCEU: a resistência foi forte e vocês garantiram que mais da metade da vila sobrevivesse até o fim da quarentena.',
+    };
+  }
+
+  /**
+   * Encerra a partida, publica o placar (agora que o mistério acabou) e converte
+   * os pontos em XP do portal. O lado vencedor leva o bônus de Vitória de Partida.
+   */
+  private async encerrar(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    veredito: { lado: 'VILA' | 'AMEACA'; motivo: string },
+  ): Promise<IsolateusMatchEntity> {
+    const pontos = { ...(segredo.pontos ?? {}) };
+    const alienVenceu = veredito.lado === 'AMEACA';
+
+    for (const vinculo of segredo.vinculos) {
+      if (!vinculo.alunoId) continue; // NPC não pontua
+      const ehAlien = vinculo.alunoId === segredo.alienAlunoId;
+      if (ehAlien === alienVenceu) {
+        pontos[vinculo.alunoId] =
+          (pontos[vinculo.alunoId] ?? 0) + ISOLATEUS.BONUS_VITORIA;
+      }
+    }
+
+    const nomePorAluno = new Map(
+      segredo.vinculos
+        .filter((v) => v.alunoId)
+        .map((v) => [
+          v.alunoId!,
+          partida.habitantes.find((h) => h.id === v.habitanteId)?.nome ??
+            'Habitante',
+        ]),
+    );
+    const rankingFinal = [...nomePorAluno.keys()]
+      .map((alunoId) => ({
+        alunoId,
+        nome: nomePorAluno.get(alunoId)!,
+        pontos: pontos[alunoId] ?? 0,
+      }))
+      .sort((a, b) => b.pontos - a.pontos)
+      .map((p, i) => ({ posicao: i + 1, ...p }));
+
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'ENCERRADO',
+      veredito,
+      rankingFinal,
+      questaoPublica: null,
+      faseIniciadaEm: null,
+    };
+    Object.assign(partida, dados);
+    segredo.pontos = pontos;
+    await this.matches.commitPartida(partida.id, dados, { pontos });
+
+    if (partida.turmaId) {
+      await this.xp.creditarPartida(
+        partida.turmaId,
+        rankingFinal.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
+        'ISOLATEUS',
+      );
+    }
+    return partida;
   }
 }

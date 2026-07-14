@@ -3,6 +3,11 @@ import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { EntrarIsolateusDto } from './dto/entrar-isolateus.dto';
+import {
+  ForjarRumorDto,
+  MensagemDto,
+  ResponderIsolateusDto,
+} from './dto/responder-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
 import { IsolateusMatchService } from './isolateus-match.service';
 
@@ -57,5 +62,35 @@ export class AlunoIsolateusController {
     @Body() dto: AcaoAmeacaDto,
   ) {
     return this.game.acaoAmeaca(aluno.alunoId, id, dto);
+  }
+
+  /** A Defesa: o voto na solução do problema. */
+  @Post(':id/resposta')
+  responder(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: ResponderIsolateusDto,
+  ) {
+    return this.game.responder(aluno.alunoId, id, dto.alternativaIndex);
+  }
+
+  /** A Sabotagem de Frequência: o rumor falso da Ameaça, sob o nome de um NPC. */
+  @Post(':id/rumor')
+  forjar(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: ForjarRumorDto,
+  ) {
+    return this.game.forjarRumor(aluno.alunoId, id, dto.texto);
+  }
+
+  /** O Sinal Interceptado: a dica anônima de quem já foi levado. */
+  @Post(':id/sinal')
+  sinal(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: MensagemDto,
+  ) {
+    return this.game.sinalDeRadio(aluno.alunoId, id, dto.texto);
   }
 }
