@@ -11,12 +11,13 @@ import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import {
   ISOLATEUS,
   IsolateusMatchEntity,
+  MensagemDebate,
   Rumor,
 } from './entities/isolateus-match.entity';
 import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
-import { FRASES_NPC } from './isolateus.data';
+import { FRASES_DEBATE_NPC, FRASES_NPC } from './isolateus.data';
 
 /** Autor anônimo do feed quando a vila não tem NPCs para vestir o rumor. */
 const VOZ_ANONIMA = 'Voz na Névoa';
@@ -406,7 +407,11 @@ export class IsolateusGameService {
 
   // ===== A Resolução =====
 
-  /** O projetor fecha a rodada quando o cronômetro zera (não há timer no servidor). */
+  /**
+   * O projetor fecha a fase cronometrada quando o relógio zera. Não há timer no
+   * servidor (padrão Qlick/Wor): o cliente conta e o servidor **revalida o prazo**
+   * antes de agir, com margem de 2s — um cliente adiantado não corta a fase antes.
+   */
   async resolverPorTempo(
     professorId: string,
     partidaId: string,
@@ -415,16 +420,28 @@ export class IsolateusGameService {
     if (partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
-    if (partida.status !== 'QUESTAO_ATIVA' || !partida.faseIniciadaEm) {
-      return partida;
-    }
-    // Revalida o prazo no servidor: um cliente adiantado não fecha a rodada antes.
+    if (!partida.faseIniciadaEm) return partida;
+
+    const limites: Partial<Record<typeof partida.status, number>> = {
+      QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
+      QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
+      QUARENTENA_VOTO: ISOLATEUS.LIMITE_VOTO_MS,
+    };
+    const limite = limites[partida.status];
+    if (limite === undefined) return partida;
+
     const decorrido = Date.now() - Date.parse(partida.faseIniciadaEm);
-    const limite = partida.duracaoSegundos * 1000 - ISOLATEUS.MARGEM_TEMPO_MS;
-    if (decorrido < limite) {
+    if (decorrido < limite - ISOLATEUS.MARGEM_TEMPO_MS) {
       return partida;
     }
-    return this.resolverRodada(partida, segredo);
+
+    if (partida.status === 'QUESTAO_ATIVA') {
+      return this.resolverRodada(partida, segredo);
+    }
+    if (partida.status === 'QUARENTENA_DEBATE') {
+      return this.abrirVotacao(partida);
+    }
+    return this.apurarQuarentena(partida, segredo);
   }
 
   /**
@@ -592,6 +609,228 @@ export class IsolateusGameService {
     };
     Object.assign(partida, dados);
     await this.matches.commitPartida(partida.id, dados);
+    return partida;
+  }
+
+  // ===== A Quarentena =====
+
+  /**
+   * Convoca a Reunião de Investigação. Pode partir de **qualquer habitante real
+   * vivo** (o botão vermelho entre as rodadas) ou do professor, pelo telão.
+   *
+   * É **única por partida**: sem esse limite, a vila prenderia todo mundo por
+   * tentativa e erro até achar a Ameaça, e a dedução perderia o sentido. Aqui,
+   * acusar custa caro — errar tira 20 de Esperança.
+   */
+  async convocarQuarentena(
+    partidaId: string,
+    quem: { alunoId?: string; professorId?: string },
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+
+    if (quem.professorId && partida.professorId !== quem.professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (quem.alunoId) {
+      const habitante = this.habitanteDoAluno(partida, segredo, quem.alunoId);
+      if (!habitante.vivo || habitante.preso) {
+        throw new ForbiddenException('Você não está mais na vila.');
+      }
+    }
+    if (partida.status !== 'RESULTADO_RODADA') {
+      throw new BadRequestException(
+        'A Quarentena só pode ser convocada entre as rodadas.',
+      );
+    }
+    if (partida.quarentenaUsada) {
+      throw new BadRequestException({
+        code: 'QUARENTENA_USADA',
+        message: 'A vila só entra em Quarentena uma vez.',
+      });
+    }
+
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'QUARENTENA_DEBATE',
+      quarentenaUsada: true,
+      faseIniciadaEm: new Date().toISOString(),
+      debate: this.semearDebate(partida, segredo),
+      votosRecebidos: 0,
+    };
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partidaId, dados);
+    return partida;
+  }
+
+  /** Os NPCs também trocam acusações — o mesmo cuidado do ruído se aplica. */
+  private semearDebate(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): MensagemDebate[] {
+    const autores = embaralhar(this.disfarces(partida, segredo));
+    const frases = embaralhar(FRASES_DEBATE_NPC).slice(0, RUIDO_POR_RODADA);
+    return frases.map((texto, i) => ({
+      id: randomUUID(),
+      autorNome: autores[i % autores.length],
+      texto,
+    }));
+  }
+
+  /** O Debate Tático: acusações e defesas por escrito, com o relógio correndo. */
+  async debater(
+    alunoId: string,
+    partidaId: string,
+    texto: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.status !== 'QUARENTENA_DEBATE') {
+      throw new BadRequestException('O debate não está aberto.');
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Quem saiu da vila não debate.');
+    }
+
+    const debate = [
+      ...partida.debate,
+      {
+        id: randomUUID(),
+        autorNome: habitante.nome, // o pseudônimo, nunca o nome real
+        texto: texto.trim().slice(0, 240),
+      },
+    ].slice(-60);
+    partida.debate = debate;
+    await this.matches.commitPartida(partidaId, { debate });
+    return partida;
+  }
+
+  /** Fim do debate: o teclado trava e a vila deposita seus votos. */
+  private async abrirVotacao(
+    partida: IsolateusMatchEntity,
+  ): Promise<IsolateusMatchEntity> {
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'QUARENTENA_VOTO',
+      faseIniciadaEm: new Date().toISOString(),
+    };
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partida.id, dados);
+    return partida;
+  }
+
+  /** O Veredito: cada habitante deposita seu voto num suspeito. */
+  async votarSuspeito(
+    alunoId: string,
+    partidaId: string,
+    suspeitoId: string,
+  ): Promise<{ registrado: boolean }> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.status !== 'QUARENTENA_VOTO') {
+      throw new BadRequestException('A votação não está aberta.');
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Quem saiu da vila não vota.');
+    }
+    if (!partida.vivos.some((h) => h.id === suspeitoId)) {
+      throw new BadRequestException('Esse habitante não está mais na vila.');
+    }
+
+    const registrado = await this.matches.registrarVoto(
+      partidaId,
+      alunoId,
+      suspeitoId,
+    );
+    if (!registrado) {
+      return { registrado: false };
+    }
+
+    const votos = await this.matches.lerVotos(partidaId);
+    const votantes = this.reaisNaVila(partida, segredo);
+    partida.votosRecebidos = votos.length;
+    await this.matches.commitPartida(partidaId, {
+      votosRecebidos: votos.length,
+    });
+
+    // Avanço Rápido: consenso fechado, o tempo restante é cortado (§5).
+    if (votos.length >= votantes.length) {
+      await this.apurarQuarentena(partida, segredo);
+    }
+    return { registrado: true };
+  }
+
+  /**
+   * A Revelação. Apura os votos (reais + NPCs randômicos, com o mesmo Instinto
+   * Humano no empate) e tranca o mais votado.
+   *
+   * Se for a Ameaça, a invasão é contida e a Vila vence. Se for um inocente, a
+   * Esperança sofre dano severo e **a identidade do preso permanece em segredo**
+   * (§5) — a vila nunca fica sabendo se trancou um NPC ou um colega.
+   */
+  private async apurarQuarentena(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
+    const candidatos = partida.vivos;
+    const votos = await this.matches.lerVotos(partida.id);
+
+    const votosReais = new Array<number>(candidatos.length).fill(0);
+    for (const v of votos) {
+      const i = candidatos.findIndex((h) => h.id === v.suspeitoId);
+      if (i >= 0) votosReais[i]++;
+    }
+    const npcsVivos = candidatos.filter((h) => !segredo.alunoDe(h.id)).length;
+    const votosTotais = [...votosReais];
+    for (let i = 0; i < npcsVivos; i++) {
+      votosTotais[Math.floor(Math.random() * candidatos.length)]++;
+    }
+
+    const preso = candidatos[this.apurar(votosTotais, votosReais)];
+    preso.preso = true;
+    const eraAmeaca = segredo.alunoDe(preso.id) === segredo.alienAlunoId;
+
+    if (eraAmeaca) {
+      const dados: Partial<IsolateusMatchEntity> = {
+        habitantes: partida.habitantes,
+        vereditoQuarentena: {
+          presoNome: preso.nome,
+          eraAmeaca: true,
+          texto: `Vocês contiveram a AMEAÇA! ${preso.nome} era o infiltrado.`,
+        },
+      };
+      Object.assign(partida, dados);
+      await this.matches.commitPartida(partida.id, dados);
+      return this.encerrar(partida, segredo, {
+        lado: 'VILA',
+        motivo:
+          'A VILA VENCEU: vocês identificaram e trancaram o Alienígena na Quarentena.',
+      });
+    }
+
+    partida.esperanca = Math.max(
+      0,
+      partida.esperanca - ISOLATEUS.DANO_INOCENTE,
+    );
+    const dados: Partial<IsolateusMatchEntity> = {
+      status: 'RESULTADO_RODADA',
+      habitantes: partida.habitantes,
+      esperanca: partida.esperanca,
+      faseIniciadaEm: null,
+      vereditoQuarentena: {
+        presoNome: preso.nome,
+        eraAmeaca: false,
+        // A identidade original do preso permanece em segredo (§5).
+        texto: `Vocês aprisionaram um INOCENTE. ${preso.nome} não era a Ameaça — e ela continua entre vocês.`,
+      },
+    };
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partida.id, dados);
+
+    if (partida.esperanca <= 0) {
+      return this.encerrar(partida, segredo, {
+        lado: 'AMEACA',
+        motivo:
+          'A AMEAÇA VENCEU: a vila trancou um inocente e a Barra de Esperança chegou a zero.',
+      });
+    }
     return partida;
   }
 

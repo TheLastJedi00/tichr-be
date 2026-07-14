@@ -56,4 +56,10 @@ export class IsolateusMatchController {
   proxima(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.game.proxima(professorId, id);
   }
+
+  /** O professor também pode abrir a Quarentena pelo telão. */
+  @Post('matches/:id/quarentena')
+  quarentena(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.convocarQuarentena(id, { professorId });
+  }
 }

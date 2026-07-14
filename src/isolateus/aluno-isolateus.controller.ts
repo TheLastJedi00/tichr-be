@@ -7,6 +7,7 @@ import {
   ForjarRumorDto,
   MensagemDto,
   ResponderIsolateusDto,
+  VotarSuspeitoDto,
 } from './dto/responder-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
 import { IsolateusMatchService } from './isolateus-match.service';
@@ -92,5 +93,34 @@ export class AlunoIsolateusController {
     @Body() dto: MensagemDto,
   ) {
     return this.game.sinalDeRadio(aluno.alunoId, id, dto.texto);
+  }
+
+  /** O botão vermelho: convoca a Quarentena (uma vez por partida). */
+  @Post(':id/quarentena')
+  convocar(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.convocarQuarentena(id, { alunoId: aluno.alunoId });
+  }
+
+  /** O Debate Tático da Quarentena. */
+  @Post(':id/debate')
+  debater(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: MensagemDto,
+  ) {
+    return this.game.debater(aluno.alunoId, id, dto.texto);
+  }
+
+  /** O voto no suspeito. */
+  @Post(':id/suspeito')
+  votar(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: VotarSuspeitoDto,
+  ) {
+    return this.game.votarSuspeito(aluno.alunoId, id, dto.suspeitoId);
   }
 }
