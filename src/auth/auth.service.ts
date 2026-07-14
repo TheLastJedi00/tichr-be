@@ -16,6 +16,12 @@ import { StudentTokenPayload } from './auth.types';
 export interface TurmaConfigPublica {
   nomePontuacao: string;
   rankingAtivo: boolean;
+  /**
+   * Limiares de nivel da TURMA (XP para Prata/Ouro/Diamante/Platina). Sem isso o
+   * painel do aluno cai nos defaults e exibe uma patente que nao e a que o
+   * professor configurou — a fonte de verdade e o documento da turma.
+   */
+  niveis: { prata: number; ouro: number; diamante: number; platina: number };
 }
 
 const IDENTITY_TOOLKIT_URL =
@@ -96,6 +102,7 @@ export class AuthService {
     return {
       nomePontuacao: cfg.nomePontuacao,
       rankingAtivo: cfg.rankingAtivo,
+      niveis: cfg.niveis,
     };
   }
 

@@ -1,4 +1,4 @@
-import { WOR } from './wor-match.entity';
+import { LastGlobalAction, WOR } from './wor-match.entity';
 
 export interface MembroTeam {
   alunoId: string;
@@ -27,6 +27,11 @@ export class WorTeamEntity {
   /** Pontos de combate acumulados (dano causado + bônus). Desempata e vira XP. */
   pontos = 0;
   membros: MembroTeam[] = [];
+  /**
+   * Cópia do último Action Card (fan-out). Redundante com a raiz de propósito:
+   * o aluno só escuta este doc, e é por aqui que a narração global o alcança.
+   */
+  lastGlobalAction?: LastGlobalAction | null;
 
   constructor(partial: Partial<WorTeamEntity> = {}) {
     Object.assign(this, partial);

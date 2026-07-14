@@ -43,6 +43,17 @@ function fakeRepos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEnt
       const t = teams.find((x) => x.id === id);
       if (t) Object.assign(t, dados);
     },
+    commitPartida: async (
+      _m: string,
+      raiz: Partial<WorMatchEntity>,
+      equipes: Record<string, Partial<WorTeamEntity>> = {},
+    ) => {
+      Object.assign(match, raiz);
+      for (const [id, dados] of Object.entries(equipes)) {
+        const t = teams.find((x) => x.id === id);
+        if (t) Object.assign(t, dados);
+      }
+    },
   } as unknown as WorMatchRepository;
   const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
   const { xp, creditos } = fakeXp();
