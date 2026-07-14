@@ -1,9 +1,23 @@
-import { Body, Controller, Delete, Get, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Put,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminService } from '../admin/admin.service';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { ExcluirContaDto } from './dto/excluir-conta.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfessorService, ProfessorView } from './professor.service';
+
+/** Multer em memoria: o buffer vai direto ao Storage, sem tocar o disco. */
+const AVATAR_UPLOAD_LIMIT = 400 * 1024;
 
 @Controller('profile')
 export class ProfessorController {
@@ -31,6 +45,23 @@ export class ProfessorController {
     return ProfessorService.montarView(
       await this.professorService.updateProfile(uid, dto),
     );
+  }
+
+  /**
+   * Foto de perfil (multipart, campo `foto`). O upload é server-side: o cliente
+   * não tem sessão do Firebase Auth, então o Storage nega escrita anônima — quem
+   * grava é o backend, via Admin SDK. Devolve o perfil já com o `avatarUrl` novo.
+   */
+  @Post('avatar')
+  @UseInterceptors(
+    FileInterceptor('foto', { limits: { fileSize: AVATAR_UPLOAD_LIMIT } }),
+  )
+  uploadAvatar(
+    @ProfessorId() uid: string,
+    @UploadedFile()
+    foto?: { buffer: Buffer; mimetype: string; size: number },
+  ): Promise<ProfessorView> {
+    return this.professorService.uploadAvatar(uid, foto);
   }
 
   /**
