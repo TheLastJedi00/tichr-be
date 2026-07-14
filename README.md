@@ -317,7 +317,7 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 |---|---|---|---|
 | `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, refreshToken, expiresIn, uid, email }` |
 | `POST` | `/auth/signup` **(pública)** | `{ nome, email, password, aceiteTermos, aceitePrivacidade }` | `{ token, … }` — **cadastro**: exige o **aceite** dos Termos de Uso e da Política de Privacidade (validado no DTO e no service; 400 sem aceite); cria a conta no Identity Toolkit e provisiona `professores/{uid}` (plano ESTAGIARIO) com `nomeExibicao` + **registro de consentimento LGPD** (`aceiteTermosEm`, `aceitePrivacidadeEm`, `versaoDocumentosLegais`); já devolve o token (409 `EMAIL_EXISTS`) |
-| `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo } }` — JWT de aluno + config da turma |
+| `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo, niveis } }` — JWT de aluno + config da turma (`niveis` = limiares de patente, para o badge do aluno bater com o que o professor configurou) |
 | `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config, pinAlunoLength }` — info da tela de login do aluno (`pinAlunoLength` = quantos slots de PIN exibir) |
 | `GET` | `/` **(pública)** | — | health check |
 
@@ -602,8 +602,12 @@ rótulos `rotuloAdicionar`/`rotuloRemover`.
   decrescente, com o posicionamento. Acessível pelo professor dono e pelos alunos da
   própria turma (um aluno não vê o ranking de outra turma). Retorna **403** se a turma tem
   `rankingAtivo=false`.
-- A config pública (`nomePontuacao`, `rankingAtivo`) viaja ao **portal do aluno** no login
-  (`POST /auth/aluno`) e no `GET /auth/turma/:turmaId`, para o front rotular sem hardcode.
+- A config pública (`nomePontuacao`, `rankingAtivo`, `niveis`) viaja ao **portal do aluno**
+  no login (`POST /auth/aluno`) e no `GET /auth/turma/:turmaId`, para o front rotular sem
+  hardcode. `niveis` são os **limiares de patente da turma** (`{ prata, ouro, diamante,
+  platina }`, de `TurmaEntity.configPontuacao`, já normalizados/ascendentes): sem eles o
+  painel do aluno cairia nos defaults e exibiria uma patente diferente da que o professor
+  configurou. A fonte de verdade continua sendo **só** o doc da turma.
 - **Exclusividade PhD** (`ProfessorEntity.podeGamificar`): distribuir XP exige
   `planoAtual === 'PHD'` — senão **403 `GAMIFICACAO_LOCKED`**. O front trava a UI de
   pontuação e o toggle do portal nos planos inferiores, com upsell.
@@ -777,11 +781,29 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
 - **Estado fragmentado da partida** (leitura pública, escrita negada):
   - **`matches/{id}`** (raiz): `status` (LOBBY/EM_ANDAMENTO/ENCERRADO), `ondaIndex`,
     `mascara[]` (letra / `_` / espaço), `letrasTentadas[]`, `cartasVisiveis[]`,
-    `turnoEquipeId`, `ordemEquipes[]`, `aguardandoDilema`, `inscritos[]`, `vencedorEquipeId`.
+    `turnoEquipeId`, `ordemEquipes[]`, `acoesRodada[]`, `rodadaIniciadaEm`, `placar[]`,
+    `resumoRodada`, `lastGlobalAction`, `inscritos[]`, `vencedorEquipeId`.
     **Não** guarda o segredo (palavra/dicas ficam em `wor_jogos`).
-  - **`matches/{id}/teams/{teamId}`**: `hp`, `isHorde`, `cor`, `nome`, `membros[]`.
+  - **`matches/{id}/teams/{teamId}`**: `hp`, `isHorde`, `cor`, `nome`, `pontos`,
+    `membros[]`, `lastGlobalAction`.
     O **aluno escuta só o próprio time** → dano/cura dispara barato; o **professor**
     escuta a raiz + todos os times (1 leitura por ação no telão).
+
+#### Action Cards (`lastGlobalAction`) — narração global + freeze
+Ação de impacto é narrada ao mesmo tempo em **todas** as telas. Como o aluno só
+escuta o doc da própria equipe, o evento vai por **fan-out**: o mesmo objeto é
+gravado na raiz (telão) **e em cada equipe**, num **único `WriteBatch`** junto do
+seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
+
+- Formato: `{ seq, tipo, mensagem, duracaoMs, em }`, com `tipo` em
+  `ATAQUE | CURA | USURPACAO | DANO_CRITICO | DICA`. O cliente detecta `seq` novo,
+  exibe o card por `duracaoMs` (3s) e trava os inputs.
+- **Freeze:** não existe timer no servidor para pausar — o cronômetro é derivado de
+  `rodadaIniciadaEm`. Congelar = gravar esse instante **3s no futuro** (`WOR.FREEZE_MS`).
+  O relógio dos clientes não corre durante o card e `resolverPorTempo` não fecha a
+  rodada no meio da narração. Nada precisa ser "destravado" depois.
+- **Um card por requisição:** se a rodada resolve na mesma ação em que alguém sofreu
+  Dano Crítico, o card do crítico prevalece (a resolução ainda chega pelo `resumoRodada`).
 
 ### Endpoints — Arsenal & IA (professor)
 | Método | Rota | Descrição |
@@ -797,20 +819,30 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
 | `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
 | `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
 | `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
+| `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo) |
 
 ### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick)
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/aluno/wor` | partida ativa da turma do aluno |
 | `POST` | `/aluno/wor/:id/entrar` | inscreve o aluno no lobby |
-| `POST` | `/aluno/wor/:id/letra` `{ letra }` | chuta letra — erro = **Dano do Sistema** + passa turno; acerto = revela + **Dilema Tático** |
-| `POST` | `/aluno/wor/:id/dilema` `{ acao, alvoEquipeId? }` | **Atacar** rival ou **Comprar Dica** (revela carta) |
+| `POST` | `/aluno/wor/:id/letra` `{ letra, acao, alvoEquipeId? }` | chuta a letra **e vota** a ação da equipe (atacar rival / comprar dica) |
 | `POST` | `/aluno/wor/:id/arriscar` `{ palavra }` | **Risco Heroico** (cura + encerra onda) / **Invasão** da Horda (usurpação) |
 
 ### Regras (constantes em `WOR`, ajustáveis)
-HP inicial **100** · Dano do Sistema **10** · Ataque **15** · Dano Crítico **30** ·
-Cura Massiva **40** · até **3 cartas**. **Horda:** HP 0 → só pode Invasão; se acertar,
-**rouba o castelo do líder** (maior HP), que vira a nova Horda. Vitória: maior HP ao fim das ondas.
+O turno é **da equipe**: cada membro age uma vez (letra + voto) e a rodada resolve
+quando todos jogaram — ou quando o cronômetro (`LIMITE_RODADA_MS`, 60s) zera.
+
+HP inicial **1000** · Ataque **100** · Ataque perfeito (todos acertaram, equipe 2+)
+**200** · Cura Massiva **400** · Bônus de Risco Heroico **+300 pontos** · até **3 cartas** ·
+freeze do Action Card **3s**. **Errar a letra não causa dano.** **Horda:** HP 0 → só pode
+Invasão; se acertar, **rouba o castelo do líder** (maior HP), que vira a nova Horda.
+Vitória: maior HP ao fim das ondas, desempate por pontos.
+
+**Economia de XP:** o dano vira **pontos de combate** da equipe atacante; no fim, o HP
+restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
+`XP = pontos × XP_POR_PONTO (0,1)`, cheio para a campeã e **metade** para as demais
+(`XpService.creditarPartida`, motivo `WOR`).
 
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração do arsenal por IA (sem ela, palavras e dicas manuais).
