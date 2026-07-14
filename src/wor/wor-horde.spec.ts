@@ -22,6 +22,17 @@ function repos(jogo: WorJogoEntity, match: WorMatchEntity, teams: WorTeamEntity[
       const t = teams.find((x) => x.id === id);
       if (t) Object.assign(t, d);
     },
+    commitPartida: async (
+      _m: string,
+      raiz: Partial<WorMatchEntity>,
+      equipes: Record<string, Partial<WorTeamEntity>> = {},
+    ) => {
+      Object.assign(match, raiz);
+      for (const [id, d] of Object.entries(equipes)) {
+        const t = teams.find((x) => x.id === id);
+        if (t) Object.assign(t, d);
+      }
+    },
   } as unknown as WorMatchRepository;
   const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
   return new WorGameService(jogos, matches, fakeXp());

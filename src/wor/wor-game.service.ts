@@ -9,8 +9,11 @@ import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
 import {
   AcaoMembro,
+  LastGlobalAction,
   LIMITE_RODADA_MS,
+  PlacarEquipe,
   ResumoRodada,
+  TipoAcaoGlobal,
   VotoRodada,
   WOR,
   WorMatchEntity,
@@ -95,6 +98,68 @@ export class WorGameService {
     }
   }
 
+  // ===== Action Cards (narração global + freeze de 3s) =====
+
+  /** Novo card, com `seq` seguindo o último emitido na partida. */
+  private montarCard(
+    match: WorMatchEntity,
+    tipo: TipoAcaoGlobal,
+    mensagem: string,
+  ): LastGlobalAction {
+    return {
+      seq: (match.lastGlobalAction?.seq ?? 0) + 1,
+      tipo,
+      mensagem,
+      duracaoMs: WOR.FREEZE_MS,
+      em: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Fan-out: o card entra na raiz (telão) e no doc de CADA equipe (celulares).
+   * Sem isso o aluno, que só escuta o próprio doc, ficaria fora da narrativa.
+   */
+  private fanOut(
+    raiz: Partial<WorMatchEntity>,
+    patches: Record<string, Partial<WorTeamEntity>>,
+    teams: WorTeamEntity[],
+    card: LastGlobalAction | null,
+  ): void {
+    if (!card) return;
+    raiz.lastGlobalAction = card;
+    for (const t of teams) {
+      patches[t.id] = { ...(patches[t.id] ?? {}), lastGlobalAction: card };
+    }
+  }
+
+  /**
+   * Início da rodada nova. Com um card no ar, nasce 3s no FUTURO: é assim que o
+   * jogo "congela" — o cronômetro do cliente é derivado deste instante, então
+   * ele só passa a correr quando o card sai de cena. Não existe timer no
+   * servidor para pausar, e ninguém precisa destravar nada depois.
+   */
+  private inicioDaRodada(freeze: boolean): string {
+    return new Date(Date.now() + (freeze ? WOR.FREEZE_MS : 0)).toISOString();
+  }
+
+  /** Empurra o relógio da rodada EM CURSO (o card interrompe sem encurtá-la). */
+  private adiarRodada(inicio?: string | null): string | null {
+    if (!inicio) return inicio ?? null;
+    return new Date(Date.parse(inicio) + WOR.FREEZE_MS).toISOString();
+  }
+
+  /** Snapshot das equipes para a raiz (calculado em memória, sem reler o banco). */
+  private placarDe(teams: WorTeamEntity[]): PlacarEquipe[] {
+    return teams.map((t) => ({
+      id: t.id,
+      nome: t.nome,
+      cor: t.cor,
+      hp: t.hp,
+      isHorde: t.isHorde,
+      pontos: t.pontos ?? 0,
+    }));
+  }
+
   /**
    * Chuta uma letra e VOTA a ação da equipe (atacar um rival ou comprar dica).
    * Acumula a ação do membro; a rodada só resolve quando todos os membros jogam.
@@ -168,7 +233,7 @@ export class WorGameService {
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     this.assertEmAndamento(match);
-    const { team } = await this.equipeDoAluno(matchId, alunoId);
+    const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     this.assertTurno(match, team);
     this.assertNaoJogou(match, alunoId);
 
@@ -177,32 +242,65 @@ export class WorGameService {
       WorMatchEntity.normalizar(palpite.trim()) ===
       WorMatchEntity.normalizar(palavra.trim());
 
+    const aluno = this.nomeMembro(team, alunoId);
+    const patches: Record<string, Partial<WorTeamEntity>> = {};
+
     if (acertou) {
+      let card: LastGlobalAction;
       if (team.isHorde) {
-        await this.usurpar(matchId, team);
+        const lider = this.usurpar(team, teams, patches);
+        card = this.montarCard(
+          match,
+          'USURPACAO',
+          lider
+            ? `A Horda de ${aluno} acertou a palavra e ROUBOU o castelo da ${lider.nome}!`
+            : `A Horda de ${aluno} acertou a palavra e reergueu o próprio castelo!`,
+        );
       } else {
         team.curar(WOR.CURA_MASSIVA);
-        await this.matches.atualizarTeam(matchId, team.id, { hp: team.hp });
+        patches[team.id] = { ...(patches[team.id] ?? {}), hp: team.hp };
+        card = this.montarCard(
+          match,
+          'CURA',
+          `${aluno} arriscou tudo e acertou a palavra! A ${team.nome} restaurou a vida do castelo!`,
+        );
       }
       // Arriscar tudo e acertar rende pontos extras (desempate + ranking).
       team.pontos = (team.pontos ?? 0) + WOR.BONUS_ARRISCAR;
-      await this.matches.atualizarTeam(matchId, team.id, { pontos: team.pontos });
-      await this.matches.atualizar(matchId, { acoesRodada: [] });
-      await this.avancarOnda(matchId);
+      patches[team.id] = { ...(patches[team.id] ?? {}), pontos: team.pontos };
+
+      const raiz: Partial<WorMatchEntity> = { acoesRodada: [] };
+      this.fanOut(raiz, patches, teams, card);
+      await this.matches.commitPartida(matchId, raiz, patches);
+      // A onda nova nasce congelada: o card ainda está no ar.
+      await this.avancarOnda(matchId, true);
       return this.view(matchId);
     }
 
     // Erro: Dano Crítico no próprio castelo. A ação conta para a rodada.
     team.aplicarDano(WOR.DANO_CRITICO);
-    await this.matches.atualizarTeam(matchId, team.id, {
-      hp: team.hp,
-      isHorde: team.isHorde,
-    });
+    patches[team.id] = { hp: team.hp, isHorde: team.isHorde };
+    const card = this.montarCard(
+      match,
+      'DANO_CRITICO',
+      `${aluno} arriscou a palavra e errou! A ${team.nome} sofreu Dano Crítico!`,
+    );
+    const raiz: Partial<WorMatchEntity> = {
+      // A rodada em curso continua: só ganha os 3s que o card rouba dela.
+      rodadaIniciadaEm: this.adiarRodada(match.rodadaIniciadaEm),
+      placar: this.placarDe(teams),
+    };
+    this.fanOut(raiz, patches, teams, card);
+    await this.matches.commitPartida(matchId, raiz, patches);
+
     const acoesRodada: AcaoMembro[] = [
       ...match.acoesRodada,
       { alunoId, tipo: 'ARRISCAR', acertou: false, ordem: match.acoesRodada.length },
     ];
-    return this.encerrarOuAcumular(matchId, team, acoesRodada);
+    // `congelado`: o card do Dano Crítico já está em cartaz — se a rodada
+    // resolver agora (este era o último membro), ela não emite um segundo card
+    // por cima; o reveal continua chegando pelo `resumoRodada`.
+    return this.encerrarOuAcumular(matchId, team, acoesRodada, true);
   }
 
   /** Se todos os membros já jogaram, resolve a rodada; senão, só acumula. */
@@ -210,9 +308,10 @@ export class WorGameService {
     matchId: string,
     team: WorTeamEntity,
     acoesRodada: AcaoMembro[],
+    congelado = false,
   ): Promise<MatchView> {
     if (acoesRodada.length >= team.membros.length) {
-      return this.resolverRodada(matchId, team, acoesRodada);
+      return this.resolverRodada(matchId, team, acoesRodada, false, congelado);
     }
     await this.matches.atualizar(matchId, { acoesRodada });
     return this.view(matchId);
@@ -226,12 +325,17 @@ export class WorGameService {
    */
   private async resolverRodada(
     matchId: string,
-    team: WorTeamEntity,
+    equipeDoTurno: WorTeamEntity,
     acoes: AcaoMembro[],
     porTempo = false,
+    congelado = false,
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     const { palavra, dicas } = await this.palavraDaOnda(match);
+    // Trabalha sobre a lista completa: os efeitos são aplicados em memória e o
+    // placar sai daqui, sem releitura.
+    const teams = await this.matches.listarTeams(matchId);
+    const team = teams.find((t) => t.id === equipeDoTurno.id) ?? equipeDoTurno;
 
     const letrasDaRodada = acoes
       .filter((a) => a.tipo === 'LETRA' && a.letra)
@@ -263,11 +367,13 @@ export class WorGameService {
         acoesRodada: [],
         resumoRodada: resumo,
       });
-      await this.avancarOnda(matchId);
+      await this.avancarOnda(matchId, congelado);
       return this.view(matchId);
     }
 
     // Apura o voto entre quem acertou a letra.
+    const patches: Record<string, Partial<WorTeamEntity>> = {};
+    let card: LastGlobalAction | null = null;
     let cartasVisiveis = match.cartasVisiveis;
     if (acertadores.length) {
       const vencedor = this.apurarVoto(acertadores);
@@ -275,9 +381,14 @@ export class WorGameService {
         resumo.acao = 'DICA';
         if (match.cartasVisiveis.length < dicas.length) {
           cartasVisiveis = dicas.slice(0, match.cartasVisiveis.length + 1);
+          card = this.montarCard(
+            match,
+            'DICA',
+            `A ${team.nome} sacrificou seu ataque para revelar a Carta ${cartasVisiveis.length}!`,
+          );
         }
       } else {
-        const alvo = await this.matches.buscarTeam(matchId, vencedor.alvoEquipeId);
+        const alvo = teams.find((t) => t.id === vencedor.alvoEquipeId);
         if (alvo) {
           const todosAcertaram =
             acoes.length === team.membros.length &&
@@ -285,32 +396,43 @@ export class WorGameService {
           const critico = todosAcertaram && team.membros.length >= 2;
           const dano = critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE;
           alvo.aplicarDano(dano);
-          await this.matches.atualizarTeam(matchId, alvo.id, {
-            hp: alvo.hp,
-            isHorde: alvo.isHorde,
-          });
+          patches[alvo.id] = { hp: alvo.hp, isHorde: alvo.isHorde };
           // O dano causado vira pontos da equipe atacante (desempate + ranking).
           team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
-          await this.matches.atualizarTeam(matchId, team.id, { pontos: team.pontos });
+          patches[team.id] = { ...(patches[team.id] ?? {}), pontos: team.pontos };
           resumo.acao = 'ATACAR';
           resumo.alvoEquipeId = alvo.id;
           resumo.alvoNome = alvo.nome;
           resumo.dano = dano;
           resumo.critico = critico;
+
+          // O ataque é da EQUIPE: o dano nasce da votação da rodada inteira, não
+          // de um aluno — narrar um nome só seria dar crédito a quem votou.
+          const n = acertadores.length;
+          card = this.montarCard(
+            match,
+            'ATAQUE',
+            `A ${team.nome} acertou ${n} ${n === 1 ? 'letra' : 'letras'} e causou ${dano} de dano no castelo da ${alvo.nome}!`,
+          );
         }
       }
     }
+    // Já há um card em cartaz nesta requisição (Dano Crítico): não sobrepõe.
+    if (congelado) card = null;
 
-    await this.matches.atualizar(matchId, {
+    const freeze = congelado || !!card;
+    const raiz: Partial<WorMatchEntity> = {
       letrasTentadas,
       mascara,
       cartasVisiveis,
       acoesRodada: [],
       turnoEquipeId: this.proximoTurno(match),
-      rodadaIniciadaEm: new Date().toISOString(),
+      rodadaIniciadaEm: this.inicioDaRodada(freeze),
       resumoRodada: resumo,
-    });
-    await this.refletirPlacar(matchId);
+      placar: this.placarDe(teams),
+    };
+    this.fanOut(raiz, patches, teams, card);
+    await this.matches.commitPartida(matchId, raiz, patches);
     return this.view(matchId);
   }
 
@@ -391,25 +513,31 @@ export class WorGameService {
   /**
    * Usurpação: a Horda `invasora` toma o castelo da equipe de MAIOR HP (o líder),
    * que vira a nova Horda. Sem líder (todos hordas), reergue o próprio com HP cheio.
+   * Aplica os efeitos em memória e devolve o líder deposto (para narrar o card);
+   * quem persiste é o chamador, no mesmo commit do fan-out.
    */
-  private async usurpar(matchId: string, invasora: WorTeamEntity): Promise<void> {
-    const teams = await this.matches.listarTeams(matchId);
+  private usurpar(
+    invasora: WorTeamEntity,
+    teams: WorTeamEntity[],
+    patches: Record<string, Partial<WorTeamEntity>>,
+  ): WorTeamEntity | null {
     const lider = teams
       .filter((t) => t.id !== invasora.id && !t.isHorde && t.hp > 0)
       .sort((a, b) => b.hp - a.hp)[0];
 
     if (!lider) {
-      await this.matches.atualizarTeam(matchId, invasora.id, {
-        hp: WOR.HP_INICIAL,
-        isHorde: false,
-      });
-      return;
+      invasora.hp = WOR.HP_INICIAL;
+      invasora.isHorde = false;
+      patches[invasora.id] = { hp: invasora.hp, isHorde: false };
+      return null;
     }
-    await this.matches.atualizarTeam(matchId, invasora.id, {
-      hp: lider.hp,
-      isHorde: false,
-    });
-    await this.matches.atualizarTeam(matchId, lider.id, { hp: 0, isHorde: true });
+    invasora.hp = lider.hp;
+    invasora.isHorde = false;
+    lider.hp = 0;
+    lider.isHorde = true;
+    patches[invasora.id] = { hp: invasora.hp, isHorde: false };
+    patches[lider.id] = { hp: 0, isHorde: true };
+    return lider;
   }
 
   /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
@@ -422,8 +550,11 @@ export class WorGameService {
     return this.view(matchId);
   }
 
-  /** Avança para a próxima onda (palavra) ou encerra a partida. */
-  async avancarOnda(matchId: string): Promise<void> {
+  /**
+   * Avança para a próxima onda (palavra) ou encerra a partida. Com `congelado`,
+   * a rodada nova já nasce 3s à frente — há um Action Card ainda no ar.
+   */
+  async avancarOnda(matchId: string, congelado = false): Promise<void> {
     const match = await this.carregar(matchId);
     if (match.status === 'ENCERRADO') return; // idempotência (não credita 2x)
     const proximo = match.ondaIndex + 1;
@@ -443,7 +574,7 @@ export class WorGameService {
       totalCartas: palavra.dicas.length,
       acoesRodada: [],
       turnoEquipeId: match.ordemEquipes[0],
-      rodadaIniciadaEm: new Date().toISOString(),
+      rodadaIniciadaEm: this.inicioDaRodada(congelado),
     });
     await this.refletirPlacar(matchId);
   }
