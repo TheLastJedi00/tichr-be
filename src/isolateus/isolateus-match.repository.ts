@@ -48,8 +48,8 @@ export class IsolateusMatchRepository {
   // --- Partida (público) ---
 
   async criar(
-    partida: Omit<IsolateusMatchEntity, 'id'>,
-    segredo: Omit<IsolateusSegredoEntity, 'id' | 'partidaId'>,
+    partida: Partial<IsolateusMatchEntity>,
+    segredo: Partial<IsolateusSegredoEntity>,
   ): Promise<IsolateusMatchEntity> {
     const ref = this.col.doc();
     const batch = this.firebase.firestore.batch();

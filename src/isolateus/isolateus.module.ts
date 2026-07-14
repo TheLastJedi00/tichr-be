@@ -6,6 +6,8 @@ import { IsolateusIaService } from './isolateus-ia.service';
 import { IsolateusJogoController } from './isolateus-jogo.controller';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusJogoService } from './isolateus-jogo.service';
+import { IsolateusMatchRepository } from './isolateus-match.repository';
+import { IsolateusMatchService } from './isolateus-match.service';
 
 /** Módulo independente do Tichr Isolateus (definição + partidas + geração por IA). */
 @Module({
@@ -14,6 +16,8 @@ import { IsolateusJogoService } from './isolateus-jogo.service';
   providers: [
     IsolateusJogoService,
     IsolateusJogoRepository,
+    IsolateusMatchService,
+    IsolateusMatchRepository,
     // GeminiService reprovido localmente (o WorModule não o exporta) + IA do Isolateus.
     GeminiService,
     IsolateusIaService,
