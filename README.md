@@ -48,6 +48,7 @@ npm test               # testes unitários do motor (Jest)
 |---|---|
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
+| `FIREBASE_STORAGE_BUCKET` | Bucket do Storage das fotos de perfil (opcional). Default: `<project_id>.firebasestorage.app`; projetos antigos usam `<project_id>.appspot.com`. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
 | `CORS_ORIGINS` | Origens autorizadas, separadas por vírgula (ex.: `https://tichr.com.br,https://www.tichr.com.br`). **Obrigatória em produção:** o CORS agora usa credenciais (cookie de sessão) e `Allow-Origin: *` é incompatível — sem a env, nenhuma origem passa e o app para. É env, e não constante, porque os *preview deploys* da Vercel mudam de URL a cada branch. Default de dev: `http://localhost:4200`. |
 | `APP_BASE_URL` | URL pública do app (default `https://tichr.com.br`). É o `continueUrl` dos e-mails de confirmação/redefinição — traz o professor de volta depois do clique. O domínio precisa estar nos *authorized domains* do projeto Firebase, senão o link é rejeitado. |
