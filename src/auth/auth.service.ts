@@ -11,6 +11,7 @@ import { DecodedIdToken } from 'firebase-admin/auth';
 import { FirebaseService } from '../firebase/firebase.service';
 import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
+import { comoHttp, signInComSenha, signUpComSenha } from './identity-toolkit';
 
 /** Config de pontuacao exposta ao portal do aluno. */
 export interface TurmaConfigPublica {
@@ -23,11 +24,6 @@ export interface TurmaConfigPublica {
    */
   niveis: { prata: number; ouro: number; diamante: number; platina: number };
 }
-
-const IDENTITY_TOOLKIT_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
-const SIGNUP_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:signUp';
 
 /** Versao vigente dos documentos legais aceitos no cadastro (auditoria LGPD). */
 export const VERSAO_DOCUMENTOS_LEGAIS = 'v1';
@@ -162,42 +158,15 @@ export class AuthService {
         'E preciso aceitar os Termos de Uso e a Politica de Privacidade.',
       );
     }
-    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
-    if (!apiKey) {
-      throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
-    }
+    const apiKey = this.apiKey();
 
-    const response = await fetch(`${SIGNUP_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    });
-
-    const data = (await response.json()) as {
-      idToken?: string;
-      refreshToken?: string;
-      expiresIn?: string;
-      localId?: string;
-      email?: string;
-      error?: { message?: string };
-    };
-
-    if (!response.ok || !data.idToken || !data.localId) {
-      const code = data.error?.message ?? '';
-      if (code === 'EMAIL_EXISTS') {
-        throw new ConflictException('Esse e-mail ja esta cadastrado.');
-      }
-      if (code.startsWith('WEAK_PASSWORD')) {
-        throw new BadRequestException('Senha muito fraca (minimo 6 caracteres).');
-      }
-      throw new BadRequestException('Nao foi possivel criar a conta.');
-    }
+    const tokens = await signUpComSenha(apiKey, email, password).catch(comoHttp);
 
     // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
     const agora = new Date().toISOString();
     await this.firebase.firestore
       .collection('professores')
-      .doc(data.localId)
+      .doc(tokens.uid)
       .set(
         {
           nomeExibicao: nome.trim(),
@@ -210,13 +179,16 @@ export class AuthService {
         { merge: true },
       );
 
-    return {
-      token: data.idToken,
-      refreshToken: data.refreshToken ?? '',
-      expiresIn: Number(data.expiresIn ?? 3600),
-      uid: data.localId,
-      email: data.email ?? email,
-    };
+    return tokens;
+  }
+
+  /** Web API key do projeto; sem ela nenhum fluxo de credencial funciona. */
+  private apiKey(): string {
+    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
+    if (!apiKey) {
+      throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
+    }
+    return apiKey;
   }
 
   async verifyToken(token: string): Promise<DecodedIdToken> {
@@ -232,35 +204,12 @@ export class AuthService {
    * Web API key) e devolve o ID token do Firebase para o cliente usar.
    */
   async login(email: string, password: string): Promise<LoginResult> {
-    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
-    if (!apiKey) {
-      throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
-    }
-
-    const response = await fetch(`${IDENTITY_TOOLKIT_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    });
-
-    const data = (await response.json()) as {
-      idToken?: string;
-      refreshToken?: string;
-      expiresIn?: string;
-      localId?: string;
-      email?: string;
-    };
-
-    if (!response.ok || !data.idToken) {
+    try {
+      return await signInComSenha(this.apiKey(), email, password);
+    } catch (erro) {
+      // Qualquer falha de credencial vira a mesma mensagem: nao entregamos ao
+      // atacante a informacao de qual metade do par estava errada.
       throw new UnauthorizedException('Email ou senha invalidos.');
     }
-
-    return {
-      token: data.idToken,
-      refreshToken: data.refreshToken ?? '',
-      expiresIn: Number(data.expiresIn ?? 3600),
-      uid: data.localId ?? '',
-      email: data.email ?? email,
-    };
   }
 }

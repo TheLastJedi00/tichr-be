@@ -23,7 +23,9 @@ describe('AdminService.excluirPropriaConta', () => {
 
   it('senha correta: reautentica e faz o hard delete da propria conta', async () => {
     const { service, hard } = montar('a@b.com');
-    global.fetch = jest.fn().mockResolvedValue({ ok: true }) as never;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) }) as never;
 
     const res = await service.excluirPropriaConta('uid1', 'certa');
 
