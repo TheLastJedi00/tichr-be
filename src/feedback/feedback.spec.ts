@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { FirebaseService } from '../firebase/firebase.service';
 import { FeedbackEntity } from './entities/feedback.entity';
 import { FeedbackRepository } from './feedback.repository';
@@ -41,10 +42,15 @@ const dto = {
   userAgent: 'Mozilla/5.0',
 };
 
+/** Sem RESEND_API_KEY: o alerta e assunto de `alerta.spec.ts`, nao daqui. */
+function criarService(repo: FeedbackRepository, firebase: FirebaseService): FeedbackService {
+  return new FeedbackService(repo, firebase, { get: () => undefined } as unknown as ConfigService);
+}
+
 describe('FeedbackService.criar', () => {
   it('nasce PENDENTE, com criadoEm ISO do servidor', async () => {
     const { repo, criados } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase({ nomeExibicao: 'Joao' }, 'joao@x.com'));
+    const service = criarService(repo, fakeFirebase({ nomeExibicao: 'Joao' }, 'joao@x.com'));
 
     await service.criar('uid-1', dto);
 
@@ -54,7 +60,7 @@ describe('FeedbackService.criar', () => {
 
   it('preenche identidade a partir do uid, nao do corpo', async () => {
     const { repo, criados } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase({ nomeExibicao: 'Joao' }, 'joao@x.com'));
+    const service = criarService(repo, fakeFirebase({ nomeExibicao: 'Joao' }, 'joao@x.com'));
 
     // O corpo tenta se passar por outro professor; o DTO nem tem esses campos,
     // mas o teste garante que um extra nao seria aproveitado.
@@ -71,7 +77,7 @@ describe('FeedbackService.criar', () => {
 
   it('professor sem nome ou sem e-mail ainda consegue enviar', async () => {
     const { repo, criados } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(undefined, undefined));
+    const service = criarService(repo, fakeFirebase(undefined, undefined));
 
     await service.criar('uid-2', dto);
 
@@ -82,7 +88,7 @@ describe('FeedbackService.criar', () => {
 
   it('nasce sem marca de alerta enviado (quem grava notificadoEm e o disparo)', async () => {
     const { repo, criados } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase({}, undefined));
+    const service = criarService(repo, fakeFirebase({}, undefined));
 
     await service.criar('uid-3', dto);
 

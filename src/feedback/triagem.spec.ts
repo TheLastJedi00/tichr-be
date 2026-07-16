@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FirebaseService } from '../firebase/firebase.service';
 import { FeedbackEntity } from './entities/feedback.entity';
 import { FeedbackRepository } from './feedback.repository';
@@ -37,7 +38,11 @@ function fakeRepo(achado: FeedbackEntity | null) {
 }
 
 function service(repo: FeedbackRepository): FeedbackService {
-  return new FeedbackService(repo, {} as unknown as FirebaseService);
+  return new FeedbackService(
+    repo,
+    {} as unknown as FirebaseService,
+    { get: () => undefined } as unknown as ConfigService,
+  );
 }
 
 describe('FeedbackService.atualizar', () => {

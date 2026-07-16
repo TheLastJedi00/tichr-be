@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { DecodedIdToken } from 'firebase-admin/auth';
+import { appBaseUrl } from '../common/app-url.util';
 import { FirebaseService } from '../firebase/firebase.service';
 import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
@@ -360,9 +361,7 @@ export class AuthService {
 
   /** URL publica do app, para onde os links de e-mail retornam. */
   private appBaseUrl(): string {
-    return (
-      this.config.get<string>('APP_BASE_URL') ?? 'https://tichr.com.br'
-    ).replace(/\/$/, '');
+    return appBaseUrl(this.config);
   }
 
   /**
