@@ -238,8 +238,10 @@ describe('Isolateus — a Quarentena', () => {
 
     expect(partida.pulosRecebidos).toBe(1);
     expect(segredo.pulosDebate).toEqual(['a1']);
-    // A camada pública não carrega nenhum alunoId.
-    expect(JSON.stringify(partida)).not.toContain('a1');
+    // A camada pública não carrega nenhum alunoId. Com as aspas: sem elas, a
+    // busca casa com qualquer UUID que contenha "a1" (ex.: 2f166a17-…), e o
+    // teste falha ao acaso. Mesmo idioma de isolateus-match.spec.
+    expect(JSON.stringify(partida)).not.toContain('"a1"');
   });
 
   it('a vila prende a Ameaça: partida encerrada com vitória da Vila', async () => {

@@ -12,6 +12,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminService } from '../admin/admin.service';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { SemVerificacao } from '../auth/sem-verificacao.decorator';
 import { ExcluirContaDto } from './dto/excluir-conta.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfessorService, ProfessorView } from './professor.service';
@@ -26,6 +27,8 @@ export class ProfessorController {
     private readonly adminService: AdminService,
   ) {}
 
+  /** `@SemVerificacao`: a tela de espera mostra o nome do professor. */
+  @SemVerificacao()
   @Get()
   getProfile(@ProfessorId() uid: string): Promise<ProfessorView> {
     return this.professorService.getProfileView(uid);
@@ -67,7 +70,11 @@ export class ProfessorController {
   /**
    * Auto-exclusão da conta (direito LGPD). Exige a senha para reautenticação e
    * faz o hard delete em cascata (turmas/alunos/jogos + login). Irreversível.
+   *
+   * `@SemVerificacao`: quem não confirmou o e-mail continua podendo apagar a
+   * conta — ninguém pode ficar preso numa conta que não consegue nem excluir.
    */
+  @SemVerificacao()
   @Delete()
   excluirConta(@ProfessorId() uid: string, @Body() dto: ExcluirContaDto) {
     return this.adminService.excluirPropriaConta(uid, dto.senha);

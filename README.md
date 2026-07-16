@@ -49,6 +49,8 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
+| `CORS_ORIGINS` | Origens autorizadas, separadas por vírgula (ex.: `https://tichr.com.br,https://www.tichr.com.br`). **Obrigatória em produção:** o CORS agora usa credenciais (cookie de sessão) e `Allow-Origin: *` é incompatível — sem a env, nenhuma origem passa e o app para. É env, e não constante, porque os *preview deploys* da Vercel mudam de URL a cada branch. Default de dev: `http://localhost:4200`. |
+| `APP_BASE_URL` | URL pública do app (default `https://tichr.com.br`). É o `continueUrl` dos e-mails de confirmação/redefinição — traz o professor de volta depois do clique. O domínio precisa estar nos *authorized domains* do projeto Firebase, senão o link é rejeitado. |
 | `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração por IA do **Tichr Wor** (arsenal) e do **Tichr Qlick** (perguntas); sem ela, criação manual. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
@@ -96,16 +98,61 @@ portal gamificado). O `AuthGuard` **global** aceita os dois tipos de token:
   decorator, o padrão é `PROFESSOR`** — ou seja, todo o painel é protegido por omissão;
   as rotas do aluno declaram `@Roles('STUDENT')` e o ranking `@Roles('PROFESSOR','STUDENT')`.
 - Rotas abertas usam `@Public()`.
+- **Trava de e-mail verificado:** professor com `email_verified: false` recebe
+  **`403 { code: 'EMAIL_NAO_VERIFICADO' }`** em todo o painel. A checagem mora no
+  `canActivate`, **nunca** dentro do `resolveUser` — ali ela cairia no `catch` que tenta
+  o token como sendo de aluno e viraria um 401 genérico, mandando o professor para o
+  `/login` em laço em vez da tela de confirmação. `@SemVerificacao()` abre as exceções
+  de que a tela de espera precisa (status, reenvio, `GET /profile` e `DELETE /profile` —
+  esta última porque ninguém pode ficar preso numa conta que não consegue apagar).
+  Não se aplica ao aluno, que não tem e-mail.
 
 **Login do professor** — o backend é o intermediário: `POST /auth/login` recebe
 email/senha e chama a REST do Identity Toolkit (`accounts:signInWithPassword`) com a
 `FIREBASE_WEB_API_KEY`, devolvendo o ID token do Firebase. O frontend não conhece o
 Firebase — só guarda o token e o envia como `Bearer`.
 
+**Sessão: dois canais.** O **ID token** (~1h) vai no corpo da resposta e o front o manda
+como `Bearer`. O **refresh token** sai num **cookie `HttpOnly`** (`tichr_rt`,
+`SameSite=Lax`, `Path=/auth`, host-only) e **nunca chega ao JavaScript** — se chegasse,
+um XSS o exfiltraria e teria a conta em caráter indefinido; no cookie, o pior caso é o
+ID token de 1h. Isso depende de FE (`tichr.com.br`) e API (`api.tichr.com.br`)
+compartilharem o domínio registrável: são **mesmo site**, e o `Lax` deixa passar.
+Enquanto a API respondia em `tichr-be.vercel.app` era impossível — `vercel.app` está na
+Public Suffix List, o cookie nascia *third-party* e morria no Safari.
+
+- `POST /auth/refresh` troca o cookie por um ID token fresco (Secure Token API — outro
+  host, corpo `form-urlencoded`, resposta em `snake_case`; normalizado no helper). É
+  `@Public()` por definição: o ID token do chamador já expirou.
+- Também é o que traz o `email_verified` atualizado sem novo login, já que a Secure Token
+  API emite a partir do registro **atual** do usuário.
+- Trocar **senha ou e-mail revoga os refresh tokens** no Firebase: o refresh seguinte
+  responde `401 { code: 'SESSAO_EXPIRADA' }`. É o comportamento correto — o front trata
+  como logout limpo, sem modal de erro.
+- `POST /auth/logout` apaga o cookie; precisa existir no servidor porque o front não
+  apaga um `HttpOnly` sozinho.
+
+**CORS** — a lista de origens é **explícita** e vem de `CORS_ORIGINS`:
+`Access-Control-Allow-Origin: *` é incompatível com credenciais. **Sem a env configurada,
+nenhuma origem passa e o app inteiro para.**
+
+**Ciclo de vida do e-mail** — `POST /auth/signup` dispara o `VERIFY_EMAIL` logo após
+provisionar o perfil (*best-effort*: falha no envio não derruba um cadastro que deu
+certo). `GET /auth/verificacao` lê o estado **ao vivo** no Auth (o claim do token fica
+congelado na emissão). `POST /auth/recuperar-senha` responde **sempre** `200
+{ enviado: true }`, mesmo para e-mail inexistente — distinguir os casos entregaria quem
+tem conta no Tichr. `POST /auth/email` usa `VERIFY_AND_CHANGE_EMAIL`, então o e-mail só
+troca quando o link chega na caixa **nova**; o antigo vale até lá.
+
+> **O e-mail não está no Firestore.** Ele vive só no Firebase Auth, e por isso não entra
+> na `ProfessorView`: o `GET /profile` roda em quase toda navegação, e buscá-lo ali
+> imporia um `auth.getUser` a todas elas por causa de uma tela. Fica no `GET /auth/conta`.
+
 **Login do aluno** — alunos não têm e-mail: `POST /auth/aluno` recebe `turmaId` + `PIN`
 (4 dígitos), casa com o Firestore e emite um **JWT próprio** com
 `{ role: 'STUDENT', alunoId, turmaId }` (validade 30 dias). O aluno só enxerga a própria
-turma e o próprio perfil.
+turma e o próprio perfil. **Nada da conta/segurança acima o afeta**: verificação, reset e
+troca de e-mail são exclusivos do professor, e o token do aluno **não se renova**.
 
 ---
 
@@ -317,8 +364,15 @@ Todas as rotas exigem `Authorization: Bearer <idToken>`, exceto as marcadas
 ### Auth
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, refreshToken, expiresIn, uid, email }` |
-| `POST` | `/auth/signup` **(pública)** | `{ nome, email, password, aceiteTermos, aceitePrivacidade }` | `{ token, … }` — **cadastro**: exige o **aceite** dos Termos de Uso e da Política de Privacidade (validado no DTO e no service; 400 sem aceite); cria a conta no Identity Toolkit e provisiona `professores/{uid}` (plano ESTAGIARIO) com `nomeExibicao` + **registro de consentimento LGPD** (`aceiteTermosEm`, `aceitePrivacidadeEm`, `versaoDocumentosLegais`); já devolve o token (409 `EMAIL_EXISTS`) |
+| `POST` | `/auth/login` **(pública)** | `{ email, password }` | `{ token, expiresIn, uid, email }` + **`Set-Cookie: tichr_rt`** (`HttpOnly`). O `refreshToken` **não** vem no corpo — ver [Autenticação](#autenticação) |
+| `POST` | `/auth/signup` **(pública)** | `{ nome, email, password, aceiteTermos, aceitePrivacidade }` | `{ token, … }` + cookie — **cadastro**: exige o **aceite** dos Termos de Uso e da Política de Privacidade (validado no DTO e no service; 400 sem aceite); cria a conta no Identity Toolkit e provisiona `professores/{uid}` (plano ESTAGIARIO) com `nomeExibicao` + **registro de consentimento LGPD** (`aceiteTermosEm`, `aceitePrivacidadeEm`, `versaoDocumentosLegais`); dispara o e-mail de confirmação (*best-effort*) e já devolve o token (409 `EMAIL_EM_USO`) |
+| `POST` | `/auth/refresh` **(pública)** | — (o refresh vem do **cookie**) | `{ token, expiresIn, uid, email }` + cookie reemitido se rotacionou. `401 { code: 'SESSAO_EXPIRADA' }` sem cookie, expirado ou revogado (troca de senha/e-mail revoga) |
+| `POST` | `/auth/logout` **(pública)** | — | `{ ok: true }` — apaga o cookie; o front não apaga um `HttpOnly` sozinho |
+| `POST` | `/auth/recuperar-senha` **(pública)** | `{ email }` | **Sempre** `200 { enviado: true }` — inclusive para e-mail inexistente ou provedor fora do ar. Resposta indistinguível de propósito: distinguir revelaria quem tem conta no Tichr (anti-enumeração) |
+| `GET` | `/auth/verificacao` **(`@SemVerificacao`)** | — | `{ verificado: boolean }` — lido **ao vivo** no Firebase Auth; o claim do ID token fica congelado na emissão e não serve para o *poll* da tela de espera |
+| `POST` | `/auth/verificacao/reenviar` **(`@SemVerificacao`)** | — | `{ enviado: true }` — reenvia a confirmação. `429 { code: 'VERIFICACAO_COOLDOWN' }` no *throttle* do Identity Toolkit |
+| `GET` | `/auth/conta` | — | `{ email, emailVerificado }` — e-mail atual da conta (vive só no Auth, não no Firestore). Endpoint dedicado da página de Segurança |
+| `POST` | `/auth/email` | `{ novoEmail, senha }` | `{ enviado: true, novoEmail }` — reautentica com a senha atual e dispara `VERIFY_AND_CHANGE_EMAIL`: **o e-mail só troca quando o link chega na caixa nova**; o antigo vale até lá. `401 { code: 'SENHA_INVALIDA' }`, `409 { code: 'EMAIL_EM_USO' }`. Ao confirmar, o Firebase revoga a sessão |
 | `POST` | `/auth/aluno` **(pública)** | `{ turmaId, pin }` | `{ token, aluno, turma: { nomePontuacao, rankingAtivo, niveis } }` — JWT de aluno + config da turma (`niveis` = limiares de patente, para o badge do aluno bater com o que o professor configurou) |
 | `GET` | `/auth/turma/:turmaId` **(pública)** | — | `{ turmaId, turmaNome, alunos: [{ id, nome }], config, pinAlunoLength }` — info da tela de login do aluno (`pinAlunoLength` = quantos slots de PIN exibir) |
 | `GET` | `/` **(pública)** | — | health check |

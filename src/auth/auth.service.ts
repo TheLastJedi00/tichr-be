@@ -11,6 +11,13 @@ import { DecodedIdToken } from 'firebase-admin/auth';
 import { FirebaseService } from '../firebase/firebase.service';
 import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
+import {
+  comoHttp,
+  sendOobCode,
+  signInComSenha,
+  signUpComSenha,
+  trocarRefreshToken,
+} from './identity-toolkit';
 
 /** Config de pontuacao exposta ao portal do aluno. */
 export interface TurmaConfigPublica {
@@ -24,20 +31,39 @@ export interface TurmaConfigPublica {
   niveis: { prata: number; ouro: number; diamante: number; platina: number };
 }
 
-const IDENTITY_TOOLKIT_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
-const SIGNUP_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:signUp';
-
 /** Versao vigente dos documentos legais aceitos no cadastro (auditoria LGPD). */
 export const VERSAO_DOCUMENTOS_LEGAIS = 'v1';
 
+/**
+ * Sessao completa, uso interno do controller: ele separa o `refreshToken` (que
+ * vai para o cookie HttpOnly) do resto (que vai no corpo). O `refreshToken`
+ * nunca chega ao cliente como dado — ver `sessao.cookie.ts`.
+ */
 export interface LoginResult {
   token: string;
   refreshToken: string;
   expiresIn: number;
   uid: string;
   email: string;
+}
+
+/**
+ * Dados da conta no Firebase Auth. NAO entra na ProfessorView: o e-mail nao mora
+ * no `professores/{uid}` e o `GET /profile` roda em quase toda navegacao — busca-lo
+ * la imporia um `auth.getUser` a todas elas por causa de uma tela so.
+ */
+export interface ContaAuth {
+  email: string;
+  emailVerificado: boolean;
+}
+
+/** O que o cliente realmente recebe no corpo: tudo menos o refresh. */
+export type SessaoPublica = Omit<LoginResult, 'refreshToken'>;
+
+/** Separa a sessao publica do refresh, que segue por outro canal (cookie). */
+export function semRefresh(r: LoginResult): SessaoPublica {
+  const { refreshToken: _descartado, ...publico } = r;
+  return publico;
 }
 
 export interface LoginAlunoResult {
@@ -80,9 +106,9 @@ export class AuthService {
       .where('turmaId', '==', turmaId)
       .get();
     const pinAlunoLength =
-      (alunosSnap.docs
+      alunosSnap.docs
         .map((d) => d.data().pinAcesso as string | undefined)
-        .find((p) => !!p)?.length) ?? 4;
+        .find((p) => !!p)?.length ?? 4;
     return {
       turmaId,
       turmaNome: (turmaSnap.data()?.nome as string) ?? 'Turma',
@@ -162,61 +188,165 @@ export class AuthService {
         'E preciso aceitar os Termos de Uso e a Politica de Privacidade.',
       );
     }
+    const apiKey = this.apiKey();
+
+    const tokens = await signUpComSenha(apiKey, email, password).catch(
+      comoHttp,
+    );
+
+    // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
+    const agora = new Date().toISOString();
+    await this.firebase.firestore.collection('professores').doc(tokens.uid).set(
+      {
+        nomeExibicao: nome.trim(),
+        planoAtual: 'ESTAGIARIO',
+        slotsAdicionaisComprados: 0,
+        aceiteTermosEm: agora,
+        aceitePrivacidadeEm: agora,
+        versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
+      },
+      { merge: true },
+    );
+
+    // Best-effort: a conta ja existe e a tela de espera tem botao de reenviar,
+    // entao uma falha no envio nao pode derrubar um cadastro bem-sucedido.
+    try {
+      await this.enviarVerificacao(tokens.token);
+    } catch {
+      // silencioso de proposito — ver acima.
+    }
+
+    return tokens;
+  }
+
+  /**
+   * Dispara o e-mail de confirmacao. O `continueUrl` traz o professor de volta
+   * ao app depois do clique; o dominio precisa estar nos authorized domains do
+   * projeto Firebase, senao o link e rejeitado.
+   */
+  async enviarVerificacao(idToken: string): Promise<{ enviado: true }> {
+    await sendOobCode(this.apiKey(), {
+      requestType: 'VERIFY_EMAIL',
+      idToken,
+      continueUrl: `${this.appBaseUrl()}/login`,
+    }).catch(comoHttp);
+    return { enviado: true };
+  }
+
+  /**
+   * Dispara o e-mail de redefinicao de senha.
+   *
+   * ENGOLE TODA FALHA DE PROPOSITO. A resposta e sempre `{ enviado: true }`,
+   * inclusive para e-mail inexistente (`EMAIL_NOT_FOUND`): distinguir os casos
+   * transformaria este endpoint num oraculo de "quem tem conta no Tichr". Quem
+   * chama nao consegue diferenciar sucesso de falha — e esse e o recurso, nao um
+   * bug. Ver o teste de regressao em recuperar-senha.spec.ts.
+   */
+  async recuperarSenha(email: string): Promise<{ enviado: true }> {
+    try {
+      await sendOobCode(this.apiKey(), {
+        requestType: 'PASSWORD_RESET',
+        email,
+        continueUrl: `${this.appBaseUrl()}/login`,
+      });
+    } catch {
+      // silencioso: ver o doc acima.
+    }
+    return { enviado: true };
+  }
+
+  /**
+   * Le o estado de verificacao AO VIVO no Firebase Auth, e nao do claim do token
+   * (que fica congelado na emissao). E o que a tela de espera consulta.
+   */
+  async statusVerificacao(uid: string): Promise<{ verificado: boolean }> {
+    const user = await this.firebase.auth.getUser(uid);
+    return { verificado: user.emailVerified };
+  }
+
+  /** E-mail atual da conta + status, para a pagina de Seguranca. */
+  async conta(uid: string): Promise<ContaAuth> {
+    const user = await this.firebase.auth.getUser(uid);
+    return { email: user.email ?? '', emailVerificado: user.emailVerified };
+  }
+
+  /**
+   * Troca de e-mail em duas etapas.
+   *
+   * Usa VERIFY_AND_CHANGE_EMAIL (o mesmo que o `verifyBeforeUpdateEmail` do SDK
+   * chama por baixo) e nao `accounts:update`: com o update o e-mail trocaria NA
+   * HORA e so depois o antigo seria avisado — aqui a troca so acontece quando o
+   * link chega na caixa NOVA, e o endereco antigo continua valendo ate la.
+   *
+   * Reautentica antes, como manda a operacao sensivel (mesmo padrao do
+   * `excluirPropriaConta`). Quando o professor confirmar, o Firebase revoga os
+   * refresh tokens e a sessao cai — comportamento correto e avisado na UI.
+   */
+  async trocarEmail(
+    uid: string,
+    idToken: string,
+    novoEmail: string,
+    senha: string,
+  ): Promise<{ enviado: true; novoEmail: string }> {
+    const user = await this.firebase.auth.getUser(uid);
+    if (!user.email) {
+      throw new BadRequestException('Usuario sem e-mail cadastrado.');
+    }
+
+    const apiKey = this.apiKey();
+
+    try {
+      await signInComSenha(apiKey, user.email, senha, false);
+    } catch {
+      throw new UnauthorizedException({
+        code: 'SENHA_INVALIDA',
+        message: 'Senha incorreta. O e-mail nao foi alterado.',
+      });
+    }
+
+    await sendOobCode(apiKey, {
+      requestType: 'VERIFY_AND_CHANGE_EMAIL',
+      idToken,
+      newEmail: novoEmail,
+      continueUrl: `${this.appBaseUrl()}/login`,
+    }).catch(comoHttp);
+
+    return { enviado: true, novoEmail };
+  }
+
+  /** Web API key do projeto; sem ela nenhum fluxo de credencial funciona. */
+  private apiKey(): string {
     const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
     if (!apiKey) {
       throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
     }
+    return apiKey;
+  }
 
-    const response = await fetch(`${SIGNUP_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    });
+  /** URL publica do app, para onde os links de e-mail retornam. */
+  private appBaseUrl(): string {
+    return (
+      this.config.get<string>('APP_BASE_URL') ?? 'https://tichr.com.br'
+    ).replace(/\/$/, '');
+  }
 
-    const data = (await response.json()) as {
-      idToken?: string;
-      refreshToken?: string;
-      expiresIn?: string;
-      localId?: string;
-      email?: string;
-      error?: { message?: string };
-    };
-
-    if (!response.ok || !data.idToken || !data.localId) {
-      const code = data.error?.message ?? '';
-      if (code === 'EMAIL_EXISTS') {
-        throw new ConflictException('Esse e-mail ja esta cadastrado.');
-      }
-      if (code.startsWith('WEAK_PASSWORD')) {
-        throw new BadRequestException('Senha muito fraca (minimo 6 caracteres).');
-      }
-      throw new BadRequestException('Nao foi possivel criar a conta.');
+  /**
+   * Troca o refresh token por um ID token fresco. E o que mantem o professor
+   * logado alem da ~1h do ID token — e tambem o que faz o `email_verified`
+   * atualizado chegar ao cliente sem exigir novo login: a Secure Token API emite
+   * a partir do registro ATUAL do usuario.
+   *
+   * O Firebase revoga os refresh tokens quando a senha ou o e-mail mudam, entao
+   * SESSAO_EXPIRADA aqui e o caminho normal de quem trocou credencial — nao e falha.
+   */
+  async refresh(refreshToken: string): Promise<LoginResult> {
+    if (!refreshToken) {
+      throw new UnauthorizedException({
+        code: 'SESSAO_EXPIRADA',
+        message: 'Sessao expirada. Entre novamente.',
+      });
     }
-
-    // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
-    const agora = new Date().toISOString();
-    await this.firebase.firestore
-      .collection('professores')
-      .doc(data.localId)
-      .set(
-        {
-          nomeExibicao: nome.trim(),
-          planoAtual: 'ESTAGIARIO',
-          slotsAdicionaisComprados: 0,
-          aceiteTermosEm: agora,
-          aceitePrivacidadeEm: agora,
-          versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
-        },
-        { merge: true },
-      );
-
-    return {
-      token: data.idToken,
-      refreshToken: data.refreshToken ?? '',
-      expiresIn: Number(data.expiresIn ?? 3600),
-      uid: data.localId,
-      email: data.email ?? email,
-    };
+    return trocarRefreshToken(this.apiKey(), refreshToken).catch(comoHttp);
   }
 
   async verifyToken(token: string): Promise<DecodedIdToken> {
@@ -232,35 +362,12 @@ export class AuthService {
    * Web API key) e devolve o ID token do Firebase para o cliente usar.
    */
   async login(email: string, password: string): Promise<LoginResult> {
-    const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
-    if (!apiKey) {
-      throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
-    }
-
-    const response = await fetch(`${IDENTITY_TOOLKIT_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    });
-
-    const data = (await response.json()) as {
-      idToken?: string;
-      refreshToken?: string;
-      expiresIn?: string;
-      localId?: string;
-      email?: string;
-    };
-
-    if (!response.ok || !data.idToken) {
+    try {
+      return await signInComSenha(this.apiKey(), email, password);
+    } catch (erro) {
+      // Qualquer falha de credencial vira a mesma mensagem: nao entregamos ao
+      // atacante a informacao de qual metade do par estava errada.
       throw new UnauthorizedException('Email ou senha invalidos.');
     }
-
-    return {
-      token: data.idToken,
-      refreshToken: data.refreshToken ?? '',
-      expiresIn: Number(data.expiresIn ?? 3600),
-      uid: data.localId ?? '',
-      email: data.email ?? email,
-    };
   }
 }

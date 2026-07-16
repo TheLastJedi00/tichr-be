@@ -12,11 +12,7 @@ import {
   ProfessorEntity,
 } from '../professor/entities/professor.entity';
 import { TurmaEntity } from '../turma/entities/turma.entity';
-
-const SEND_OOB_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode';
-const SIGN_IN_URL =
-  'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
+import { sendOobCode, signInComSenha } from '../auth/identity-toolkit';
 
 /** Visao geral do negocio (dashboard do backoffice). */
 export interface AdminMetrics {
@@ -181,12 +177,12 @@ export class AdminService {
     const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
     if (!apiKey) throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
 
-    const res = await fetch(`${SEND_OOB_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestType: 'PASSWORD_RESET', email: user.email }),
-    });
-    if (!res.ok) {
+    try {
+      await sendOobCode(apiKey, {
+        requestType: 'PASSWORD_RESET',
+        email: user.email,
+      });
+    } catch {
       throw new BadRequestException('Falha ao enviar o e-mail de redefinicao.');
     }
     return { email: user.email, enviado: true };
@@ -247,16 +243,9 @@ export class AdminService {
     const apiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
     if (!apiKey) throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
 
-    const res = await fetch(`${SIGN_IN_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: user.email,
-        password: senha,
-        returnSecureToken: false,
-      }),
-    });
-    if (!res.ok) {
+    try {
+      await signInComSenha(apiKey, user.email, senha, false);
+    } catch {
       throw new UnauthorizedException({
         code: 'SENHA_INVALIDA',
         message: 'Senha incorreta. A conta nao foi excluida.',
