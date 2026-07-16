@@ -77,9 +77,10 @@ export class IsolateusMatchService {
         rumores: [],
         debate: [],
         resumoRodada: null,
-        quarentenaUsada: false,
+        quarentenaRodada: null,
         vereditoQuarentena: null,
         votosRecebidos: 0,
+        pulosRecebidos: 0,
         inscritos: [],
         veredito: null,
         rankingFinal: [],
@@ -88,6 +89,7 @@ export class IsolateusMatchService {
         alienAlunoId: '',
         vinculos: [],
         acaoRodada: null,
+        pulosDebate: [],
         pontos: {},
       },
     );
@@ -164,6 +166,20 @@ export class IsolateusMatchService {
       throw new BadRequestException('A investigação já começou.');
     }
 
+    const nome = this.validarPseudonimo(partida, alunoId, pseudonimo);
+    const inscritos = partida.inscritos.filter((i) => i.alunoId !== alunoId);
+    inscritos.push({ alunoId, nome });
+    partida.inscritos = inscritos;
+    await this.matches.commitPartida(partidaId, { inscritos });
+    return partida;
+  }
+
+  /** Normaliza o pseudônimo e recusa nome curto ou já adotado por outro. */
+  private validarPseudonimo(
+    partida: IsolateusMatchEntity,
+    alunoId: string,
+    pseudonimo: string,
+  ): string {
     const nome = pseudonimo.trim().slice(0, 24);
     if (nome.length < 2) {
       throw new BadRequestException('Escolha um nome de personagem válido.');
@@ -179,9 +195,35 @@ export class IsolateusMatchService {
         message: 'Outro habitante já adotou esse nome. Escolha outro.',
       });
     }
+    return nome;
+  }
 
-    const inscritos = partida.inscritos.filter((i) => i.alunoId !== alunoId);
-    inscritos.push({ alunoId, nome });
+  /**
+   * O Comando Central corrige o pseudônimo de um aluno (apelido impróprio,
+   * confuso ou duplicado) sem expulsá-lo do lobby, como o veto faz.
+   *
+   * Só no LOBBY: ao iniciar, `inscritos` é apagado de propósito — o vínculo
+   * aluno↔pseudônimo denunciaria quem é NPC (§11.3). Depois do Despertar, o
+   * professor nem sabe mais quem é quem, e é assim que tem que ser.
+   */
+  async renomearInscrito(
+    professorId: string,
+    partidaId: string,
+    alunoId: string,
+    pseudonimo: string,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    if (partida.status !== 'LOBBY') {
+      throw new BadRequestException('A investigação já começou.');
+    }
+    if (!partida.inscritos.some((i) => i.alunoId === alunoId)) {
+      throw new NotFoundException('Esse habitante não está no lobby.');
+    }
+
+    const nome = this.validarPseudonimo(partida, alunoId, pseudonimo);
+    const inscritos = partida.inscritos.map((i) =>
+      i.alunoId === alunoId ? { ...i, nome } : i,
+    );
     partida.inscritos = inscritos;
     await this.matches.commitPartida(partidaId, { inscritos });
     return partida;

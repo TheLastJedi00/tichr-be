@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -99,6 +99,45 @@ describe('Isolateus — lobby e Despertar', () => {
     await povoar(service, p.id, 2);
     await service.vetarNome('prof', p.id, 'a1');
     expect(partidas.get(p.id)!.inscritos.map((i) => i.alunoId)).toEqual(['a2']);
+  });
+
+  it('o professor troca o apelido do aluno sem tirá-lo do lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 2);
+    await service.renomearInscrito('prof', p.id, 'a1', '  Corvo  ');
+    expect(partidas.get(p.id)!.inscritos).toEqual([
+      { alunoId: 'a1', nome: 'Corvo' }, // aparado, e o aluno continua inscrito
+      { alunoId: 'a2', nome: 'Habitante 2' },
+    ]);
+  });
+
+  it('renomear recusa nome já adotado por outro habitante', async () => {
+    const { service } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 2);
+    await expect(
+      service.renomearInscrito('prof', p.id, 'a1', 'habitante 2'),
+    ).rejects.toMatchObject({ response: { code: 'NOME_EM_USO' } });
+  });
+
+  it('renomear é de quem é dono da partida, e só no lobby', async () => {
+    const { service } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+
+    await expect(
+      service.renomearInscrito('outro-prof', p.id, 'a1', 'Corvo'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.renomearInscrito('prof', p.id, 'fantasma', 'Corvo'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // Depois do Despertar o vínculo aluno↔pseudônimo é apagado: não há o que renomear.
+    await service.iniciar('prof', p.id);
+    await expect(
+      service.renomearInscrito('prof', p.id, 'a1', 'Corvo'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('não inicia com menos de 4 investigadores reais', async () => {

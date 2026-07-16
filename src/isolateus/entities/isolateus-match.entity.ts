@@ -150,11 +150,17 @@ export class IsolateusMatchEntity {
   debate: MensagemDebate[];
   resumoRodada: ResumoRodada | null;
 
-  /** A Quarentena é única por partida (uma convocação). */
-  quarentenaUsada: boolean;
+  /**
+   * Rodada da última Quarentena convocada (null = nenhuma ainda). A vila pode
+   * convocar uma por rodada: sempre depois da noite, nunca duas vezes seguidas
+   * na mesma — prender em série até acertar trivializaria a dedução.
+   */
+  quarentenaRodada: number | null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;
+  /** Quantos já pularam o debate (contagem apenas — quem pulou é segredo). */
+  pulosRecebidos: number;
 
   /**
    * Pseudônimos do lobby. **Apagado ao iniciar**: mantê-lo permitiria casar os

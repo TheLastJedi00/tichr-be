@@ -48,9 +48,10 @@ function cenario(opts: { reais?: number; npcs?: number } = {}) {
     rumores: [],
     debate: [],
     resumoRodada: null,
-    quarentenaUsada: false,
+    quarentenaRodada: null,
     vereditoQuarentena: null,
     votosRecebidos: 0,
+    pulosRecebidos: 0,
     inscritos: [],
     veredito: null,
     rankingFinal: [],
@@ -62,10 +63,12 @@ function cenario(opts: { reais?: number; npcs?: number } = {}) {
     alienAlunoId: 'a1',
     vinculos,
     acaoRodada: null,
+    pulosDebate: [],
     pontos: {},
   });
 
-  const votos: Array<{ alunoId: string; suspeitoId: string }> = [];
+  // Os votos são por rodada: o fake guarda a rodada e filtra, como o Firestore.
+  const votos: Array<{ rodada: number; alunoId: string; suspeitoId: string }> = [];
   const repo = {
     buscar: jest.fn(async () => partida),
     buscarSegredo: jest.fn(async () => segredo),
@@ -73,12 +76,18 @@ function cenario(opts: { reais?: number; npcs?: number } = {}) {
       Object.assign(partida, publico);
       Object.assign(segredo, seg);
     }),
-    registrarVoto: jest.fn(async (_id, alunoId: string, suspeitoId: string) => {
-      if (votos.some((v) => v.alunoId === alunoId)) return false;
-      votos.push({ alunoId, suspeitoId });
-      return true;
-    }),
-    lerVotos: jest.fn(async () => votos),
+    registrarVoto: jest.fn(
+      async (_id, rodada: number, alunoId: string, suspeitoId: string) => {
+        if (votos.some((v) => v.rodada === rodada && v.alunoId === alunoId)) {
+          return false;
+        }
+        votos.push({ rodada, alunoId, suspeitoId });
+        return true;
+      },
+    ),
+    lerVotos: jest.fn(async (_id, rodada: number) =>
+      votos.filter((v) => v.rodada === rodada),
+    ),
     lerRespostas: jest.fn(async () => []),
   } as unknown as IsolateusMatchRepository;
 
@@ -106,12 +115,12 @@ describe('Isolateus — a Quarentena', () => {
     await service.convocarQuarentena('p1', { alunoId: 'a2' });
 
     expect(partida.status).toBe('QUARENTENA_DEBATE');
-    expect(partida.quarentenaUsada).toBe(true);
+    expect(partida.quarentenaRodada).toBe(partida.rodada);
     expect(partida.faseIniciadaEm).not.toBeNull();
     expect(partida.debate.length).toBeGreaterThan(0); // os NPCs já acusam
   });
 
-  it('é única por partida — a vila não prende todo mundo por tentativa e erro', async () => {
+  it('é uma por rodada — a vila não encadeia convocações na mesma rodada', async () => {
     const { service, partida } = cenario();
     await service.convocarQuarentena('p1', { alunoId: 'a2' });
     partida.status = 'RESULTADO_RODADA'; // voltou de um veredito de inocente
@@ -119,6 +128,38 @@ describe('Isolateus — a Quarentena', () => {
     await expect(
       service.convocarQuarentena('p1', { alunoId: 'a3' }),
     ).rejects.toMatchObject({ response: { code: 'QUARENTENA_USADA' } });
+  });
+
+  it('a opção volta na rodada seguinte — a Quarentena não é única por partida', async () => {
+    const { service, partida } = cenario();
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    partida.status = 'RESULTADO_RODADA';
+    partida.rodada = 1; // a noite passou
+
+    await service.convocarQuarentena('p1', { alunoId: 'a3' });
+    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    expect(partida.quarentenaRodada).toBe(1);
+    expect(partida.vereditoQuarentena).toBeNull(); // nasce limpa
+  });
+
+  it('os votos são por rodada: a Quarentena nova não reaproveita os votos da anterior', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    partida.status = 'QUARENTENA_VOTO';
+    await service.votarSuspeito('a2', 'p1', 'h3');
+    expect(partida.votosRecebidos).toBe(1);
+
+    partida.status = 'RESULTADO_RODADA';
+    partida.rodada = 1;
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    expect(partida.votosRecebidos).toBe(0);
+
+    // O mesmo aluno vota de novo: na rodada nova, o voto antigo não o trava.
+    partida.status = 'QUARENTENA_VOTO';
+    await expect(service.votarSuspeito('a2', 'p1', 'h4')).resolves.toEqual({
+      registrado: true,
+    });
+    expect(partida.votosRecebidos).toBe(1);
   });
 
   it('quem saiu da vila não convoca, não debate e não vota', async () => {
@@ -147,6 +188,58 @@ describe('Isolateus — a Quarentena', () => {
     for (const msg of partida.debate) {
       expect(alunoIds).not.toContain(msg.autorNome);
     }
+  });
+
+  it('pular o debate: só abre a votação quando TODOS os reais na vila pulam', async () => {
+    const { service, partida } = cenario({ reais: 3, npcs: 2 });
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+
+    await service.pularDebate('a1', 'p1');
+    expect(partida.pulosRecebidos).toBe(1);
+    expect(partida.status).toBe('QUARENTENA_DEBATE'); // os NPCs não contam
+
+    await service.pularDebate('a2', 'p1');
+    expect(partida.status).toBe('QUARENTENA_DEBATE');
+
+    await service.pularDebate('a3', 'p1');
+    expect(partida.pulosRecebidos).toBe(3);
+    expect(partida.status).toBe('QUARENTENA_VOTO'); // avanço rápido
+  });
+
+  it('pular duas vezes não conta dobrado nem antecipa a votação', async () => {
+    const { service, partida } = cenario({ reais: 2 });
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+
+    await service.pularDebate('a1', 'p1');
+    await service.pularDebate('a1', 'p1');
+    expect(partida.pulosRecebidos).toBe(1);
+    expect(partida.status).toBe('QUARENTENA_DEBATE');
+  });
+
+  it('quem saiu da vila não conta para o pulo — a votação abre sem ele', async () => {
+    const { service, partida } = cenario({ reais: 3 });
+    partida.habitantes.find((h) => h.id === 'h3')!.vivo = false; // abduzido
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+
+    await expect(service.pularDebate('a3', 'p1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    // Os 2 que sobraram bastam: o abduzido não entra na conta.
+    await service.pularDebate('a1', 'p1');
+    await service.pularDebate('a2', 'p1');
+    expect(partida.pulosRecebidos).toBe(2);
+    expect(partida.status).toBe('QUARENTENA_VOTO');
+  });
+
+  it('a contagem de pulos não denuncia quem pulou (a lista fica no cofre)', async () => {
+    const { service, partida, segredo } = cenario({ reais: 2 });
+    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    await service.pularDebate('a1', 'p1');
+
+    expect(partida.pulosRecebidos).toBe(1);
+    expect(segredo.pulosDebate).toEqual(['a1']);
+    // A camada pública não carrega nenhum alunoId.
+    expect(JSON.stringify(partida)).not.toContain('a1');
   });
 
   it('a vila prende a Ameaça: partida encerrada com vitória da Vila', async () => {

@@ -153,27 +153,33 @@ export class IsolateusMatchRepository {
       }));
   }
 
-  // --- Votos da Quarentena (um por aluno; a Quarentena é única) ---
+  // --- Votos da Quarentena (um por aluno POR RODADA; doc-id determinístico) ---
 
-  /** Registra o voto; `false` se o aluno já havia votado. */
+  /** Registra o voto; `false` se o aluno já havia votado nesta rodada. */
   async registrarVoto(
     partidaId: string,
+    rodada: number,
     alunoId: string,
     suspeitoId: string,
   ): Promise<boolean> {
-    const ref = this.votos.doc(`${partidaId}_${alunoId}`);
+    const ref = this.votos.doc(`${partidaId}_${rodada}_${alunoId}`);
     if ((await ref.get()).exists) return false;
-    await ref.set({ partidaId, alunoId, suspeitoId });
+    await ref.set({ partidaId, rodada, alunoId, suspeitoId });
     return true;
   }
 
+  /** Votos de uma rodada (query só por partidaId; filtra a rodada em memória). */
   async lerVotos(
     partidaId: string,
+    rodada: number,
   ): Promise<Array<{ alunoId: string; suspeitoId: string }>> {
     const snap = await this.votos.where('partidaId', '==', partidaId).get();
-    return snap.docs.map((d) => ({
-      alunoId: d.data().alunoId as string,
-      suspeitoId: d.data().suspeitoId as string,
-    }));
+    return snap.docs
+      .map((d) => d.data())
+      .filter((v) => v.rodada === rodada)
+      .map((v) => ({
+        alunoId: v.alunoId as string,
+        suspeitoId: v.suspeitoId as string,
+      }));
   }
 }

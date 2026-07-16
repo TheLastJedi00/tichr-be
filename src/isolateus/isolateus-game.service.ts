@@ -618,9 +618,10 @@ export class IsolateusGameService {
    * Convoca a Reunião de Investigação. Pode partir de **qualquer habitante real
    * vivo** (o botão vermelho entre as rodadas) ou do professor, pelo telão.
    *
-   * É **única por partida**: sem esse limite, a vila prenderia todo mundo por
-   * tentativa e erro até achar a Ameaça, e a dedução perderia o sentido. Aqui,
-   * acusar custa caro — errar tira 20 de Esperança.
+   * É **uma por rodada**: a opção volta sempre que a noite passa, mas a vila não
+   * pode encadear convocações dentro da mesma rodada — prender todo mundo por
+   * tentativa e erro faria a dedução perder o sentido. Acusar custa caro de
+   * qualquer forma: errar tira 20 de Esperança.
    */
   async convocarQuarentena(
     partidaId: string,
@@ -642,22 +643,26 @@ export class IsolateusGameService {
         'A Quarentena só pode ser convocada entre as rodadas.',
       );
     }
-    if (partida.quarentenaUsada) {
+    if (partida.quarentenaRodada === partida.rodada) {
       throw new BadRequestException({
         code: 'QUARENTENA_USADA',
-        message: 'A vila só entra em Quarentena uma vez.',
+        message: 'A vila já entrou em Quarentena nesta rodada.',
       });
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'QUARENTENA_DEBATE',
-      quarentenaUsada: true,
+      quarentenaRodada: partida.rodada,
       faseIniciadaEm: new Date().toISOString(),
       debate: this.semearDebate(partida, segredo),
+      // A Quarentena nova nasce limpa: veredito, votos e pulos são por rodada.
+      vereditoQuarentena: null,
       votosRecebidos: 0,
+      pulosRecebidos: 0,
     };
     Object.assign(partida, dados);
-    await this.matches.commitPartida(partidaId, dados);
+    segredo.pulosDebate = [];
+    await this.matches.commitPartida(partidaId, dados, { pulosDebate: [] });
     return partida;
   }
 
@@ -703,6 +708,41 @@ export class IsolateusGameService {
     return partida;
   }
 
+  /**
+   * Avanço Rápido do debate: quem já se decidiu abre mão do papo. Quando TODOS os
+   * habitantes reais na vila pulam, a votação abre na hora — ninguém fica olhando
+   * um cronômetro que não serve mais a ninguém.
+   *
+   * Idempotente: pular duas vezes não conta dobrado.
+   */
+  async pularDebate(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.status !== 'QUARENTENA_DEBATE') {
+      throw new BadRequestException('O debate não está aberto.');
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Quem saiu da vila não debate.');
+    }
+
+    const pulos = [...new Set([...(segredo.pulosDebate ?? []), alunoId])];
+    partida.pulosRecebidos = pulos.length;
+    segredo.pulosDebate = pulos;
+    await this.matches.commitPartida(
+      partidaId,
+      { pulosRecebidos: pulos.length },
+      { pulosDebate: pulos },
+    );
+
+    if (pulos.length >= this.reaisNaVila(partida, segredo).length) {
+      return this.abrirVotacao(partida);
+    }
+    return partida;
+  }
+
   /** Fim do debate: o teclado trava e a vila deposita seus votos. */
   private async abrirVotacao(
     partida: IsolateusMatchEntity,
@@ -736,6 +776,7 @@ export class IsolateusGameService {
 
     const registrado = await this.matches.registrarVoto(
       partidaId,
+      partida.rodada,
       alunoId,
       suspeitoId,
     );
@@ -743,7 +784,7 @@ export class IsolateusGameService {
       return { registrado: false };
     }
 
-    const votos = await this.matches.lerVotos(partidaId);
+    const votos = await this.matches.lerVotos(partidaId, partida.rodada);
     const votantes = this.reaisNaVila(partida, segredo);
     partida.votosRecebidos = votos.length;
     await this.matches.commitPartida(partidaId, {
@@ -770,7 +811,7 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
     const candidatos = partida.vivos;
-    const votos = await this.matches.lerVotos(partida.id);
+    const votos = await this.matches.lerVotos(partida.id, partida.rodada);
 
     const votosReais = new Array<number>(candidatos.length).fill(0);
     for (const v of votos) {

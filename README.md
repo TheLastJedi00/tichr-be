@@ -875,12 +875,16 @@ nem em payload de resposta.
   (`id` **opaco/UUID**, `nome`, `vivo`, `preso` — **sem marca de NPC**), `rodada`,
   `totalRodadas`, `duracaoSegundos`, `faseIniciadaEm`, `questaoPublica` (**sem** a correta),
   `corretaIndex` (só em `RESULTADO_RODADA`), `alerta`, `rumores[]`, `debate[]`,
-  `resumoRodada`, `quarentenaUsada`, `vereditoQuarentena`, `votosRecebidos`,
+  `resumoRodada`, `quarentenaRodada` (rodada da última Quarentena; cabe uma por
+  rodada), `vereditoQuarentena`, `votosRecebidos`, `pulosRecebidos` (**só a
+  contagem** — quem pulou o debate mora no cofre),
   `inscritos[]` (**esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
 - **`isolateus_segredos`** (o **cofre**, deny-all): `alienAlunoId`, `vinculos[]`
-  (`habitanteId` → `alunoId`; sem `alunoId` = NPC), `acaoRodada`, `pontos{}`.
+  (`habitanteId` → `alunoId`; sem `alunoId` = NPC), `acaoRodada`, `pulosDebate[]`
+  (quem pulou o debate — a lista denunciaria quem é real), `pontos{}`.
 - **`isolateus_respostas`** / **`isolateus_votos`** (deny-all): doc-id determinístico
-  (`{partidaId}_{rodada}_{alunoId}` / `{partidaId}_{alunoId}`) = idempotência.
+  (`{partidaId}_{rodada}_{alunoId}` nos dois) = idempotência **por rodada** — é o
+  que permite uma Quarentena nova sem reaproveitar os votos da anterior.
 
 Partida e cofre são gravados no **mesmo `WriteBatch`** (`commitPartida`) — a vila nunca
 vê um alerta cuja ação ainda não foi registrada, nem o contrário.
@@ -900,6 +904,9 @@ com desvio opcional para `QUARENTENA_DEBATE → QUARENTENA_VOTO` e saída em `EN
 - `POST /isolateus/jogos/:jogoId/partida` — cria no `LOBBY`.
 - `GET /isolateus/matches/:id`
 - `POST /isolateus/matches/:id/vetar/:alunoId` — auditoria do pseudônimo (aprovar é implícito).
+- `POST /isolateus/matches/:id/renomear/:alunoId` — corrige o apelido **sem** tirar o aluno do lobby
+  (`{ pseudonimo }`; mesma checagem de colisão do `entrar`). **Só no `LOBBY`**: ao iniciar, o vínculo
+  aluno↔pseudônimo é apagado de propósito, e nem o professor pode desfazê-lo.
 - `POST /isolateus/matches/:id/iniciar` — **o Despertar**: preenche a vila com NPCs e sorteia a Ameaça.
 - `POST /isolateus/matches/:id/tempo` — o telão fecha a fase cronometrada (**não há timer no servidor**;
   o servidor revalida o prazo com margem de 2s).
@@ -915,7 +922,9 @@ com desvio opcional para `QUARENTENA_DEBATE → QUARENTENA_VOTO` e saída em `EN
 - `POST /aluno/isolateus/:id/resposta` — a defesa. **Abduzidos e presos continuam pontuando.**
 - `POST /aluno/isolateus/:id/rumor` — o rumor forjado da Ameaça (1×/noite, sob nome de NPC).
 - `POST /aluno/isolateus/:id/sinal` — o Sinal de Rádio anônimo de quem saiu da vila.
-- `POST /aluno/isolateus/:id/quarentena` · `/debate` · `/suspeito`
+- `POST /aluno/isolateus/:id/quarentena` · `/debate` · `/pular-debate` · `/suspeito`
+  — `/pular-debate` é o avanço rápido do chat: idempotente, publica só a **contagem**
+  (`pulosRecebidos`) e abre a votação quando todos os reais na vila já pularam.
 
 ### Regras (constantes em `ISOLATEUS`, ajustáveis)
 
@@ -928,9 +937,11 @@ Esperança em 0 = vitória da Ameaça.
 **Apuração:** votam os reais na vila + os NPCs (aleatório). No empate vale o **Instinto Humano** —
 ganha a alternativa mais votada pelos **reais**; persistindo, a de menor índice (determinístico).
 
-**Quarentena:** única por partida, convocada por qualquer real vivo ou pelo professor.
-Debate **90s** → votação **60s** (com avanço rápido no consenso). Prendeu a Ameaça → Vila vence;
-prendeu inocente → −20 de Esperança e **a identidade do preso permanece em segredo**.
+**Quarentena:** **uma por rodada** (a opção volta a cada noite), convocada por qualquer real vivo
+ou pelo professor. Debate **90s** → votação **60s**, os dois com avanço rápido: no debate, quando
+todos os reais na vila pulam (`POST /aluno/isolateus/:id/pular-debate`); na votação, no consenso.
+Prendeu a Ameaça → Vila vence; prendeu inocente → −20 de Esperança e **a identidade do preso
+permanece em segredo**.
 
 **Fim por esgotamento das questões (§8):** a **Ameaça é avaliada primeiro** (abduziu mais da metade
 da população **ou** destruiu mais de 3 setores); só então a Vila (mais de 3 setores intactos **ou**
