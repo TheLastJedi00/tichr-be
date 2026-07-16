@@ -73,6 +73,7 @@ function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
   const match = new WorMatchEntity({
     id: 'm1',
     jogoId: 'j1',
+    professorId: 'p1',
     status: 'EM_ANDAMENTO',
     ondaIndex: 0,
     totalOndas: 2,
@@ -88,7 +89,7 @@ function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
   return { service, match, teams, creditos };
 }
 
-const time = (id: string, membros: string[], hp = WOR.HP_INICIAL, isHorde = false) =>
+const time = (id: string, membros: string[], hp: number = WOR.HP_INICIAL, isHorde = false) =>
   new WorTeamEntity({
     id,
     hp,
@@ -173,6 +174,39 @@ describe('WorGameService — rodada por membros', () => {
     expect(teams[0].hp).toBe(Math.min(WOR.HP_INICIAL, 500 + WOR.CURA_MASSIVA)); // 900
     expect(match.ondaIndex).toBe(1);
     expect(match.mascara).toEqual(['_', '_', '_']); // REI mascarada
+  });
+
+  it('palavra decifrada: a onda nova começa na PRÓXIMA equipe, não na primeira', async () => {
+    const teams = [time('equipe-1', ['a1', 'a2', 'a3', 'a4']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'equipe-2');
+    await service.chutarLetra('a3', 'm1', 'T', 'ATACAR', 'equipe-2');
+    await service.chutarLetra('a4', 'm1', 'E', 'ATACAR', 'equipe-2'); // completa ARTE
+    expect(match.ondaIndex).toBe(1);
+    expect(match.turnoEquipeId).toBe('equipe-2');
+  });
+
+  it('arriscar certo: a onda nova começa na próxima equipe', async () => {
+    const teams = [time('equipe-1', ['a1'], 500), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    await service.arriscar('a1', 'm1', 'arte');
+    expect(match.turnoEquipeId).toBe('equipe-2');
+  });
+
+  it('o rodízio dá a volta: a última equipe encerra a onda e o turno volta à primeira', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'], 500)];
+    const { service, match } = cenario(teams, 'equipe-2');
+    await service.arriscar('b1', 'm1', 'arte');
+    expect(match.turnoEquipeId).toBe('equipe-1');
+  });
+
+  it('mestre pula a palavra: a equipe da vez não perde o turno', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams, 'equipe-2');
+    await service.pularPalavra('p1', 'm1');
+    expect(match.ondaIndex).toBe(1);
+    expect(match.turnoEquipeId).toBe('equipe-2');
   });
 
   it('arriscar errado: Dano Crítico no próprio castelo + passa o turno', async () => {

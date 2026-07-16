@@ -546,15 +546,22 @@ export class WorGameService {
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }
-    await this.avancarOnda(matchId);
+    // Pular não consome a rodada: a equipe da vez segue com o turno na palavra nova.
+    await this.avancarOnda(matchId, false, true);
     return this.view(matchId);
   }
 
   /**
    * Avança para a próxima onda (palavra) ou encerra a partida. Com `congelado`,
-   * a rodada nova já nasce 3s à frente — há um Action Card ainda no ar.
+   * a rodada nova já nasce 3s à frente — há um Action Card ainda no ar. Com
+   * `manterTurno`, a equipe da vez continua na onda nova (ninguém jogou a
+   * rodada — é o caso do mestre pulando a palavra).
    */
-  async avancarOnda(matchId: string, congelado = false): Promise<void> {
+  async avancarOnda(
+    matchId: string,
+    congelado = false,
+    manterTurno = false,
+  ): Promise<void> {
     const match = await this.carregar(matchId);
     if (match.status === 'ENCERRADO') return; // idempotência (não credita 2x)
     const proximo = match.ondaIndex + 1;
@@ -573,7 +580,11 @@ export class WorGameService {
       cartasVisiveis: palavra.dicas.slice(0, 1),
       totalCartas: palavra.dicas.length,
       acoesRodada: [],
-      turnoEquipeId: match.ordemEquipes[0],
+      // O rodízio continua de onde parou: a onda nova começa na PRÓXIMA equipe,
+      // não na primeira. `match` ainda traz o turno de quem acabou de jogar.
+      turnoEquipeId: manterTurno
+        ? (match.turnoEquipeId ?? match.ordemEquipes[0])
+        : this.proximoTurno(match),
       rodadaIniciadaEm: this.inicioDaRodada(congelado),
     });
     await this.refletirPlacar(matchId);
