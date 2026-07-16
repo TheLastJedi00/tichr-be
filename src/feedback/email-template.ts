@@ -39,6 +39,28 @@ const MUTED = '#64748b';
  */
 const FONTE = "'Inter', -apple-system, 'Segoe UI', Arial, sans-serif";
 
+/**
+ * `criadoEm` e ISO-8601 em UTC. Quem le o alerta e a equipe, no Brasil — mandar
+ * "2026-07-16T18:34:00.000Z" para um humano e despejar o formato do banco no
+ * e-mail. Fuso fixo em Sao_Paulo de proposito: o servidor roda em UTC na Vercel,
+ * entao o horario "local" dele nao e o de ninguem.
+ *
+ * Nao vai para o `common/date.util.ts`: aquele modulo trata "dia de calendario"
+ * e e UTC por decisao explicita. Isto aqui e um instante, e e formatacao de
+ * e-mail — mora com o template.
+ */
+function dataLegivel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+}
+
 /** Uma linha de metadado da tabela tecnica. */
 function linha(rotulo: string, valor: string): string {
   return `
@@ -103,7 +125,7 @@ export function montarEmailFeedback(
       <table style="width:100%;margin-top:20px;border-collapse:collapse;">
         ${linha('Tela', feedback.rota)}
         ${linha('Navegador', feedback.userAgent)}
-        ${linha('Enviado em', feedback.criadoEm)}
+        ${linha('Enviado em', dataLegivel(feedback.criadoEm))}
       </table>
 
       <a href="${escaparHtml(link)}" style="display:inline-block;margin-top:24px;padding:11px 20px;background:${AZUL};color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;">Acessar Painel Admin</a>

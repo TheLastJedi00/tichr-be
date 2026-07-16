@@ -70,6 +70,13 @@ describe('montarEmailFeedback', () => {
     expect(html).toContain('joao@x.com');
   });
 
+  it('a data vai legivel, no fuso de quem le — nao o ISO cru do banco', () => {
+    const { html } = montarEmailFeedback(base, 'https://tichr.com.br');
+    // 10:00Z = 07:00 em Sao_Paulo (UTC-3).
+    expect(html).toContain('16/07/2026, 07:00');
+    expect(html).not.toContain('2026-07-16T10:00:00.000Z');
+  });
+
   it('markup na mensagem sai escapado — nao vira HTML no e-mail do admin', () => {
     const malicioso = new FeedbackEntity({
       ...base,
