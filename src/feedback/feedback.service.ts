@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
+import { AtualizarFeedbackDto } from './dto/atualizar-feedback.dto';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { FeedbackEntity } from './entities/feedback.entity';
 import { FeedbackRepository } from './feedback.repository';
@@ -47,5 +48,37 @@ export class FeedbackService {
         criadoEm: new Date().toISOString(),
       }),
     );
+  }
+
+  /** Caixa de entrada do admin (mais novos primeiro). */
+  listar(): Promise<FeedbackEntity[]> {
+    return this.repo.listarRecentes();
+  }
+
+  /**
+   * Triagem. Campo ausente no DTO nao e tocado — um PATCH so de status nao
+   * apaga a nota que ja estava la, e vice-versa.
+   */
+  async atualizar(
+    id: string,
+    dto: AtualizarFeedbackDto,
+  ): Promise<FeedbackEntity> {
+    const atual = await this.repo.findById(id);
+    if (!atual) {
+      throw new NotFoundException('Feedback nao encontrado.');
+    }
+
+    const mudancas: Partial<FeedbackEntity> = {
+      atualizadoEm: new Date().toISOString(),
+    };
+    if (dto.status !== undefined) {
+      mudancas.status = dto.status;
+    }
+    if (dto.notaInterna !== undefined) {
+      mudancas.notaInterna = dto.notaInterna.trim();
+    }
+
+    await this.repo.update(id, mudancas);
+    return new FeedbackEntity({ ...atual, ...mudancas });
   }
 }

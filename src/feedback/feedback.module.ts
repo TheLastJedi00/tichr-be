@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminFeedbackController } from './admin-feedback.controller';
 import { FeedbackController } from './feedback.controller';
 import { FeedbackRepository } from './feedback.repository';
 import { FeedbackService } from './feedback.service';
@@ -10,7 +11,7 @@ import { FeedbackService } from './feedback.service';
  * entao o repositorio injeta o Firestore sem nada aqui (padrao do AdminModule).
  */
 @Module({
-  controllers: [FeedbackController],
+  controllers: [FeedbackController, AdminFeedbackController],
   providers: [FeedbackService, FeedbackRepository],
 })
 export class FeedbackModule {}
