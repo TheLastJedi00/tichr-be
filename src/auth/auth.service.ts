@@ -225,6 +225,28 @@ export class AuthService {
   }
 
   /**
+   * Dispara o e-mail de redefinicao de senha.
+   *
+   * ENGOLE TODA FALHA DE PROPOSITO. A resposta e sempre `{ enviado: true }`,
+   * inclusive para e-mail inexistente (`EMAIL_NOT_FOUND`): distinguir os casos
+   * transformaria este endpoint num oraculo de "quem tem conta no Tichr". Quem
+   * chama nao consegue diferenciar sucesso de falha — e esse e o recurso, nao um
+   * bug. Ver o teste de regressao em recuperar-senha.spec.ts.
+   */
+  async recuperarSenha(email: string): Promise<{ enviado: true }> {
+    try {
+      await sendOobCode(this.apiKey(), {
+        requestType: 'PASSWORD_RESET',
+        email,
+        continueUrl: `${this.appBaseUrl()}/login`,
+      });
+    } catch {
+      // silencioso: ver o doc acima.
+    }
+    return { enviado: true };
+  }
+
+  /**
    * Le o estado de verificacao AO VIVO no Firebase Auth, e nao do claim do token
    * (que fica congelado na emissao). E o que a tela de espera consulta.
    */

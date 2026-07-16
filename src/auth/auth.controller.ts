@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { AuthService, semRefresh, SessaoPublica } from './auth.service';
 import { LoginAlunoDto } from './dto/login-aluno.dto';
 import { LoginDto } from './dto/login.dto';
+import { RecuperarSenhaDto } from './dto/recuperar-senha.dto';
 import { SignupDto } from './dto/signup.dto';
 import {
   COOKIE_REFRESH,
@@ -89,6 +90,17 @@ export class AuthController {
   logout(@Res({ passthrough: true }) res: Response): { ok: true } {
     limparCookieRefresh(res);
     return { ok: true };
+  }
+
+  /**
+   * "Esqueci minha senha". `@Public()` — quem esqueceu a senha nao esta logado.
+   * Responde sempre 200 { enviado: true }, mesmo para e-mail inexistente: a
+   * resposta nao pode revelar quem tem conta no Tichr.
+   */
+  @Public()
+  @Post('recuperar-senha')
+  recuperarSenha(@Body() dto: RecuperarSenhaDto): Promise<{ enviado: true }> {
+    return this.authService.recuperarSenha(dto.email);
   }
 
   /**
