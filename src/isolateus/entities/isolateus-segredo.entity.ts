@@ -34,6 +34,13 @@ export class IsolateusSegredoEntity {
   /** A ação escolhida pelo Alien nesta rodada (limpa ao resolvê-la). */
   acaoRodada: AcaoAmeaca | null;
 
+  /**
+   * Alunos que pularam o Debate da Quarentena corrente (limpa a cada convocação).
+   * Mora no cofre porque a lista denunciaria quem é real e quem é NPC — a vila só
+   * enxerga a CONTAGEM, em `pulosRecebidos`.
+   */
+  pulosDebate: string[];
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 

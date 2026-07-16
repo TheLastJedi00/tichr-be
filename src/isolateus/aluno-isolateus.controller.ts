@@ -95,7 +95,7 @@ export class AlunoIsolateusController {
     return this.game.sinalDeRadio(aluno.alunoId, id, dto.texto);
   }
 
-  /** O botão vermelho: convoca a Quarentena (uma vez por partida). */
+  /** O botão vermelho: convoca a Quarentena (uma vez por rodada). */
   @Post(':id/quarentena')
   convocar(
     @CurrentStudent() aluno: { alunoId: string },
@@ -112,6 +112,15 @@ export class AlunoIsolateusController {
     @Body() dto: MensagemDto,
   ) {
     return this.game.debater(aluno.alunoId, id, dto.texto);
+  }
+
+  /** Abre mão do debate. Todos pulando, a votação abre na hora. */
+  @Post(':id/pular-debate')
+  pularDebate(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.pularDebate(aluno.alunoId, id);
   }
 
   /** O voto no suspeito. */
