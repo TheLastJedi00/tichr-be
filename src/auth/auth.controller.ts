@@ -11,7 +11,19 @@ import {
   gravarCookieRefresh,
   limparCookieRefresh,
 } from './sessao.cookie';
+import { ProfessorId } from './current-user.decorator';
 import { Public } from './public.decorator';
+import { SemVerificacao } from './sem-verificacao.decorator';
+
+/**
+ * O ID token cru, para os fluxos do Identity Toolkit que o exigem no corpo
+ * (VERIFY_EMAIL, VERIFY_AND_CHANGE_EMAIL). O `@ProfessorId()` so entrega o uid,
+ * e o guard ja validou o header quando chegamos aqui.
+ */
+function extrairIdToken(req: Request): string {
+  const [tipo, token] = req.headers.authorization?.split(' ') ?? [];
+  return tipo === 'Bearer' ? token : '';
+}
 
 @Controller('auth')
 export class AuthController {
@@ -77,6 +89,23 @@ export class AuthController {
   logout(@Res({ passthrough: true }) res: Response): { ok: true } {
     limparCookieRefresh(res);
     return { ok: true };
+  }
+
+  /**
+   * Status da confirmacao, lido ao vivo no Firebase Auth. A tela de espera faz
+   * poll aqui — o claim do token nao serve, fica congelado na emissao.
+   */
+  @SemVerificacao()
+  @Get('verificacao')
+  statusVerificacao(@ProfessorId() uid: string): Promise<{ verificado: boolean }> {
+    return this.authService.statusVerificacao(uid);
+  }
+
+  /** Reenvia o e-mail de confirmacao (botao da tela de espera). */
+  @SemVerificacao()
+  @Post('verificacao/reenviar')
+  reenviarVerificacao(@Req() req: Request): Promise<{ enviado: true }> {
+    return this.authService.enviarVerificacao(extrairIdToken(req));
   }
 
   /** Login do aluno via portal: turmaId + PIN -> JWT customizado. */

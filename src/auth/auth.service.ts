@@ -13,6 +13,7 @@ import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
 import {
   comoHttp,
+  sendOobCode,
   signInComSenha,
   signUpComSenha,
   trocarRefreshToken,
@@ -198,7 +199,38 @@ export class AuthService {
         { merge: true },
       );
 
+    // Best-effort: a conta ja existe e a tela de espera tem botao de reenviar,
+    // entao uma falha no envio nao pode derrubar um cadastro bem-sucedido.
+    try {
+      await this.enviarVerificacao(tokens.token);
+    } catch {
+      // silencioso de proposito — ver acima.
+    }
+
     return tokens;
+  }
+
+  /**
+   * Dispara o e-mail de confirmacao. O `continueUrl` traz o professor de volta
+   * ao app depois do clique; o dominio precisa estar nos authorized domains do
+   * projeto Firebase, senao o link e rejeitado.
+   */
+  async enviarVerificacao(idToken: string): Promise<{ enviado: true }> {
+    await sendOobCode(this.apiKey(), {
+      requestType: 'VERIFY_EMAIL',
+      idToken,
+      continueUrl: `${this.appBaseUrl()}/login`,
+    }).catch(comoHttp);
+    return { enviado: true };
+  }
+
+  /**
+   * Le o estado de verificacao AO VIVO no Firebase Auth, e nao do claim do token
+   * (que fica congelado na emissao). E o que a tela de espera consulta.
+   */
+  async statusVerificacao(uid: string): Promise<{ verificado: boolean }> {
+    const user = await this.firebase.auth.getUser(uid);
+    return { verificado: user.emailVerified };
   }
 
   /** Web API key do projeto; sem ela nenhum fluxo de credencial funciona. */
@@ -208,6 +240,13 @@ export class AuthService {
       throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
     }
     return apiKey;
+  }
+
+  /** URL publica do app, para onde os links de e-mail retornam. */
+  private appBaseUrl(): string {
+    return (
+      this.config.get<string>('APP_BASE_URL') ?? 'https://tichr.com.br'
+    ).replace(/\/$/, '');
   }
 
   /**
