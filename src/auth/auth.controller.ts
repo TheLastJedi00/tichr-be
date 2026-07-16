@@ -1,12 +1,16 @@
-import { Body, Controller, Get, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
 // `import type`: exigido pelo isolatedModules + emitDecoratorMetadata quando o
-// tipo aparece na assinatura de um parametro decorado (@Res).
-import type { Response } from 'express';
+// tipo aparece na assinatura de um parametro decorado (@Res/@Req).
+import type { Request, Response } from 'express';
 import { AuthService, semRefresh, SessaoPublica } from './auth.service';
 import { LoginAlunoDto } from './dto/login-aluno.dto';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
-import { gravarCookieRefresh, limparCookieRefresh } from './sessao.cookie';
+import {
+  COOKIE_REFRESH,
+  gravarCookieRefresh,
+  limparCookieRefresh,
+} from './sessao.cookie';
 import { Public } from './public.decorator';
 
 @Controller('auth')
@@ -38,6 +42,27 @@ export class AuthController {
       dto.aceiteTermos,
       dto.aceitePrivacidade,
     );
+    gravarCookieRefresh(res, sessao.refreshToken);
+    return semRefresh(sessao);
+  }
+
+  /**
+   * Renova a sessao a partir do cookie. `@Public()` por definicao: o ID token do
+   * chamador ja expirou, e a credencial aqui e o cookie, nao o header. Sem DTO —
+   * o refresh nao trafega em corpo nenhum.
+   */
+  @Public()
+  @Post('refresh')
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<SessaoPublica> {
+    const atual = (req.cookies as Record<string, string> | undefined)?.[
+      COOKIE_REFRESH
+    ];
+    const sessao = await this.authService.refresh(atual ?? '');
+    // A Secure Token API pode rotacionar o refresh; se rotacionou, o cookie
+    // precisa acompanhar, senao a proxima renovacao usa um token morto.
     gravarCookieRefresh(res, sessao.refreshToken);
     return semRefresh(sessao);
   }

@@ -11,7 +11,12 @@ import { DecodedIdToken } from 'firebase-admin/auth';
 import { FirebaseService } from '../firebase/firebase.service';
 import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
-import { comoHttp, signInComSenha, signUpComSenha } from './identity-toolkit';
+import {
+  comoHttp,
+  signInComSenha,
+  signUpComSenha,
+  trocarRefreshToken,
+} from './identity-toolkit';
 
 /** Config de pontuacao exposta ao portal do aluno. */
 export interface TurmaConfigPublica {
@@ -203,6 +208,25 @@ export class AuthService {
       throw new Error('FIREBASE_WEB_API_KEY nao configurada.');
     }
     return apiKey;
+  }
+
+  /**
+   * Troca o refresh token por um ID token fresco. E o que mantem o professor
+   * logado alem da ~1h do ID token — e tambem o que faz o `email_verified`
+   * atualizado chegar ao cliente sem exigir novo login: a Secure Token API emite
+   * a partir do registro ATUAL do usuario.
+   *
+   * O Firebase revoga os refresh tokens quando a senha ou o e-mail mudam, entao
+   * SESSAO_EXPIRADA aqui e o caminho normal de quem trocou credencial — nao e falha.
+   */
+  async refresh(refreshToken: string): Promise<LoginResult> {
+    if (!refreshToken) {
+      throw new UnauthorizedException({
+        code: 'SESSAO_EXPIRADA',
+        message: 'Sessao expirada. Entre novamente.',
+      });
+    }
+    return trocarRefreshToken(this.apiKey(), refreshToken).catch(comoHttp);
   }
 
   async verifyToken(token: string): Promise<DecodedIdToken> {
