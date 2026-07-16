@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CriarPartidaIsolateusDto } from './dto/responder-isolateus.dto';
+import { RenomearIsolateusDto } from './dto/renomear-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
 import { IsolateusMatchService } from './isolateus-match.service';
 
@@ -34,6 +35,17 @@ export class IsolateusMatchController {
     @Param('alunoId') alunoId: string,
   ) {
     return this.matches.vetarNome(professorId, id, alunoId);
+  }
+
+  /** Corrige o pseudônimo de um habitante sem tirá-lo do lobby (só no LOBBY). */
+  @Post('matches/:id/renomear/:alunoId')
+  renomear(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Param('alunoId') alunoId: string,
+    @Body() dto: RenomearIsolateusDto,
+  ) {
+    return this.matches.renomearInscrito(professorId, id, alunoId, dto.pseudonimo);
   }
 
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */
