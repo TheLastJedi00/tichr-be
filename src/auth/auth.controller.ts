@@ -2,11 +2,17 @@ import { Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
 // `import type`: exigido pelo isolatedModules + emitDecoratorMetadata quando o
 // tipo aparece na assinatura de um parametro decorado (@Res/@Req).
 import type { Request, Response } from 'express';
-import { AuthService, semRefresh, SessaoPublica } from './auth.service';
+import {
+  AuthService,
+  ContaAuth,
+  semRefresh,
+  SessaoPublica,
+} from './auth.service';
 import { LoginAlunoDto } from './dto/login-aluno.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecuperarSenhaDto } from './dto/recuperar-senha.dto';
 import { SignupDto } from './dto/signup.dto';
+import { TrocarEmailDto } from './dto/trocar-email.dto';
 import {
   COOKIE_REFRESH,
   gravarCookieRefresh,
@@ -109,7 +115,9 @@ export class AuthController {
    */
   @SemVerificacao()
   @Get('verificacao')
-  statusVerificacao(@ProfessorId() uid: string): Promise<{ verificado: boolean }> {
+  statusVerificacao(
+    @ProfessorId() uid: string,
+  ): Promise<{ verificado: boolean }> {
     return this.authService.statusVerificacao(uid);
   }
 
@@ -118,6 +126,30 @@ export class AuthController {
   @Post('verificacao/reenviar')
   reenviarVerificacao(@Req() req: Request): Promise<{ enviado: true }> {
     return this.authService.enviarVerificacao(extrairIdToken(req));
+  }
+
+  /** E-mail atual + status, para a pagina de Seguranca. */
+  @Get('conta')
+  conta(@ProfessorId() uid: string): Promise<ContaAuth> {
+    return this.authService.conta(uid);
+  }
+
+  /**
+   * Troca o e-mail de acesso. Precisa do ID token cru no corpo do sendOobCode,
+   * dai o @Req() — o @ProfessorId() so entrega o uid.
+   */
+  @Post('email')
+  trocarEmail(
+    @ProfessorId() uid: string,
+    @Req() req: Request,
+    @Body() dto: TrocarEmailDto,
+  ): Promise<{ enviado: true; novoEmail: string }> {
+    return this.authService.trocarEmail(
+      uid,
+      extrairIdToken(req),
+      dto.novoEmail,
+      dto.senha,
+    );
   }
 
   /** Login do aluno via portal: turmaId + PIN -> JWT customizado. */

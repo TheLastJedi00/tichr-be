@@ -68,7 +68,10 @@ function traduzirErro(codigoBruto: string): HttpException {
   }
   if (codigo.startsWith('TOO_MANY_ATTEMPTS')) {
     return new HttpException(
-      { code: 'VERIFICACAO_COOLDOWN', message: 'Muitas tentativas. Aguarde alguns minutos.' },
+      {
+        code: 'VERIFICACAO_COOLDOWN',
+        message: 'Muitas tentativas. Aguarde alguns minutos.',
+      },
       HttpStatus.TOO_MANY_REQUESTS,
     );
   }
@@ -84,7 +87,11 @@ function traduzirErro(codigoBruto: string): HttpException {
       message: 'Sessao expirada. Entre novamente.',
     });
   }
-  if (codigo === 'EMAIL_NOT_FOUND' || codigo === 'INVALID_PASSWORD' || codigo === 'INVALID_LOGIN_CREDENTIALS') {
+  if (
+    codigo === 'EMAIL_NOT_FOUND' ||
+    codigo === 'INVALID_PASSWORD' ||
+    codigo === 'INVALID_LOGIN_CREDENTIALS'
+  ) {
     return new UnauthorizedException({
       code: 'CREDENCIAL_INVALIDA',
       message: 'Email ou senha invalidos.',
@@ -129,7 +136,10 @@ export function comoHttp(erro: unknown): never {
   throw erro;
 }
 
-function paraTokens(dados: RespostaIdentityToolkit, emailFallback: string): TokensFirebase {
+function paraTokens(
+  dados: RespostaIdentityToolkit,
+  emailFallback: string,
+): TokensFirebase {
   return {
     token: dados.idToken ?? '',
     refreshToken: dados.refreshToken ?? '',
@@ -206,7 +216,9 @@ export async function trocarRefreshToken(
   };
 
   if (!resposta.ok || !dados.id_token) {
-    throw new IdentityToolkitError(dados.error?.message ?? 'INVALID_REFRESH_TOKEN');
+    throw new IdentityToolkitError(
+      dados.error?.message ?? 'INVALID_REFRESH_TOKEN',
+    );
   }
 
   return {

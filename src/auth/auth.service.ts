@@ -47,6 +47,16 @@ export interface LoginResult {
   email: string;
 }
 
+/**
+ * Dados da conta no Firebase Auth. NAO entra na ProfessorView: o e-mail nao mora
+ * no `professores/{uid}` e o `GET /profile` roda em quase toda navegacao — busca-lo
+ * la imporia um `auth.getUser` a todas elas por causa de uma tela so.
+ */
+export interface ContaAuth {
+  email: string;
+  emailVerificado: boolean;
+}
+
 /** O que o cliente realmente recebe no corpo: tudo menos o refresh. */
 export type SessaoPublica = Omit<LoginResult, 'refreshToken'>;
 
@@ -96,9 +106,9 @@ export class AuthService {
       .where('turmaId', '==', turmaId)
       .get();
     const pinAlunoLength =
-      (alunosSnap.docs
+      alunosSnap.docs
         .map((d) => d.data().pinAcesso as string | undefined)
-        .find((p) => !!p)?.length) ?? 4;
+        .find((p) => !!p)?.length ?? 4;
     return {
       turmaId,
       turmaNome: (turmaSnap.data()?.nome as string) ?? 'Turma',
@@ -180,24 +190,23 @@ export class AuthService {
     }
     const apiKey = this.apiKey();
 
-    const tokens = await signUpComSenha(apiKey, email, password).catch(comoHttp);
+    const tokens = await signUpComSenha(apiKey, email, password).catch(
+      comoHttp,
+    );
 
     // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
     const agora = new Date().toISOString();
-    await this.firebase.firestore
-      .collection('professores')
-      .doc(tokens.uid)
-      .set(
-        {
-          nomeExibicao: nome.trim(),
-          planoAtual: 'ESTAGIARIO',
-          slotsAdicionaisComprados: 0,
-          aceiteTermosEm: agora,
-          aceitePrivacidadeEm: agora,
-          versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
-        },
-        { merge: true },
-      );
+    await this.firebase.firestore.collection('professores').doc(tokens.uid).set(
+      {
+        nomeExibicao: nome.trim(),
+        planoAtual: 'ESTAGIARIO',
+        slotsAdicionaisComprados: 0,
+        aceiteTermosEm: agora,
+        aceitePrivacidadeEm: agora,
+        versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
+      },
+      { merge: true },
+    );
 
     // Best-effort: a conta ja existe e a tela de espera tem botao de reenviar,
     // entao uma falha no envio nao pode derrubar um cadastro bem-sucedido.
@@ -253,6 +262,56 @@ export class AuthService {
   async statusVerificacao(uid: string): Promise<{ verificado: boolean }> {
     const user = await this.firebase.auth.getUser(uid);
     return { verificado: user.emailVerified };
+  }
+
+  /** E-mail atual da conta + status, para a pagina de Seguranca. */
+  async conta(uid: string): Promise<ContaAuth> {
+    const user = await this.firebase.auth.getUser(uid);
+    return { email: user.email ?? '', emailVerificado: user.emailVerified };
+  }
+
+  /**
+   * Troca de e-mail em duas etapas.
+   *
+   * Usa VERIFY_AND_CHANGE_EMAIL (o mesmo que o `verifyBeforeUpdateEmail` do SDK
+   * chama por baixo) e nao `accounts:update`: com o update o e-mail trocaria NA
+   * HORA e so depois o antigo seria avisado — aqui a troca so acontece quando o
+   * link chega na caixa NOVA, e o endereco antigo continua valendo ate la.
+   *
+   * Reautentica antes, como manda a operacao sensivel (mesmo padrao do
+   * `excluirPropriaConta`). Quando o professor confirmar, o Firebase revoga os
+   * refresh tokens e a sessao cai — comportamento correto e avisado na UI.
+   */
+  async trocarEmail(
+    uid: string,
+    idToken: string,
+    novoEmail: string,
+    senha: string,
+  ): Promise<{ enviado: true; novoEmail: string }> {
+    const user = await this.firebase.auth.getUser(uid);
+    if (!user.email) {
+      throw new BadRequestException('Usuario sem e-mail cadastrado.');
+    }
+
+    const apiKey = this.apiKey();
+
+    try {
+      await signInComSenha(apiKey, user.email, senha, false);
+    } catch {
+      throw new UnauthorizedException({
+        code: 'SENHA_INVALIDA',
+        message: 'Senha incorreta. O e-mail nao foi alterado.',
+      });
+    }
+
+    await sendOobCode(apiKey, {
+      requestType: 'VERIFY_AND_CHANGE_EMAIL',
+      idToken,
+      newEmail: novoEmail,
+      continueUrl: `${this.appBaseUrl()}/login`,
+    }).catch(comoHttp);
+
+    return { enviado: true, novoEmail };
   }
 
   /** Web API key do projeto; sem ela nenhum fluxo de credencial funciona. */

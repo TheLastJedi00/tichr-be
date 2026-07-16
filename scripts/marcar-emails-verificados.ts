@@ -60,7 +60,9 @@ async function main(): Promise<void> {
   const dataCorte = corte();
 
   console.log(`Corte: contas criadas antes de ${dataCorte.toISOString()}`);
-  console.log(APLICAR ? 'Modo: APLICAR (escreve)' : 'Modo: dry-run (nao escreve)');
+  console.log(
+    APLICAR ? 'Modo: APLICAR (escreve)' : 'Modo: dry-run (nao escreve)',
+  );
   console.log('');
 
   let pageToken: string | undefined;
