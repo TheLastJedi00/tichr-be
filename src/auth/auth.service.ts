@@ -1,7 +1,7 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -13,6 +13,7 @@ import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
 import {
   comoHttp,
+  IdentityToolkitError,
   sendOobCode,
   signInComSenha,
   signUpComSenha,
@@ -33,6 +34,16 @@ export interface TurmaConfigPublica {
 
 /** Versao vigente dos documentos legais aceitos no cadastro (auditoria LGPD). */
 export const VERSAO_DOCUMENTOS_LEGAIS = 'v1';
+
+/**
+ * Motivo legivel de uma falha, para log. O `sendOobCode` lanca
+ * `IdentityToolkitError` com o codigo cru do provedor (ex.: UNAUTHORIZED_DOMAIN);
+ * qualquer outra coisa (rede, DNS) cai no fallback.
+ */
+function motivo(erro: unknown): string {
+  if (erro instanceof IdentityToolkitError) return erro.codigo;
+  return erro instanceof Error ? erro.message : String(erro);
+}
 
 /**
  * Sessao completa, uso interno do controller: ele separa o `refreshToken` (que
@@ -74,6 +85,8 @@ export interface LoginAlunoResult {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly firebase: FirebaseService,
     private readonly config: ConfigService,
@@ -210,10 +223,13 @@ export class AuthService {
 
     // Best-effort: a conta ja existe e a tela de espera tem botao de reenviar,
     // entao uma falha no envio nao pode derrubar um cadastro bem-sucedido.
+    // Mas registra: silencio aqui vira "cadastrei e nunca recebi o e-mail".
     try {
       await this.enviarVerificacao(tokens.token);
-    } catch {
-      // silencioso de proposito — ver acima.
+    } catch (erro) {
+      this.logger.error(
+        `Falha ao enviar VERIFY_EMAIL no cadastro de ${email}: ${motivo(erro)}`,
+      );
     }
 
     return tokens;
@@ -229,18 +245,30 @@ export class AuthService {
       requestType: 'VERIFY_EMAIL',
       idToken,
       continueUrl: `${this.appBaseUrl()}/login`,
-    }).catch(comoHttp);
+    }).catch((erro: unknown) => {
+      // O `comoHttp` traduz para uma mensagem generica, boa para o professor e
+      // inutil para nos: sem isto, um UNAUTHORIZED_DOMAIN vira "nao foi possivel
+      // completar a operacao" e ninguem descobre que o problema e configuracao.
+      this.logger.error(`Falha ao enviar VERIFY_EMAIL: ${motivo(erro)}`);
+      comoHttp(erro);
+    });
     return { enviado: true };
   }
 
   /**
    * Dispara o e-mail de redefinicao de senha.
    *
-   * ENGOLE TODA FALHA DE PROPOSITO. A resposta e sempre `{ enviado: true }`,
-   * inclusive para e-mail inexistente (`EMAIL_NOT_FOUND`): distinguir os casos
-   * transformaria este endpoint num oraculo de "quem tem conta no Tichr". Quem
-   * chama nao consegue diferenciar sucesso de falha — e esse e o recurso, nao um
-   * bug. Ver o teste de regressao em recuperar-senha.spec.ts.
+   * ENGOLE TODA FALHA DE PROPOSITO **NA RESPOSTA**. Ela e sempre
+   * `{ enviado: true }`, inclusive para e-mail inexistente (`EMAIL_NOT_FOUND`):
+   * distinguir os casos transformaria este endpoint num oraculo de "quem tem
+   * conta no Tichr". Quem chama nao consegue diferenciar sucesso de falha — e
+   * esse e o recurso, nao um bug. Ver o teste em recuperar-senha.spec.ts.
+   *
+   * Mas o SERVIDOR registra. A primeira versao calava os dois lados, e o
+   * resultado foi um `UNAUTHORIZED_DOMAIN` (dominio fora dos authorized domains
+   * do Firebase) que passou despercebido: a API respondia "enviado" e nenhum
+   * e-mail saia, sem rastro nenhum para diagnosticar. Anti-enumeracao e sobre o
+   * que o CLIENTE ve, nao sobre cegar a operacao.
    */
   async recuperarSenha(email: string): Promise<{ enviado: true }> {
     try {
@@ -249,8 +277,15 @@ export class AuthService {
         email,
         continueUrl: `${this.appBaseUrl()}/login`,
       });
-    } catch {
-      // silencioso: ver o doc acima.
+    } catch (erro) {
+      // `EMAIL_NOT_FOUND` e esperado (alguem digitou um e-mail que nao existe) e
+      // vira `warn`; o resto e problema nosso e vira `error`.
+      const razao = motivo(erro);
+      if (razao === 'EMAIL_NOT_FOUND') {
+        this.logger.warn('Redefinicao pedida para e-mail nao cadastrado.');
+      } else {
+        this.logger.error(`Falha ao enviar PASSWORD_RESET: ${razao}`);
+      }
     }
     return { enviado: true };
   }
