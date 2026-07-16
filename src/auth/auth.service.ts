@@ -28,12 +28,26 @@ export interface TurmaConfigPublica {
 /** Versao vigente dos documentos legais aceitos no cadastro (auditoria LGPD). */
 export const VERSAO_DOCUMENTOS_LEGAIS = 'v1';
 
+/**
+ * Sessao completa, uso interno do controller: ele separa o `refreshToken` (que
+ * vai para o cookie HttpOnly) do resto (que vai no corpo). O `refreshToken`
+ * nunca chega ao cliente como dado — ver `sessao.cookie.ts`.
+ */
 export interface LoginResult {
   token: string;
   refreshToken: string;
   expiresIn: number;
   uid: string;
   email: string;
+}
+
+/** O que o cliente realmente recebe no corpo: tudo menos o refresh. */
+export type SessaoPublica = Omit<LoginResult, 'refreshToken'>;
+
+/** Separa a sessao publica do refresh, que segue por outro canal (cookie). */
+export function semRefresh(r: LoginResult): SessaoPublica {
+  const { refreshToken: _descartado, ...publico } = r;
+  return publico;
 }
 
 export interface LoginAlunoResult {
