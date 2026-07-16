@@ -11,6 +11,7 @@ import { AuthService } from './auth.service';
 import { Role, RequestUser } from './auth.types';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { ROLES_KEY } from './roles.decorator';
+import { SEM_VERIFICACAO_KEY } from './sem-verificacao.decorator';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -48,6 +49,25 @@ export class AuthGuard implements CanActivate {
       throw new ForbiddenException('Acesso nao permitido para este perfil.');
     }
 
+    // A trava de e-mail mora AQUI, e nao dentro do resolveUser: la ela cairia no
+    // catch que tenta o token de aluno e viraria um 401 generico, mandando o
+    // professor para o /login em laco em vez de para a tela de confirmacao.
+    const semVerificacao = this.reflector.getAllAndOverride<boolean>(
+      SEM_VERIFICACAO_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    if (
+      user.role === 'PROFESSOR' &&
+      user.emailVerified === false &&
+      !semVerificacao
+    ) {
+      throw new ForbiddenException({
+        code: 'EMAIL_NAO_VERIFICADO',
+        message: 'Confirme seu e-mail para continuar.',
+      });
+    }
+
     request['user'] = user;
     return true;
   }
@@ -59,7 +79,13 @@ export class AuthGuard implements CanActivate {
   private async resolveUser(token: string): Promise<RequestUser> {
     try {
       const decoded = await this.authService.verifyToken(token);
-      return { uid: decoded.uid, role: 'PROFESSOR' };
+      // So CARREGA o email_verified; quem decide e o canActivate. Lancar aqui
+      // dentro seria engolido pelo catch abaixo e viraria 401 de aluno.
+      return {
+        uid: decoded.uid,
+        role: 'PROFESSOR',
+        emailVerified: decoded.email_verified ?? false,
+      };
     } catch {
       // nao e um token de professor; tenta como aluno abaixo.
     }

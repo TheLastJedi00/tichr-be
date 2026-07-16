@@ -20,4 +20,9 @@ export interface RequestUser {
   role: Role;
   alunoId?: string;
   turmaId?: string;
+  /**
+   * Claim `email_verified` do ID token; so existe para PROFESSOR (aluno nao tem
+   * e-mail). O AuthGuard le isto para decidir a trava de verificacao.
+   */
+  emailVerified?: boolean;
 }
