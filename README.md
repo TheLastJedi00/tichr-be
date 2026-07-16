@@ -28,6 +28,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Gamificação (XP, ranking e config)](#gamificação-xp-ranking-e-config)
   - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
+  - [Painel Administrativo e feedback](#painel-administrativo-backoffice-e-cupons)
 - [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
 - [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
 
@@ -53,6 +54,9 @@ npm test               # testes unitários do motor (Jest)
 | `CORS_ORIGINS` | Origens autorizadas, separadas por vírgula (ex.: `https://tichr.com.br,https://www.tichr.com.br`). **Obrigatória em produção:** o CORS agora usa credenciais (cookie de sessão) e `Allow-Origin: *` é incompatível — sem a env, nenhuma origem passa e o app para. É env, e não constante, porque os *preview deploys* da Vercel mudam de URL a cada branch. Default de dev: `http://localhost:4200`. |
 | `APP_BASE_URL` | URL pública do app (default `https://tichr.com.br`). É o `continueUrl` dos e-mails de confirmação/redefinição — traz o professor de volta depois do clique. O domínio precisa estar nos *authorized domains* do projeto Firebase, senão o link é rejeitado. |
 | `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração por IA do **Tichr Wor** (arsenal) e do **Tichr Qlick** (perguntas); sem ela, criação manual. |
+| `RESEND_API_KEY` | Chave da Resend — alerta por e-mail quando chega um feedback. **Não obrigatória:** sem ela o feedback é salvo normalmente e a inbox exibe *"alerta não enviado"*. O professor nunca perde o relato por causa de e-mail mal configurado. |
+| `RESEND_FROM` | Remetente do alerta (opcional, default `Tichr <nao-responda@tichr.com.br>`). O domínio precisa estar **verificado** na Resend — sem verificação, ela só entrega para o e-mail do dono da conta. |
+| `ADMIN_NOTIFICATION_EMAILS` | Quem recebe o alerta de feedback, separado por vírgula (mesmo formato do `CORS_ORIGINS`). Vazia = ninguém é avisado (o feedback continua sendo salvo). **Não confundir com quem pode entrar no backoffice** — isso é `professores/{uid}.isAdmin`, não esta env. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -355,6 +359,29 @@ aluno/pergunta** (idempotência).
 | `correta` | boolean | |
 | `pontos` | number | acerto: `1000` + bônus de rapidez (até `500`) |
 
+### `feedbacks`
+Relatos enviados pelos professores (bug, sugestão, dúvida, elogio) e a triagem do admin.
+
+**Server-only.** Ao contrário das partidas dos jogos, esta coleção **não** é lida em tempo real
+pelo cliente: ela carrega e-mail, nome, User-Agent e o texto de todo professor. Como o front
+**não tem sessão do Firebase Auth** (o login é `POST /auth/login` no Nest; o SDK do Firebase no
+cliente serve só a Firestore/Storage), `request.auth` é sempre `null` nas rules — só existiria
+`if true` (público) ou `if false`. Um `onSnapshot` aqui publicaria a base de reclamações para
+quem abrisse o DevTools. Fica no deny-all, e a inbox do admin consome por REST.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `professorId` / `professorNome` / `professorEmail` | string | **vêm do token**, nunca do corpo (identidade do cliente é spoofável); nome do `professores/{uid}`, e-mail do Firebase Auth |
+| `categoria` | `'BUG' \| 'SUGESTAO' \| 'DUVIDA' \| 'ELOGIO'` | rótulo humano ("Relato de Bug") só na exibição |
+| `mensagem` | string | gravada **como o professor digitou** — o escape acontece na fronteira do HTML do e-mail, não aqui |
+| `rota` | string | `router.url` do Angular no clique (não o `Referer`, que num SPA aponta para onde a aba abriu) |
+| `userAgent` | string | navegador/aparelho, para reproduzir o bug |
+| `status` | `'PENDENTE' \| 'EM_ANALISE' \| 'RESOLVIDO'` | nasce sempre `PENDENTE` |
+| `criadoEm` | string ISO | relógio do **servidor** |
+| `notaInterna` | string? | anotação do admin, invisível para o professor |
+| `atualizadoEm` | string? | última triagem |
+| `notificadoEm` | string? | quando o alerta saiu. **Ausente = o e-mail não foi enviado** — a inbox mostra isso, senão a falha morreria no log |
+
 ---
 
 ## Endpoints
@@ -392,6 +419,13 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 | `DELETE` | `/admin/usuarios/:uid?hard=` | — | `soft` (flag `desativadoEm`) ou `hard` (dados + `deleteUser` no Auth) |
 | `PATCH` | `/admin/usuarios/:uid/plano` | `{ plano }` | override manual de plano (sem cobrança) |
 | `POST` | `/admin/usuarios/:uid/admin` | `{ conceder }` | concede/revoga admin gravando `professores/{uid}.isAdmin` (vale na hora, sem re-login) |
+| `GET` | `/admin/feedbacks` | — | `FeedbackEntity[]`, mais novos primeiro. **REST, não `onSnapshot`** — ver [`feedbacks`](#feedbacks) |
+| `PATCH` | `/admin/feedbacks/:id` | `{ status?, notaInterna? }` | triagem. Ambos opcionais: **o que não vem não é tocado** (mudar o status não apaga a nota). `404` se o id não existe |
+
+### Feedback
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `POST` | `/feedbacks` | `{ categoria, mensagem, rota, userAgent }` | `FeedbackEntity` (`201`). O corpo tem **só** esses quatro campos: identidade e *timestamp* saem do token/servidor, e o `ValidationPipe` (`forbidNonWhitelisted`) devolve `400` para qualquer extra — inclusive um `professorId` forjado. Grava e **responde sem esperar o e-mail**; o alerta sai depois, e a falha dele vira `notificadoEm` ausente + log |
 
 ### Cupons
 | Método | Rota | Corpo | Resposta |
@@ -797,6 +831,27 @@ acesso admin é **centralizado no Firestore**: o campo **`professores/{uid}.isAd
 (um admin continua sendo `PROFESSOR` nas rotas normais). O front decide exibir o
 atalho "Painel Admin" pelo `GET /admin/ping` e pelo `isAdmin` do `GET /profile`.
 Assim, promover/revogar vale **na hora** — sem redeploy e sem re-login.
+
+O backoffice também tria os **feedbacks** dos professores (`FeedbackModule`, com o
+`AdminFeedbackController` protegido pelo mesmo `AdminGuard` — o padrão do
+`AdminCupomController`: controller admin morando no módulo da feature). O canal é
+`POST /feedbacks`, aberto a qualquer professor; a triagem é `/admin/feedbacks`.
+
+**Notificação e a assincronia que não é silenciosa.** Gravado o documento, o serviço monta o
+HTML e dispara pela **Resend** (`src/feedback/resend.ts` — funções puras + `fetch`, no molde do
+`identity-toolkit.ts`; sem SDK). A chamada **não é aguardada**: o professor recebe o `201` assim
+que o Firestore confirma, sem pagar a latência de um provedor externo. Mas *fire-and-forget* puro
+esconde falha, então o sucesso carimba **`notificadoEm`** e o erro vai para o `Logger` — a inbox
+exibe *"alerta não enviado"* quando o campo falta. Sem `RESEND_API_KEY` ou sem
+`ADMIN_NOTIFICATION_EMAILS`, o envio é pulado com um `warn` e **o feedback é salvo do mesmo
+jeito** (é o que acontece em dev, e é deliberado: ninguém perde um relato porque o e-mail do
+admin está mal configurado).
+
+**O único escape de HTML do backend.** O template (`src/feedback/email-template.ts`) é a primeira
+superfície de HTML do projeto — em todo o resto quem escapa é o Angular, e o Firestore não tem
+injeção de SQL. Como ele interpola texto que o professor escreveu, **toda** interpolação passa
+pelo `escaparHtml`; sem isso, um relato poderia injetar um link de phishing no e-mail que o admin
+abre confiando. O que é gravado, esse sim, não é sanitizado: o relato vale pelo que ele diz.
 
 - **Métricas** (`AdminService.metrics`): lê `professores` + `turmas` e agrega em
   memória (total, ativos = ≥1 turma vigente via `TurmaEntity.contaComoAtiva`,
