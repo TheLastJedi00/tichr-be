@@ -56,6 +56,9 @@ npm test               # testes unitários do motor (Jest)
 | `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração por IA do **Tichr Wor** (arsenal) e do **Tichr Qlick** (perguntas); sem ela, criação manual. |
 | `RESEND_API_KEY` | Chave da Resend — alerta por e-mail quando chega um feedback. **Não obrigatória:** sem ela o feedback é salvo normalmente e a inbox exibe *"alerta não enviado"*. O professor nunca perde o relato por causa de e-mail mal configurado. |
 | `RESEND_FROM` | Remetente do alerta (opcional, default `Tichr <nao-responda@tichr.com.br>`). O domínio precisa estar **verificado** na Resend — sem verificação, ela só entrega para o e-mail do dono da conta. |
+| `ABACATE_API_KEY` | Chave da **Abacate Pay** (gateway de pagamento — PIX e cartão). Sem ela o checkout fica indisponível (503). Comece com a chave de **dev**. |
+| `ABACATE_WEBHOOK_SECRET` | Segredo do webhook: vai na query da URL registrada no painel (`/checkout/webhook?webhookSecret=…`) e é conferido a cada callback. **Defina o mesmo valor aqui e no painel.** |
+| `ABACATE_DEV_MODE` | Ambiente do gateway. Ausente/`true` = devMode (permite `POST /checkout/simular/:id` para testar sem PIX real). Em produção, `false`. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -235,8 +238,14 @@ Perfil do professor.
 | `username` | string? — handle público único (`@usuario`), **chave de busca do portal do aluno** |
 | `lastUsernameChange` | string? (ISO) — última troca do handle; base da **trava de cooldown de 60 dias** |
 | `avatarUrl` | string? — URL pública da foto de perfil (Firebase Storage; vazio = placeholder) |
-| `planoAtual` | `'ESTAGIARIO' \| 'GRADUADO' \| 'MESTRE' \| 'PHD'` (default `ESTAGIARIO`) |
+| `planoAtual` | `'ESTAGIARIO' \| 'GRADUADO' \| 'MESTRE' \| 'PHD'` (default `ESTAGIARIO`) — plano **contratado** |
 | `slotsAdicionaisComprados` | number (default `0`) — vagas avulsas somadas ao limite do plano |
+| `statusAssinatura` | `'ATIVA' \| 'PENDENTE' \| 'INADIMPLENTE' \| 'CANCELADA'` (default `ATIVA`) — atualizado pelo webhook |
+| `assinaturaAte` | string? (ISO) — vencimento da assinatura paga (hoje + 30d a cada pagamento). **Ausente = conta legada/mock ou tier grátis:** vigência presumida (não rebaixa) |
+| `ultimoPagamentoEm` | string? (ISO) — data do último pagamento aprovado |
+| `cortesiaAte` | string? (ISO) — cortesia por cupom (`MESES_GRATIS`); conta como vigência |
+| `abacateCustomerId` | string? — id do cliente no gateway (Abacate Pay) |
+| `billingIdAtual` | string? — id da última cobrança aberta (reconciliação/polling) |
 | `aceiteTermosEm` | string? (ISO) — registro de consentimento dos Termos de Uso no cadastro (LGPD) |
 | `aceitePrivacidadeEm` | string? (ISO) — registro de consentimento da Política de Privacidade no cadastro (LGPD) |
 | `versaoDocumentosLegais` | string? — versão dos documentos legais aceita no cadastro (auditoria) |
@@ -381,6 +390,22 @@ quem abrisse o DevTools. Fica no deny-all, e a inbox do admin consome por REST.
 | `atualizadoEm` | string? | última triagem |
 | `notificadoEm` | string? | quando o alerta saiu. **Ausente = o e-mail não foi enviado** — a inbox mostra isso, senão a falha morreria no log |
 
+### `cobrancas` (doc id = id da cobrança no gateway)
+Intenção de compra registrada no checkout. **Server-only** (o cliente nunca lê; o status vem por
+`GET /checkout/status/:id`). É a **fonte da idempotência**: o webhook credita a partir deste doc,
+não do payload, e marca `PAID` numa transação — um segundo evento para o mesmo id não credita de novo.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `professorId` | string | dono da cobrança |
+| `tipo` | `'UPGRADE' \| 'SLOT'` | UPGRADE concede plano; SLOT concede uma vaga avulsa |
+| `planoAlvo` | `PlanoAtual?` | plano a conceder (só UPGRADE) |
+| `valorCentavos` | number | valor cobrado |
+| `metodo` | `'PIX' \| 'CARTAO'` | PIX inline ou checkout hospedado |
+| `cupom` | string? | código de desconto aplicado na cobrança |
+| `status` | `'PENDING' \| 'PAID' \| 'EXPIRED' \| 'CANCELLED' \| 'REFUNDED'` | nasce `PENDING` |
+| `criadoEm` / `pagoEm` | string ISO | criação e aprovação |
+
 ---
 
 ## Endpoints
@@ -430,7 +455,7 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
 | `GET` | `/admin/cupons` **(admin)** | — | `CupomEntity[]` |
-| `POST` | `/admin/cupons` **(admin)** | `CreateCupomDto` | cria cupom (`PLANO_GRATIS` ou `MESES_GRATIS`) |
+| `POST` | `/admin/cupons` **(admin)** | `CreateCupomDto` | cria cupom (`PLANO_GRATIS`/`MESES_GRATIS`, + `discountKind`/`discount?`). **Espelha no gateway** (`coupon.create`, guarda `abacateCupomId`) — best-effort: sem chave/falha, o cupom local ainda nasce |
 | `PATCH` | `/admin/cupons/:id` **(admin)** | `UpdateCupomDto` | ativa/desativa, ajusta limite |
 | `DELETE` | `/admin/cupons/:id` **(admin)** | — | remove |
 | `POST` | `/checkout/cupom` (professor) | `{ codigo }` | aplica o cupom ao próprio perfil (transação: revalida limite + incrementa `usos`) |
@@ -452,13 +477,22 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 `nomePontuacao?`, `rankingAtivo?`, `rotuloAdicionar?`, `rotuloRemover?`. `UpdateTurmaDto` =
 os mesmos, todos opcionais, + `encerradaManualmente?`.
 
-### Checkout / planos
+### Checkout / pagamentos (Abacate Pay)
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `POST` | `/checkout/slot-avulso` | — | `ProfessorEntity` — `slotsAdicionaisComprados += 1` |
-| `POST` | `/checkout/upgrade` | `{ plano }` | `ProfessorEntity` — troca o `planoAtual` |
+| `POST` | `/checkout/upgrade` | `{ plano, metodo, cupom? }` | cria cobrança e devolve `{ billingId, metodo, status, valorCentavos, brCode?, brCodeBase64?, expiraEm?, url? }` — **não** muda o plano. Admin/destino gratuito: `{ concedido: true }` |
+| `POST` | `/checkout/slot-avulso` | `{ metodo }` | cria cobrança da vaga avulsa (mesma forma). Admin: `{ concedido: true }` |
+| `GET` | `/checkout/status/:billingId` | — | `{ status }` — reconcilia com o gateway; concede se já pago (idempotente) |
+| `POST` | `/checkout/simular/:billingId` | — | `{ status: 'PAID' }` — **só em devMode** (403 fora dele) |
+| `POST` | `/checkout/webhook` **(público)** | evento do gateway | `{ ok: true }` — segredo na query (`?webhookSecret=`) + HMAC-SHA256 opcional; concede numa transação idempotente |
+| `POST` | `/checkout/cupom` (professor) | `{ codigo }` | aplica cupom de cortesia ao próprio perfil (concede sem pagamento) |
 
-> Mock — ainda sem gateway de pagamento; apenas ajustam o estado do plano no perfil.
+> **Concessão só via webhook** (padrão SaaS): o plano/slot só é creditado quando o
+> `billing.paid` chega. PIX é inline (QR + copia-e-cola); cartão redireciona para o checkout
+> hospedado. Recorrência é **PIX one-time mensal** (`assinaturaAte` = hoje+30d por pagamento);
+> vencer sem renovar rebaixa o **plano efetivo** para ESTAGIARIO na interface, **sem apagar dados**.
+> Admin é **isento** de cobrança. Ver `AbacatePayService` (SDK oficial `@abacatepay/sdk`, v2,
+> carregado por import dinâmico — é ESM-only).
 
 ### Alunos e gamificação
 | Método | Rota | Corpo | Resposta |
