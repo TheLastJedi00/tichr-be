@@ -4,6 +4,20 @@ import { LIMITE_TURMAS_ATIVAS } from '../../common/pin.util';
 export type PlanoAtual = 'ESTAGIARIO' | 'GRADUADO' | 'MESTRE' | 'PHD';
 
 /**
+ * Situacao da assinatura paga.
+ * - `ATIVA`: em dia (ou plano gratuito, ou admin, ou cortesia vigente).
+ * - `PENDENTE`: aguardando a confirmacao de um pagamento em aberto.
+ * - `INADIMPLENTE`: venceu sem renovar — acesso rebaixado, dados preservados.
+ * - `CANCELADA`: cancelada explicitamente.
+ */
+export type StatusAssinatura = 'ATIVA' | 'PENDENTE' | 'INADIMPLENTE' | 'CANCELADA';
+
+/** Data de hoje em `YYYY-MM-DD` (base das comparacoes de vigencia). */
+function hojeISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
  * Limite base de turmas ativas simultaneas por plano.
  *
  * O teto tecnico e 99 para todos os planos pagos: o PIN da turma e de 2 digitos
@@ -63,6 +77,28 @@ export class ProfessorEntity {
   /** Meses de cortesia concedidos por cupom (ISO da data limite), se houver. */
   cortesiaAte?: string;
 
+  /** Id do cliente no gateway (Abacate Pay), reutilizado entre cobrancas. */
+  abacateCustomerId?: string;
+
+  /** Id da ultima cobranca aberta no gateway (para reconciliacao/polling). */
+  billingIdAtual?: string;
+
+  /**
+   * Situacao da assinatura. Novos professores (ESTAGIARIO) entram `ATIVA` — o
+   * plano gratuito nunca vence. Atualizado pelo webhook do gateway.
+   */
+  statusAssinatura: StatusAssinatura = 'ATIVA';
+
+  /**
+   * Vencimento da assinatura paga (ISO). Gravado a cada pagamento aprovado
+   * (hoje + 30 dias). **Ausente = conta que nunca passou pelo gateway** (mock/
+   * legado ou tier gratuito): nesse caso a vigencia e presumida (nao rebaixa).
+   */
+  assinaturaAte?: string;
+
+  /** Data do ultimo pagamento aprovado (ISO). */
+  ultimoPagamentoEm?: string;
+
   /**
    * Acesso ao backoffice. **Fonte de verdade do admin** (Firestore): gravado só
    * pelo Admin SDK (backend) ou manualmente pelo dono no Firestore Console — o
@@ -111,14 +147,41 @@ export class ProfessorEntity {
     return !!this.nomeExibicao && this.nomeExibicao.trim().length > 0;
   }
 
-  /** Gamificacao (pontuacao, ranking, portal) e exclusiva do plano PhD. */
-  get podeGamificar(): boolean {
-    return this.planoAtual === 'PHD';
+  /**
+   * Assinatura vigente em `hoje` (YYYY-MM-DD). Admin, tier gratuito e cortesia
+   * valida contam como vigentes. **Sem `assinaturaAte` a vigencia e presumida**:
+   * a conta nunca passou pelo gateway (mock/legado), entao nao rebaixamos.
+   */
+  assinaturaVigente(hoje: string = hojeISO()): boolean {
+    if (this.isAdmin) return true;
+    if (this.planoAtual === 'ESTAGIARIO') return true;
+    if (this.cortesiaAte && this.cortesiaAte.slice(0, 10) >= hoje) return true;
+    if (!this.assinaturaAte) return true;
+    return this.assinaturaAte.slice(0, 10) >= hoje;
   }
 
-  /** Verdadeiro se o plano atual alcanca (>=) o `minimo` na hierarquia. */
+  /**
+   * Plano que vale de fato para os gates. Igual ao contratado enquanto a
+   * assinatura esta vigente; cai para ESTAGIARIO quando vence (inadimplencia),
+   * **sem** reescrever `planoAtual` no banco (dados preservados — spec 012 §4).
+   */
+  planoEfetivo(hoje: string = hojeISO()): PlanoAtual {
+    return this.assinaturaVigente(hoje) ? this.planoAtual : 'ESTAGIARIO';
+  }
+
+  /** Situacao derivada da vigencia (para a view): ATIVA enquanto em dia. */
+  statusDerivado(hoje: string = hojeISO()): StatusAssinatura {
+    return this.assinaturaVigente(hoje) ? 'ATIVA' : 'INADIMPLENTE';
+  }
+
+  /** Gamificacao (pontuacao, ranking, portal) e exclusiva do plano PhD. */
+  get podeGamificar(): boolean {
+    return this.planoEfetivo() === 'PHD';
+  }
+
+  /** Verdadeiro se o plano **efetivo** alcanca (>=) o `minimo` na hierarquia. */
   atendePlano(minimo: PlanoAtual): boolean {
-    return ORDEM_PLANO.indexOf(this.planoAtual) >= ORDEM_PLANO.indexOf(minimo);
+    return ORDEM_PLANO.indexOf(this.planoEfetivo()) >= ORDEM_PLANO.indexOf(minimo);
   }
 
   /**
@@ -145,7 +208,8 @@ export class ProfessorEntity {
    * ilimitado — o pool de PINs curtos e o teto real.
    */
   get limiteTurmas(): number {
-    const base = LIMITE_BASE_PLANO[this.planoAtual] ?? LIMITE_BASE_PLANO.ESTAGIARIO;
+    const base =
+      LIMITE_BASE_PLANO[this.planoEfetivo()] ?? LIMITE_BASE_PLANO.ESTAGIARIO;
     return Math.min(base + (this.slotsAdicionaisComprados ?? 0), LIMITE_TURMAS_ATIVAS);
   }
 }

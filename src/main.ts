@@ -22,7 +22,9 @@ function origensPermitidas(): string[] {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // `rawBody: true` guarda o corpo cru das requisicoes — o webhook do gateway
+  // confere a assinatura HMAC sobre os bytes originais (quando o header vem).
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   // O refresh token da sessao viaja em cookie HttpOnly; sem o parser ele nao e lido.
   app.use(cookieParser());
   // `origin: '*'` (o default do enableCors sem argumento) e INCOMPATIVEL com

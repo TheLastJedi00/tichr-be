@@ -8,7 +8,7 @@ import {
   MinLength,
 } from 'class-validator';
 import type { PlanoAtual } from '../../professor/entities/professor.entity';
-import type { TipoCupom } from '../entities/cupom.entity';
+import type { TipoCupom, TipoDesconto } from '../entities/cupom.entity';
 
 export class CreateCupomDto {
   @IsString()
@@ -35,4 +35,15 @@ export class CreateCupomDto {
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  /** Tipo de desconto no gateway (default PERCENTAGE 100 = cortesia total). */
+  @IsOptional()
+  @IsIn(['PERCENTAGE', 'FIXED'])
+  discountKind?: TipoDesconto;
+
+  /** Valor do desconto: 1-100 (PERCENTAGE) ou centavos (FIXED). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  discount?: number;
 }
