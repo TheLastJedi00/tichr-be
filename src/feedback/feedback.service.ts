@@ -42,30 +42,60 @@ export class FeedbackService {
     return { nome, email: user?.email ?? '' };
   }
 
-  /** Destinatarios do alerta (env separada por virgula, como CORS_ORIGINS). */
-  private destinatarios(): string[] {
-    return (this.config.get<string>('ADMIN_NOTIFICATION_EMAILS') ?? '')
-      .split(',')
-      .map((e) => e.trim())
-      .filter(Boolean);
+  /**
+   * Destinatarios do alerta: os admins de verdade, `professores` com
+   * `isAdmin: true` — a mesma fonte que o `AdminGuard` le para deixar entrar no
+   * backoffice. Quem pode triar o feedback e quem fica sabendo dele: uma lista
+   * so, sem como divergir.
+   *
+   * Nao ha env de destinatarios de proposito. Uma lista em env volta a exigir
+   * redeploy para promover alguem e sai de sincronia com o `isAdmin` no primeiro
+   * esquecimento — foi por isso que o `ADMIN_EMAILS` caiu na 008.
+   *
+   * O e-mail nao esta no doc do professor, so no Firebase Auth, entao os uids
+   * viram e-mails num `getUsers`. Uma chamada so, sem paginar: o `getUsers`
+   * aceita 100 identificadores, e o backoffice tem UM admin (o dono) — chegar a
+   * 100 significaria uma mudanca de premissa bem maior que este loop.
+   */
+  private async destinatarios(): Promise<string[]> {
+    const snap = await this.firebase.firestore
+      .collection('professores')
+      .where('isAdmin', '==', true)
+      .get();
+
+    // Guarda o getUsers de uma lista vazia (a API rejeita) — e o caso de dev,
+    // onde ninguem marcou isAdmin em nada.
+    const ids = snap.docs.map((doc) => ({ uid: doc.id }));
+    if (ids.length === 0) return [];
+
+    const { users } = await this.firebase.auth.getUsers(ids);
+    return users.map((u) => u.email).filter((e): e is string => !!e);
   }
 
   /**
    * Alerta a equipe. Nao lanca: quem chama nao esta esperando (o professor ja
    * recebeu o 201) e um feedback salvo vale mais do que um alerta entregue.
    *
-   * Sem chave ou sem destinatario, so avisa e sai — espelha o GEMINI_API_KEY,
-   * menos o 503: o professor nao pode perder o relato porque o e-mail do admin
-   * esta mal configurado. Em dev, onde ninguem configura a chave, o canal
-   * continua funcionando ponta a ponta e o feedback aparece na inbox.
+   * Sem chave ou sem admin, so avisa e sai — espelha o GEMINI_API_KEY, menos o
+   * 503: o professor nao pode perder o relato porque o e-mail do admin esta mal
+   * configurado. Em dev, onde ninguem configura a chave, o canal continua
+   * funcionando ponta a ponta e o feedback aparece na inbox.
    */
   private async notificar(feedback: FeedbackEntity): Promise<void> {
+    // Chave antes da consulta: sem ela nao ha e-mail a mandar, e a busca dos
+    // admins (um query + um getUsers) seria trabalho jogado fora em todo dev.
     const apiKey = this.config.get<string>('RESEND_API_KEY');
-    const para = this.destinatarios();
-
-    if (!apiKey || para.length === 0) {
+    if (!apiKey) {
       this.logger.warn(
-        `Feedback ${feedback.id} salvo, alerta nao enviado: ${!apiKey ? 'RESEND_API_KEY' : 'ADMIN_NOTIFICATION_EMAILS'} nao configurada.`,
+        `Feedback ${feedback.id} salvo, alerta nao enviado: RESEND_API_KEY nao configurada.`,
+      );
+      return;
+    }
+
+    const para = await this.destinatarios();
+    if (para.length === 0) {
+      this.logger.warn(
+        `Feedback ${feedback.id} salvo, alerta nao enviado: nenhum professor com isAdmin: true e e-mail no Auth.`,
       );
       return;
     }

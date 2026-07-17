@@ -56,7 +56,6 @@ npm test               # testes unitários do motor (Jest)
 | `GEMINI_API_KEY` | Chave do Google Gemini (Vercel). Habilita a geração por IA do **Tichr Wor** (arsenal) e do **Tichr Qlick** (perguntas); sem ela, criação manual. |
 | `RESEND_API_KEY` | Chave da Resend — alerta por e-mail quando chega um feedback. **Não obrigatória:** sem ela o feedback é salvo normalmente e a inbox exibe *"alerta não enviado"*. O professor nunca perde o relato por causa de e-mail mal configurado. |
 | `RESEND_FROM` | Remetente do alerta (opcional, default `Tichr <nao-responda@tichr.com.br>`). O domínio precisa estar **verificado** na Resend — sem verificação, ela só entrega para o e-mail do dono da conta. |
-| `ADMIN_NOTIFICATION_EMAILS` | Quem recebe o alerta de feedback, separado por vírgula (mesmo formato do `CORS_ORIGINS`). Vazia = ninguém é avisado (o feedback continua sendo salvo). **Não confundir com quem pode entrar no backoffice** — isso é `professores/{uid}.isAdmin`, não esta env. |
 | `PORT` | Porta do servidor (opcional, default `3000`). |
 
 > A service account (Admin SDK) **não** valida senhas — por isso a Web API key é
@@ -842,10 +841,16 @@ HTML e dispara pela **Resend** (`src/feedback/resend.ts` — funções puras + `
 `identity-toolkit.ts`; sem SDK). A chamada **não é aguardada**: o professor recebe o `201` assim
 que o Firestore confirma, sem pagar a latência de um provedor externo. Mas *fire-and-forget* puro
 esconde falha, então o sucesso carimba **`notificadoEm`** e o erro vai para o `Logger` — a inbox
-exibe *"alerta não enviado"* quando o campo falta. Sem `RESEND_API_KEY` ou sem
-`ADMIN_NOTIFICATION_EMAILS`, o envio é pulado com um `warn` e **o feedback é salvo do mesmo
-jeito** (é o que acontece em dev, e é deliberado: ninguém perde um relato porque o e-mail do
-admin está mal configurado).
+exibe *"alerta não enviado"* quando o campo falta. Sem `RESEND_API_KEY` ou sem nenhum professor
+`isAdmin`, o envio é pulado com um `warn` e **o feedback é salvo do mesmo jeito** (é o que
+acontece em dev, e é deliberado: ninguém perde um relato porque o e-mail do admin está mal
+configurado).
+
+**Quem recebe.** Os destinatários são os professores com **`isAdmin: true`** no Firestore — a
+mesma fonte que o `AdminGuard` usa para liberar o backoffice, resolvida em e-mail via `getUsers`
+do Auth. Não há env de lista: quem pode triar o feedback é exatamente quem é avisado dele, e
+promover um admin pelo painel já passa a alertá-lo, sem redeploy (a lista em env foi tentada e
+descartada pelo mesmo motivo que o `ADMIN_EMAILS` caiu no controle de acesso, na 008).
 
 **O único escape de HTML do backend.** O template (`src/feedback/email-template.ts`) é a primeira
 superfície de HTML do projeto — em todo o resto quem escapa é o Angular, e o Firestore não tem

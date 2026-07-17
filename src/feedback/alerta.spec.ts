@@ -13,19 +13,45 @@ import { FeedbackService } from './feedback.service';
 describe('alerta de feedback', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  function fakeFirebase(): FirebaseService {
+  /**
+   * `admins` = docs de `professores` com isAdmin true, no formato {uid, email}.
+   * O e-mail nao mora no doc: `where(...)` devolve o uid e o `getUsers` do Auth
+   * resolve — os dois passos que o servico faz para achar quem avisar.
+   */
+  function fakeFirebase(
+    admins: { uid: string; email?: string }[] = [
+      { uid: 'adm-1', email: 'eu@tichr.com.br' },
+      { uid: 'adm-2', email: 'suporte@tichr.com.br' },
+    ],
+  ): FirebaseService {
     return {
       firestore: {
-        collection: () => ({ doc: () => ({ get: async () => ({ data: () => ({ nomeExibicao: 'Joao' }) }) }) }),
+        collection: () => ({
+          doc: () => ({
+            get: async () => ({ data: () => ({ nomeExibicao: 'Joao' }) }),
+          }),
+          where: () => ({
+            get: async () => ({ docs: admins.map((a) => ({ id: a.uid })) }),
+          }),
+        }),
       },
-      auth: { getUser: async () => ({ email: 'joao@x.com' }) },
+      auth: {
+        getUser: async () => ({ email: 'joao@x.com' }),
+        getUsers: async (ids: { uid: string }[]) => ({
+          users: ids
+            .map((i) => admins.find((a) => a.uid === i.uid))
+            .filter((a) => a?.email)
+            .map((a) => ({ uid: a!.uid, email: a!.email })),
+        }),
+      },
     } as unknown as FirebaseService;
   }
 
   function fakeRepo() {
     const updates: { id: string; data: Partial<FeedbackEntity> }[] = [];
     const repo = {
-      create: async (data: Omit<FeedbackEntity, 'id'>) => new FeedbackEntity({ ...data, id: 'fb-1' }),
+      create: async (data: Omit<FeedbackEntity, 'id'>) =>
+        new FeedbackEntity({ ...data, id: 'fb-1' }),
       update: async (id: string, data: Partial<FeedbackEntity>) => {
         updates.push({ id, data });
       },
@@ -39,7 +65,7 @@ describe('alerta de feedback', () => {
 
   function mockFetch(ok = true, body: unknown = { id: 'msg-1' }) {
     const mock = jest.fn().mockResolvedValue({ ok, json: async () => body });
-    global.fetch = mock as unknown as typeof fetch;
+    global.fetch = mock;
     return mock;
   }
 
@@ -52,7 +78,6 @@ describe('alerta de feedback', () => {
 
   const configCompleta = {
     RESEND_API_KEY: 're_123',
-    ADMIN_NOTIFICATION_EMAILS: ' eu@tichr.com.br , suporte@tichr.com.br ',
     APP_BASE_URL: 'https://tichr.com.br',
   };
 
@@ -71,10 +96,14 @@ describe('alerta de feedback', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('sem destinatarios, idem — nao tenta enviar para ninguem', async () => {
+  it('sem nenhum professor isAdmin, idem — nao tenta enviar para ninguem', async () => {
     const fetchMock = mockFetch();
     const { repo } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(), fakeConfig({ RESEND_API_KEY: 're_123' }));
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase([]),
+      fakeConfig(configCompleta),
+    );
 
     await service.criar('uid-1', dto);
     await drenar();
@@ -82,24 +111,59 @@ describe('alerta de feedback', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('com tudo configurado, envia para a lista da env (aparada)', async () => {
+  it('envia para os professores com isAdmin: true', async () => {
     const fetchMock = mockFetch();
     const { repo } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(), fakeConfig(configCompleta));
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase(),
+      fakeConfig(configCompleta),
+    );
 
     await service.criar('uid-1', dto);
     await drenar();
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const corpo = JSON.parse(init.body as string) as { to: string[]; subject: string };
+    const corpo = JSON.parse(init.body as string) as {
+      to: string[];
+      subject: string;
+    };
     expect(corpo.to).toEqual(['eu@tichr.com.br', 'suporte@tichr.com.br']);
     expect(corpo.subject).toBe('[Tichr] Relato de Bug - Joao');
+  });
+
+  // Admin promovido pelo painel mas que nunca teve e-mail no Auth: a Resend
+  // rejeita a request inteira se um destinatario vier vazio, entao ele sai da
+  // lista e os outros continuam recebendo.
+  it('admin sem e-mail no Auth e ignorado, sem derrubar o alerta dos demais', async () => {
+    const fetchMock = mockFetch();
+    const { repo } = fakeRepo();
+    const admins = [
+      { uid: 'adm-1', email: 'eu@tichr.com.br' },
+      { uid: 'adm-2' },
+    ];
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase(admins),
+      fakeConfig(configCompleta),
+    );
+
+    await service.criar('uid-1', dto);
+    await drenar();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const corpo = JSON.parse(init.body as string) as { to: string[] };
+    expect(corpo.to).toEqual(['eu@tichr.com.br']);
   });
 
   it('envio bem-sucedido carimba notificadoEm', async () => {
     mockFetch();
     const { repo, updates } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(), fakeConfig(configCompleta));
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase(),
+      fakeConfig(configCompleta),
+    );
 
     await service.criar('uid-1', dto);
     await drenar();
@@ -113,8 +177,14 @@ describe('alerta de feedback', () => {
     // exatamente a regressao que ele existe para impedir.
     mockFetch(false, { name: 'domain_not_verified' });
     const { repo, updates } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(), fakeConfig(configCompleta));
-    const erro = jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase(),
+      fakeConfig(configCompleta),
+    );
+    const erro = jest
+      .spyOn(service['logger'], 'error')
+      .mockImplementation(() => undefined);
 
     const salvo = await service.criar('uid-1', dto);
     await drenar();
@@ -125,12 +195,18 @@ describe('alerta de feedback', () => {
   });
 
   it('rede caindo tambem nao derruba o envio', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
+    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNRESET'));
     const { repo } = fakeRepo();
-    const service = new FeedbackService(repo, fakeFirebase(), fakeConfig(configCompleta));
+    const service = new FeedbackService(
+      repo,
+      fakeFirebase(),
+      fakeConfig(configCompleta),
+    );
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
 
-    await expect(service.criar('uid-1', dto)).resolves.toBeInstanceOf(FeedbackEntity);
+    await expect(service.criar('uid-1', dto)).resolves.toBeInstanceOf(
+      FeedbackEntity,
+    );
     await drenar();
   });
 });
