@@ -14,6 +14,7 @@ import { CupomModule } from './cupom/cupom.module';
 import { WorModule } from './wor/wor.module';
 import { IsolateusModule } from './isolateus/isolateus.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { CheckoutModule } from './checkout/checkout.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     WorModule,
     IsolateusModule,
     FeedbackModule,
+    CheckoutModule,
   ],
   controllers: [AppController],
   providers: [AppService],
