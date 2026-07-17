@@ -491,8 +491,9 @@ os mesmos, todos opcionais, + `encerradaManualmente?`.
 > `billing.paid` chega. PIX é inline (QR + copia-e-cola); cartão redireciona para o checkout
 > hospedado. Recorrência é **PIX one-time mensal** (`assinaturaAte` = hoje+30d por pagamento);
 > vencer sem renovar rebaixa o **plano efetivo** para ESTAGIARIO na interface, **sem apagar dados**.
-> Admin é **isento** de cobrança. Ver `AbacatePayService` (SDK oficial `@abacatepay/sdk`, v2,
-> carregado por import dinâmico — é ESM-only).
+> Admin é **isento** de cobrança. O `AbacatePayService` fala a **REST v2** direto (`fetch`, molde do
+> `GeminiService`) — o SDK oficial `@abacatepay/sdk` foi avaliado mas envia o corpo do PIX no formato
+> errado (422 contra a API ao vivo), então não é usado. Validado em devMode (create → simulate → paid).
 
 ### Alunos e gamificação
 | Método | Rota | Corpo | Resposta |

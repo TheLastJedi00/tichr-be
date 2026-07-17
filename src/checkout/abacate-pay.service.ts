@@ -1,6 +1,9 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+/** Base da API v2 da Abacate Pay. */
+const API_BASE = 'https://api.abacatepay.com/v2';
+
 /** Status de um pagamento na Abacate Pay (espelha o enum do gateway). */
 export type StatusPagamento =
   | 'PENDING'
@@ -31,55 +34,32 @@ export interface CupomGateway {
   status: string;
 }
 
-/**
- * Superfície mínima do client v2 do `@abacatepay/sdk` que consumimos. O SDK é
- * fortemente tipado, mas tem quirks conhecidos nos tipos (ex.: `metadata` como
- * `Record<string, object>`); tipamos aqui só o que usamos e fazemos o cast no
- * ponto de chamada. O client v2 já desembrulha `{ data, error }` e lança em erro.
- */
-interface AbacateClient {
-  pix: {
-    create(body: Record<string, unknown>): Promise<{
-      id: string;
-      brCode: string;
-      brCodeBase64: string;
-      status: StatusPagamento;
-      expiresAt?: string;
-    }>;
-    simulate(id: string): Promise<{ status: StatusPagamento }>;
-    status(id: string): Promise<{ status: StatusPagamento }>;
-  };
-  checkouts: {
-    create(body: Record<string, unknown>): Promise<{
-      id: string;
-      url: string;
-      status: StatusPagamento;
-    }>;
-    get(id: string): Promise<{ status: StatusPagamento }>;
-  };
-  coupons: {
-    create(body: Record<string, unknown>): Promise<{ id: string; status: string }>;
-  };
-  products: {
-    create(body: Record<string, unknown>): Promise<{ id: string }>;
-    get(query: Record<string, unknown>): Promise<{ id: string } | null>;
-  };
+/** Envelope padrão de resposta da API (`{ success, data, error }`). */
+interface RespostaApi<T> {
+  success?: boolean;
+  data?: T;
+  error?: string | null;
 }
 
 /**
- * Integração com a Abacate Pay via SDK oficial novo (`@abacatepay/sdk`, v2). A
- * chave (`ABACATE_API_KEY`) fica no ambiente (Vercel em produção); sem chave,
- * `disponivel()` é falso e o chamador trata como indisponível.
+ * Integração com a Abacate Pay (API v2) via REST (`fetch`), no mesmo molde de
+ * integração externa do projeto (`GeminiService`/`resend`): `ConfigService` para
+ * a chave (`ABACATE_API_KEY`) + `fetch` + erro upstream em 503.
  *
- * O SDK é **ESM-only** (`"type": "module"`) e o backend compila para CommonJS —
- * por isso o client é carregado via `import()` dinâmico (preservado nativo pelo
- * `module: nodenext`), inicializado uma vez e cacheado. Segue o mesmo molde de
- * integração externa do `GeminiService`: `ConfigService` + erro upstream em 503.
+ * **Por que REST e não o SDK `@abacatepay/sdk`:** o SDK (v2) envia o corpo do
+ * PIX achatado (`{ amount }`), mas a API v2 exige `{ method: 'PIX', data: {…} }`
+ * — o SDK responde 422 contra a API ao vivo (verificado em devMode). Chamamos a
+ * REST diretamente, que é o padrão já usado em Gemini/Resend/Identity Toolkit.
+ *
+ * Endpoints v2 (todos com resposta `{ success, data, error }`):
+ * - PIX:     `POST /transparents/create` `{ method:'PIX', data:{ amount, … } }`,
+ *            `GET /transparents/check?id=`, `POST /transparents/simulate-payment?id=`
+ * - Cartão:  `POST /products/create` → id; `POST /checkouts/create`
+ *            `{ methods:['CARD'], items:[{ id, quantity }], … }`; `GET /checkouts/get?id=`
+ * - Cupom:   `POST /coupons/create` `{ code, discount, discountKind, … }`
  */
 @Injectable()
 export class AbacatePayService {
-  /** Client já inicializado (cacheado — o SDK é carregado uma única vez). */
-  private clientePromise?: Promise<AbacateClient>;
   /** externalId do produto → id interno na Abacate (evita recriar no cartão). */
   private readonly produtoCache = new Map<string, string>();
 
@@ -92,41 +72,59 @@ export class AbacatePayService {
 
   /**
    * Ambiente de testes do gateway (permite `simulate` de pagamento). Default
-   * `true`; só vira produção com `ABACATE_DEV_MODE='false'` no ambiente.
+   * `true`; só vira produção com `ABACATE_DEV_MODE='false'`. **Observação:** o
+   * ambiente real (teste × produção) é definido pela própria chave (`abc_dev_` ×
+   * `abc_prod_`); este flag apenas libera/oculta o endpoint de simulação no app.
    */
   get devMode(): boolean {
     return this.config.get<string>('ABACATE_DEV_MODE') !== 'false';
   }
 
-  private async client(): Promise<AbacateClient> {
-    const secret = this.config.get<string>('ABACATE_API_KEY');
-    if (!secret) {
+  /** Chamada REST autenticada; normaliza o envelope e o erro upstream em 503. */
+  private async req<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<T> {
+    const key = this.config.get<string>('ABACATE_API_KEY');
+    if (!key) {
       throw new ServiceUnavailableException({
         code: 'PAGAMENTO_SEM_CHAVE',
         message: 'Pagamento indisponível (chave não configurada no servidor).',
       });
     }
-    if (!this.clientePromise) {
-      this.clientePromise = import('@abacatepay/sdk').then((m) =>
-        (m.AbacatePay as (o: { secret: string }) => AbacateClient)({ secret }),
-      );
-    }
-    return this.clientePromise;
-  }
 
-  /** Executa uma chamada ao gateway normalizando o erro upstream em 503. */
-  private async chamar<T>(fn: (c: AbacateClient) => Promise<T>): Promise<T> {
-    const client = await this.client();
+    let res: Response;
     try {
-      return await fn(client);
+      res = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
     } catch (e) {
       const detalhe = e instanceof Error ? e.message : String(e);
-      console.error(`[AbacatePay] falha upstream: ${detalhe}`);
-      throw new ServiceUnavailableException({
-        code: 'PAGAMENTO_UPSTREAM',
-        message: 'O provedor de pagamento não respondeu. Tente novamente.',
-      });
+      console.error(`[AbacatePay] rede ${method} ${path}: ${detalhe}`);
+      throw this.upstream();
     }
+
+    const json = (await res.json().catch(() => null)) as RespostaApi<T> | null;
+    if (!res.ok || !json || json.success === false || json.error) {
+      console.error(
+        `[AbacatePay] ${method} ${path} -> ${res.status} ${json?.error ?? ''}`,
+      );
+      throw this.upstream();
+    }
+    return json.data as T;
+  }
+
+  private upstream(): ServiceUnavailableException {
+    return new ServiceUnavailableException({
+      code: 'PAGAMENTO_UPSTREAM',
+      message: 'O provedor de pagamento não respondeu. Tente novamente.',
+    });
   }
 
   /** Cria uma cobrança PIX de valor único (retorna QR + copia-e-cola). */
@@ -136,20 +134,27 @@ export class AbacatePayService {
     expiraEmSegundos?: number;
     metadata?: Record<string, unknown>;
   }): Promise<CobrancaPix> {
-    const pix = await this.chamar((c) =>
-      c.pix.create({
+    const d = await this.req<{
+      id: string;
+      brCode: string;
+      brCodeBase64: string;
+      status: StatusPagamento;
+      expiresAt?: string;
+    }>('POST', '/transparents/create', {
+      method: 'PIX',
+      data: {
         amount: input.valorCentavos,
         description: input.descricao,
         expiresIn: input.expiraEmSegundos ?? 60 * 30,
-        metadata: input.metadata,
-      }),
-    );
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+      },
+    });
     return {
-      id: pix.id,
-      brCode: pix.brCode,
-      brCodeBase64: pix.brCodeBase64,
-      status: pix.status,
-      expiraEm: pix.expiresAt,
+      id: d.id,
+      brCode: d.brCode,
+      brCodeBase64: d.brCodeBase64,
+      status: d.status,
+      expiraEm: d.expiresAt,
     };
   }
 
@@ -172,32 +177,47 @@ export class AbacatePayService {
       input.nome,
       input.valorCentavos,
     );
-    const checkout = await this.chamar((c) =>
-      c.checkouts.create({
-        methods: 'CARD',
+    const d = await this.req<{ id: string; url: string; status: StatusPagamento }>(
+      'POST',
+      '/checkouts/create',
+      {
+        methods: ['CARD'],
         items: [{ id: produtoId, quantity: 1 }],
         returnUrl: input.returnUrl,
         completionUrl: input.completionUrl,
         externalId: input.professorId,
         ...(input.cupons?.length ? { coupons: input.cupons } : {}),
-      }),
+      },
     );
-    return { id: checkout.id, url: checkout.url, status: checkout.status };
+    return { id: d.id, url: d.url, status: d.status };
   }
 
   /** Consulta o status de uma cobrança PIX. */
   async consultarStatusPix(id: string): Promise<StatusPagamento> {
-    return (await this.chamar((c) => c.pix.status(id))).status;
+    const d = await this.req<{ status: StatusPagamento }>(
+      'GET',
+      `/transparents/check?id=${encodeURIComponent(id)}`,
+    );
+    return d.status;
   }
 
   /** Consulta o status de um checkout (cartão). */
   async consultarStatusCheckout(id: string): Promise<StatusPagamento> {
-    return (await this.chamar((c) => c.checkouts.get(id))).status;
+    const d = await this.req<{ status: StatusPagamento }>(
+      'GET',
+      `/checkouts/get?id=${encodeURIComponent(id)}`,
+    );
+    return d.status;
   }
 
   /** Simula o pagamento de uma cobrança PIX (só em devMode). */
   async simularPagamentoPix(id: string): Promise<StatusPagamento> {
-    return (await this.chamar((c) => c.pix.simulate(id))).status;
+    const d = await this.req<{ status: StatusPagamento }>(
+      'POST',
+      `/transparents/simulate-payment?id=${encodeURIComponent(id)}`,
+      {},
+    );
+    return d.status;
   }
 
   /** Cria um cupom real no gateway (espelho do cupom criado pelo admin). */
@@ -208,16 +228,18 @@ export class AbacatePayService {
     notes?: string;
     maxRedeems?: number;
   }): Promise<CupomGateway> {
-    const cupom = await this.chamar((c) =>
-      c.coupons.create({
+    const d = await this.req<{ id: string; status: string }>(
+      'POST',
+      '/coupons/create',
+      {
         code: input.codigo,
         discount: input.discount,
         discountKind: input.discountKind,
         notes: input.notes,
         maxRedeems: input.maxRedeems ?? -1,
-      }),
+      },
     );
-    return { id: cupom.id, status: cupom.status };
+    return { id: d.id, status: d.status };
   }
 
   /** Garante um produto no catálogo do gateway por `externalId` (cacheado). */
@@ -229,21 +251,25 @@ export class AbacatePayService {
     const cacheado = this.produtoCache.get(externalId);
     if (cacheado) return cacheado;
 
-    const id = await this.chamar(async (c) => {
-      try {
-        const achado = await c.products.get({ externalId });
-        if (achado?.id) return achado.id;
-      } catch {
-        // Produto ainda não existe — cria abaixo.
-      }
-      const criado = await c.products.create({
+    let id: string | undefined;
+    try {
+      const achado = await this.req<{ id: string }>(
+        'GET',
+        `/products/get?externalId=${encodeURIComponent(externalId)}`,
+      );
+      id = achado?.id;
+    } catch {
+      // Produto ainda não existe — cria abaixo.
+    }
+    if (!id) {
+      const criado = await this.req<{ id: string }>('POST', '/products/create', {
         externalId,
         name: nome,
         price: valorCentavos,
         currency: 'BRL',
       });
-      return criado.id;
-    });
+      id = criado.id;
+    }
 
     this.produtoCache.set(externalId, id);
     return id;
