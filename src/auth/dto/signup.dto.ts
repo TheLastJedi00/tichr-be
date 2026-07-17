@@ -2,11 +2,14 @@ import {
   Equals,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import type { PlanoAtual } from '../../professor/entities/professor.entity';
 
 /**
  * Cadastro: nome + e-mail + senha, com aceite obrigatorio dos documentos legais
@@ -33,4 +36,13 @@ export class SignupDto {
   @IsBoolean()
   @Equals(true, { message: 'E preciso aceitar a Politica de Privacidade.' })
   aceitePrivacidade: boolean;
+
+  /**
+   * Plano escolhido na vitrine/cadastro. A conta nasce ESTAGIARIO; se este for um
+   * plano pago, fica registrado como **plano pretendido** para levar ao checkout
+   * apos a confirmacao do e-mail (fonte de verdade no servidor).
+   */
+  @IsOptional()
+  @IsIn(['ESTAGIARIO', 'GRADUADO', 'MESTRE', 'PHD'])
+  planoPretendido?: PlanoAtual;
 }

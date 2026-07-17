@@ -38,7 +38,7 @@ describe('AuthService — verificacao de e-mail', () => {
       expect(JSON.parse(init.body as string)).toEqual({
         requestType: 'VERIFY_EMAIL',
         idToken: 'id-token',
-        continueUrl: 'https://tichr.com.br/login',
+        continueUrl: 'https://tichr.com.br/dashboard',
       });
     });
   });

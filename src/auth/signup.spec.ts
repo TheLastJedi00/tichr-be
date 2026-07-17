@@ -61,6 +61,21 @@ describe('AuthService — cadastro e admin', () => {
       expect(typeof gravado.aceitePrivacidadeEm).toBe('string');
     });
 
+    it('grava planoPretendido quando o plano escolhido e pago', async () => {
+      mockFetch(true, { idToken: 'tok', refreshToken: 'r', expiresIn: '3600', localId: 'uid1', email: 'a@b.com' });
+      await service.signup('a@b.com', 'segredo', 'Ana', true, true, 'MESTRE');
+      expect(setDoc).toHaveBeenCalledWith(
+        expect.objectContaining({ planoPretendido: 'MESTRE' }),
+        { merge: true },
+      );
+    });
+
+    it('NAO grava planoPretendido para ESTAGIARIO (gratuito)', async () => {
+      mockFetch(true, { idToken: 'tok', refreshToken: 'r', expiresIn: '3600', localId: 'uid1', email: 'a@b.com' });
+      await service.signup('a@b.com', 'segredo', 'Ana', true, true, 'ESTAGIARIO');
+      expect(setDoc.mock.calls[0][0]).not.toHaveProperty('planoPretendido');
+    });
+
     it('rejeita sem aceite dos termos, antes de tocar a rede', async () => {
       const fetchMock = jest.fn();
       (global as unknown as { fetch: unknown }).fetch = fetchMock;

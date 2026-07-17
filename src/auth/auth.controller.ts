@@ -60,6 +60,7 @@ export class AuthController {
       dto.nome,
       dto.aceiteTermos,
       dto.aceitePrivacidade,
+      dto.planoPretendido,
     );
     gravarCookieRefresh(res, sessao.refreshToken);
     return semRefresh(sessao);

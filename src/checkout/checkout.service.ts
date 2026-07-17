@@ -282,6 +282,7 @@ export class CheckoutService {
           ultimoPagamentoEm: nowISO,
           statusAssinatura: 'ATIVA',
           billingIdAtual: cob.id,
+          planoPretendido: null, // pago: nao ha mais checkout pendente
         };
       } else {
         update = {
