@@ -39,6 +39,52 @@ describe('Regras de plano e cota', () => {
     });
   });
 
+  describe('ProfessorEntity.planoEfetivo (inadimplencia)', () => {
+    const hoje = '2026-07-17';
+    const ontem = '2026-07-16T00:00:00.000Z';
+    const amanha = '2026-08-16T00:00:00.000Z';
+
+    it('mantem o plano enquanto a assinatura esta vigente', () => {
+      const prof = new ProfessorEntity({ planoAtual: 'MESTRE', assinaturaAte: amanha });
+      expect(prof.planoEfetivo(hoje)).toBe('MESTRE');
+      expect(prof.statusDerivado(hoje)).toBe('ATIVA');
+      expect(prof.atendePlano('MESTRE')).toBe(true);
+    });
+
+    it('cai para ESTAGIARIO quando a assinatura vence (dados preservados)', () => {
+      const prof = new ProfessorEntity({ planoAtual: 'MESTRE', assinaturaAte: ontem });
+      expect(prof.planoEfetivo(hoje)).toBe('ESTAGIARIO');
+      expect(prof.statusDerivado(hoje)).toBe('INADIMPLENTE');
+      // planoAtual (o contratado) NAO e reescrito — so o efetivo cai.
+      expect(prof.planoAtual).toBe('MESTRE');
+    });
+
+    it('conta legada/mock (sem assinaturaAte) segue vigente — nao rebaixa', () => {
+      const prof = new ProfessorEntity({ planoAtual: 'PHD' });
+      expect(prof.planoEfetivo(hoje)).toBe('PHD');
+      expect(prof.podeGamificar).toBe(true);
+    });
+
+    it('admin e isento — vencido segue no plano cheio', () => {
+      const prof = new ProfessorEntity({
+        planoAtual: 'PHD',
+        assinaturaAte: ontem,
+        isAdmin: true,
+      });
+      expect(prof.planoEfetivo(hoje)).toBe('PHD');
+      expect(prof.statusDerivado(hoje)).toBe('ATIVA');
+    });
+
+    it('cortesia vigente cobre mesmo sem assinatura paga', () => {
+      const prof = new ProfessorEntity({
+        planoAtual: 'MESTRE',
+        assinaturaAte: ontem,
+        cortesiaAte: amanha,
+      });
+      expect(prof.planoEfetivo(hoje)).toBe('MESTRE');
+    });
+  });
+
   describe('TurmaEntity.contaComoAtiva', () => {
     const hoje = '2026-07-02';
 

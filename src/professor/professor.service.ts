@@ -2,7 +2,11 @@ import { BadRequestException, ConflictException, Injectable } from '@nestjs/comm
 import { randomUUID } from 'crypto';
 import { FirebaseService } from '../firebase/firebase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { PlanoAtual, ProfessorEntity } from './entities/professor.entity';
+import {
+  PlanoAtual,
+  ProfessorEntity,
+  StatusAssinatura,
+} from './entities/professor.entity';
 import { ProfessorRepository } from './professor.repository';
 
 /** Teto do avatar ja comprimido pelo front (~50KB); a folga cobre variacao do JPEG. */
@@ -20,7 +24,16 @@ export interface ProfessorView {
   username?: string;
   avatarUrl?: string;
   disciplinas?: string[];
+  /** Plano que vale para os gates (efetivo — cai para ESTAGIARIO se inadimplente). */
   planoAtual: PlanoAtual;
+  /** Plano contratado (o que o professor paga) — para a tela de plano e o CTA de renovar. */
+  planoContratado: PlanoAtual;
+  /** Situacao da assinatura (ATIVA enquanto em dia; INADIMPLENTE se venceu). */
+  statusAssinatura: StatusAssinatura;
+  /** Vencimento da assinatura paga (ISO), se houver. */
+  assinaturaAte?: string;
+  /** Plano pago escolhido no cadastro e ainda nao pago (leva ao checkout). */
+  planoPretendido?: PlanoAtual;
   slotsAdicionaisComprados: number;
   podeAlterarUsername: boolean;
   diasParaTrocarUsername: number;
@@ -90,7 +103,13 @@ export class ProfessorService {
       username: p.username,
       avatarUrl: p.avatarUrl,
       disciplinas: p.disciplinas,
-      planoAtual: p.planoAtual,
+      // planoAtual da view = plano EFETIVO: os gates do front (limites, recursos)
+      // ja respeitam a inadimplencia sem conhecer a regra. O contratado vai a parte.
+      planoAtual: p.planoEfetivo(),
+      planoContratado: p.planoAtual,
+      statusAssinatura: p.statusDerivado(),
+      assinaturaAte: p.assinaturaAte,
+      planoPretendido: p.planoPretendido,
       slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
       podeAlterarUsername: p.podeAlterarUsername(),
       diasParaTrocarUsername: p.diasParaTrocarUsername(),
@@ -167,6 +186,22 @@ export class ProfessorService {
   /** Faz upgrade/downgrade do nivel academico do professor. */
   async alterarPlano(uid: string, plano: PlanoAtual): Promise<ProfessorEntity> {
     return this.repo.upsert(uid, { planoAtual: plano });
+  }
+
+  /** Registra o id da cobranca aberta no gateway (para reconciliacao/polling). */
+  async registrarBillingAtual(uid: string, billingId: string): Promise<void> {
+    await this.repo.upsert(uid, { billingIdAtual: billingId });
+  }
+
+  /**
+   * Descarta o plano pretendido (checkout pendente). Chamado quando o professor
+   * chega a tela de pagamento, para nao ficar sendo levado la a cada navegacao
+   * se ele desistir. A concessao efetiva do plano tambem limpa (no webhook).
+   */
+  async descartarPlanoPretendido(uid: string): Promise<void> {
+    await this.repo.upsert(uid, {
+      planoPretendido: null,
+    } as unknown as Partial<ProfessorEntity>);
   }
 
   /** Registra o uso da IA do Tichr Wor agora (base do rate limit diario). */

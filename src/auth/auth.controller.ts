@@ -60,6 +60,7 @@ export class AuthController {
       dto.nome,
       dto.aceiteTermos,
       dto.aceitePrivacidade,
+      dto.planoPretendido,
     );
     gravarCookieRefresh(res, sessao.refreshToken);
     return semRefresh(sessao);
@@ -128,7 +129,13 @@ export class AuthController {
     return this.authService.enviarVerificacao(extrairIdToken(req));
   }
 
-  /** E-mail atual + status, para a pagina de Seguranca. */
+  /**
+   * E-mail atual + status. Usado pela pagina de Seguranca (verificado) E pela
+   * tela de espera de confirmacao (ainda NAO verificado) — por isso e
+   * @SemVerificacao: sem ela, a tela de espera tomaria 403 e o interceptor
+   * redirecionaria (perdendo query params e sem exibir o e-mail).
+   */
+  @SemVerificacao()
   @Get('conta')
   conta(@ProfessorId() uid: string): Promise<ContaAuth> {
     return this.authService.conta(uid);
