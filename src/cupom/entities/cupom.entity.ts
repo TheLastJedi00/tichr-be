@@ -3,6 +3,9 @@ import type { PlanoAtual } from '../../professor/entities/professor.entity';
 /** Tipo de benefIcio do cupom. */
 export type TipoCupom = 'PLANO_GRATIS' | 'MESES_GRATIS';
 
+/** Tipo de desconto do cupom no gateway (Abacate Pay). */
+export type TipoDesconto = 'PERCENTAGE' | 'FIXED';
+
 /**
  * Cupom promocional. Documento em `cupons`. O `codigo` e normalizado em
  * maiUsculas e serve de chave de busca no checkout.
@@ -25,6 +28,18 @@ export class CupomEntity {
 
   /** Limite de usos; indefinido = ilimitado. */
   maxUsos?: number;
+
+  /**
+   * Id do cupom espelhado na Abacate Pay. Preenchido quando o gateway esta
+   * configurado — permite aplicar o desconto na cobranca (`coupons` no checkout).
+   */
+  abacateCupomId?: string;
+
+  /** Tipo de desconto no gateway (default PERCENTAGE 100 = cortesia total). */
+  discountKind?: TipoDesconto;
+
+  /** Valor do desconto: 1-100 para PERCENTAGE; centavos para FIXED. */
+  discount?: number;
 
   constructor(partial: Partial<CupomEntity> = {}) {
     Object.assign(this, partial);
