@@ -2,7 +2,11 @@ import { BadRequestException, ConflictException, Injectable } from '@nestjs/comm
 import { randomUUID } from 'crypto';
 import { FirebaseService } from '../firebase/firebase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { PlanoAtual, ProfessorEntity } from './entities/professor.entity';
+import {
+  PlanoAtual,
+  ProfessorEntity,
+  StatusAssinatura,
+} from './entities/professor.entity';
 import { ProfessorRepository } from './professor.repository';
 
 /** Teto do avatar ja comprimido pelo front (~50KB); a folga cobre variacao do JPEG. */
@@ -20,7 +24,14 @@ export interface ProfessorView {
   username?: string;
   avatarUrl?: string;
   disciplinas?: string[];
+  /** Plano que vale para os gates (efetivo — cai para ESTAGIARIO se inadimplente). */
   planoAtual: PlanoAtual;
+  /** Plano contratado (o que o professor paga) — para a tela de plano e o CTA de renovar. */
+  planoContratado: PlanoAtual;
+  /** Situacao da assinatura (ATIVA enquanto em dia; INADIMPLENTE se venceu). */
+  statusAssinatura: StatusAssinatura;
+  /** Vencimento da assinatura paga (ISO), se houver. */
+  assinaturaAte?: string;
   slotsAdicionaisComprados: number;
   podeAlterarUsername: boolean;
   diasParaTrocarUsername: number;
@@ -90,7 +101,12 @@ export class ProfessorService {
       username: p.username,
       avatarUrl: p.avatarUrl,
       disciplinas: p.disciplinas,
-      planoAtual: p.planoAtual,
+      // planoAtual da view = plano EFETIVO: os gates do front (limites, recursos)
+      // ja respeitam a inadimplencia sem conhecer a regra. O contratado vai a parte.
+      planoAtual: p.planoEfetivo(),
+      planoContratado: p.planoAtual,
+      statusAssinatura: p.statusDerivado(),
+      assinaturaAte: p.assinaturaAte,
       slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
       podeAlterarUsername: p.podeAlterarUsername(),
       diasParaTrocarUsername: p.diasParaTrocarUsername(),
