@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { DecodedIdToken } from 'firebase-admin/auth';
 import { appBaseUrl } from '../common/app-url.util';
 import { FirebaseService } from '../firebase/firebase.service';
+import type { PlanoAtual } from '../professor/entities/professor.entity';
 import { TurmaEntity } from '../turma/entities/turma.entity';
 import { StudentTokenPayload } from './auth.types';
 import {
@@ -196,6 +197,7 @@ export class AuthService {
     nome: string,
     aceiteTermos: boolean,
     aceitePrivacidade: boolean,
+    planoPretendido?: PlanoAtual,
   ): Promise<LoginResult> {
     if (!aceiteTermos || !aceitePrivacidade) {
       throw new BadRequestException(
@@ -209,7 +211,13 @@ export class AuthService {
     );
 
     // Provisiona o perfil (ESTAGIARIO) ja com o nome e o registro de consentimento.
+    // Plano pago escolhido no cadastro vira `planoPretendido` (fonte de verdade
+    // no servidor) — leva ao checkout apos a confirmacao do e-mail.
     const agora = new Date().toISOString();
+    const pretendidoPago =
+      planoPretendido && planoPretendido !== 'ESTAGIARIO'
+        ? planoPretendido
+        : undefined;
     await this.firebase.firestore.collection('professores').doc(tokens.uid).set(
       {
         nomeExibicao: nome.trim(),
@@ -218,6 +226,7 @@ export class AuthService {
         aceiteTermosEm: agora,
         aceitePrivacidadeEm: agora,
         versaoDocumentosLegais: VERSAO_DOCUMENTOS_LEGAIS,
+        ...(pretendidoPago ? { planoPretendido: pretendidoPago } : {}),
       },
       { merge: true },
     );
@@ -245,7 +254,9 @@ export class AuthService {
     await sendOobCode(this.apiKey(), {
       requestType: 'VERIFY_EMAIL',
       idToken,
-      continueUrl: `${this.appBaseUrl()}/login`,
+      // Volta para o painel (nao /login): usuario ja autenticado, e o authGuard
+      // encaminha ao checkout se houver plano pretendido.
+      continueUrl: `${this.appBaseUrl()}/dashboard`,
     }).catch((erro: unknown) => {
       // O `comoHttp` traduz para uma mensagem generica, boa para o professor e
       // inutil para nos: sem isto, um UNAUTHORIZED_DOMAIN vira "nao foi possivel

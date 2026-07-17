@@ -100,6 +100,13 @@ export class ProfessorEntity {
   ultimoPagamentoEm?: string;
 
   /**
+   * Plano pago escolhido no cadastro, ainda nao pago. **Fonte de verdade** do
+   * "checkout pendente": o front leva ao pagamento apos a confirmacao do e-mail.
+   * Limpo ao conceder o plano ou ao abrir o checkout (descarte).
+   */
+  planoPretendido?: PlanoAtual;
+
+  /**
    * Acesso ao backoffice. **Fonte de verdade do admin** (Firestore): gravado só
    * pelo Admin SDK (backend) ou manualmente pelo dono no Firestore Console — o
    * `UpdateProfileDto` não expõe o campo, então o professor não se auto-promove.

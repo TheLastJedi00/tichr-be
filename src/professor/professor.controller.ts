@@ -68,6 +68,16 @@ export class ProfessorController {
   }
 
   /**
+   * Descarta o "plano pretendido" (checkout pendente do cadastro). A tela de
+   * pagamento chama isto ao abrir, para o professor não ser levado de volta ao
+   * checkout a cada navegação caso desista de pagar.
+   */
+  @Delete('plano-pretendido')
+  descartarPlanoPretendido(@ProfessorId() uid: string): Promise<void> {
+    return this.professorService.descartarPlanoPretendido(uid);
+  }
+
+  /**
    * Auto-exclusão da conta (direito LGPD). Exige a senha para reautenticação e
    * faz o hard delete em cascata (turmas/alunos/jogos + login). Irreversível.
    *

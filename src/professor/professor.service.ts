@@ -32,6 +32,8 @@ export interface ProfessorView {
   statusAssinatura: StatusAssinatura;
   /** Vencimento da assinatura paga (ISO), se houver. */
   assinaturaAte?: string;
+  /** Plano pago escolhido no cadastro e ainda nao pago (leva ao checkout). */
+  planoPretendido?: PlanoAtual;
   slotsAdicionaisComprados: number;
   podeAlterarUsername: boolean;
   diasParaTrocarUsername: number;
@@ -107,6 +109,7 @@ export class ProfessorService {
       planoContratado: p.planoAtual,
       statusAssinatura: p.statusDerivado(),
       assinaturaAte: p.assinaturaAte,
+      planoPretendido: p.planoPretendido,
       slotsAdicionaisComprados: p.slotsAdicionaisComprados ?? 0,
       podeAlterarUsername: p.podeAlterarUsername(),
       diasParaTrocarUsername: p.diasParaTrocarUsername(),
@@ -188,6 +191,17 @@ export class ProfessorService {
   /** Registra o id da cobranca aberta no gateway (para reconciliacao/polling). */
   async registrarBillingAtual(uid: string, billingId: string): Promise<void> {
     await this.repo.upsert(uid, { billingIdAtual: billingId });
+  }
+
+  /**
+   * Descarta o plano pretendido (checkout pendente). Chamado quando o professor
+   * chega a tela de pagamento, para nao ficar sendo levado la a cada navegacao
+   * se ele desistir. A concessao efetiva do plano tambem limpa (no webhook).
+   */
+  async descartarPlanoPretendido(uid: string): Promise<void> {
+    await this.repo.upsert(uid, {
+      planoPretendido: null,
+    } as unknown as Partial<ProfessorEntity>);
   }
 
   /** Registra o uso da IA do Tichr Wor agora (base do rate limit diario). */
