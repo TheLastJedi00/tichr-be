@@ -185,6 +185,11 @@ export class ProfessorService {
     return this.repo.upsert(uid, { planoAtual: plano });
   }
 
+  /** Registra o id da cobranca aberta no gateway (para reconciliacao/polling). */
+  async registrarBillingAtual(uid: string, billingId: string): Promise<void> {
+    await this.repo.upsert(uid, { billingIdAtual: billingId });
+  }
+
   /** Registra o uso da IA do Tichr Wor agora (base do rate limit diario). */
   async marcarUsoIaWor(uid: string): Promise<void> {
     await this.repo.upsert(uid, { worIaUltimoUso: new Date().toISOString() });
