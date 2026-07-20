@@ -9,6 +9,7 @@ import { TurmaService } from '../turma/turma.service';
 import { PalavraWor, WorJogoEntity } from './entities/wor-jogo.entity';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { CreateWorJogoDto, PalavraWorDto } from './dto/create-wor-jogo.dto';
+import { assertTurmaOuDisciplina } from '../common/vinculo-jogo.util';
 
 /** CRUD do arsenal (definição de batalhas do Tichr Wor). */
 @Injectable()
@@ -65,6 +66,7 @@ export class WorJogoService {
 
   async criar(professorId: string, dto: CreateWorJogoDto): Promise<WorJogoEntity> {
     await this.assertPhd(professorId);
+    assertTurmaOuDisciplina(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     return this.repo.create(
       new WorJogoEntity({
@@ -72,6 +74,7 @@ export class WorJogoService {
         nome: dto.nome.trim(),
         disciplina: dto.disciplina?.trim(),
         topicoId: dto.topicoId,
+        numeroAula: dto.numeroAula,
         turmaIds,
         turmaId: turmaIds[0], // mantém o campo legado apontando p/ a 1ª turma
         palavras: WorJogoService.normalizarPalavras(dto.palavras),
@@ -85,11 +88,13 @@ export class WorJogoService {
     dto: CreateWorJogoDto,
   ): Promise<WorJogoEntity> {
     await this.obter(professorId, id);
+    assertTurmaOuDisciplina(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     await this.repo.update(id, {
       nome: dto.nome.trim(),
       disciplina: dto.disciplina?.trim() ?? null,
       topicoId: dto.topicoId ?? null,
+      numeroAula: dto.numeroAula ?? null,
       turmaIds,
       turmaId: turmaIds[0] ?? null,
       palavras: WorJogoService.normalizarPalavras(dto.palavras),

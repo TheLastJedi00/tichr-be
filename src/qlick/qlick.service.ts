@@ -9,6 +9,7 @@ import { TurmaService } from '../turma/turma.service';
 import { CreateQlickDto } from './dto/create-qlick.dto';
 import { QlickEntity } from './entities/qlick.entity';
 import { QlickRepository } from './qlick.repository';
+import { assertTurmaOuDisciplina } from '../common/vinculo-jogo.util';
 
 @Injectable()
 export class QlickService {
@@ -68,6 +69,7 @@ export class QlickService {
 
   async criar(professorId: string, dto: CreateQlickDto): Promise<QlickEntity> {
     await this.assertPhd(professorId);
+    assertTurmaOuDisciplina(dto);
     this.validarPerguntas(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     return this.repo.create(
@@ -76,6 +78,7 @@ export class QlickService {
         titulo: dto.titulo.trim(),
         disciplina: dto.disciplina,
         topicoId: dto.topicoId,
+        numeroAula: dto.numeroAula,
         turmaIds,
         turmaId: turmaIds[0], // mantém o campo legado apontando p/ a 1ª turma
         duracaoSegundos: dto.duracaoSegundos ?? 60,
@@ -124,12 +127,14 @@ export class QlickService {
     dto: CreateQlickDto,
   ): Promise<QlickEntity> {
     const qlick = await this.obter(professorId, id);
+    assertTurmaOuDisciplina(dto);
     this.validarPerguntas(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     const dados = {
       titulo: dto.titulo.trim(),
       disciplina: dto.disciplina ?? null,
       topicoId: dto.topicoId ?? null,
+      numeroAula: dto.numeroAula ?? null,
       turmaIds,
       turmaId: turmaIds[0] ?? null,
       duracaoSegundos: dto.duracaoSegundos ?? 60,
