@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import {
@@ -54,7 +55,7 @@ export class IsolateusMatchService {
       );
     }
 
-    const escolhida = await this.resolverTurma(professorId, jogo.turmas, turmaId);
+    const escolhida = await this.resolverTurma(professorId, jogo, turmaId);
 
     return this.matches.criar(
       {
@@ -98,22 +99,24 @@ export class IsolateusMatchService {
   /** A partida escolhe a turma no início (N:N). Espelha Qlick e Wor. */
   private async resolverTurma(
     professorId: string,
-    turmasDoJogo: string[],
+    jogo: { turmas: string[]; disciplina?: string },
     turmaId?: string,
   ): Promise<string | undefined> {
+    const turmasDoJogo = jogo.turmas;
     const escolhida =
       turmaId ?? (turmasDoJogo.length === 1 ? turmasDoJogo[0] : undefined);
-    if (turmaId && !turmasDoJogo.includes(turmaId)) {
-      throw new BadRequestException({
-        code: 'TURMA_NAO_ATRIBUIDA',
-        message: 'Esta investigação não está atribuída a essa turma.',
-      });
-    }
     if (!escolhida) return undefined;
 
     const turma = await this.turmas.findById(escolhida);
     if (!turma || turma.professorId !== professorId) {
       throw new NotFoundException('Turma nao encontrada.');
+    }
+    // Turma atribuída OU (investigação só-disciplina) turma da mesma disciplina.
+    if (turmaId && !turmaCasaComJogo(turma, jogo)) {
+      throw new BadRequestException({
+        code: 'TURMA_NAO_ATRIBUIDA',
+        message: 'Esta investigação não está atribuída a essa turma.',
+      });
     }
     if (turma.encerradaManualmente) {
       throw new BadRequestException({
