@@ -18,6 +18,13 @@ export class QlickEntity {
   disciplina?: string;
   topicoId?: string;
 
+  /**
+   * Aula (1..N) à qual o jogo foi fixado manualmente, quando a turma não usa
+   * plano de tópicos. Sem `topicoId`, é o que faz o jogo aparecer no card da
+   * respectiva aula no painel do professor (ENH-001/002).
+   */
+  numeroAula?: number;
+
   /** Legado: turma única. Substituído por `turmaIds` (N:N). */
   turmaId?: string;
 

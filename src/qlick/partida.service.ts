@@ -12,6 +12,7 @@ import { XpService } from '../turma/xp.service';
 import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
+import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 
 /** Pontos por acerto + bônus máximo de rapidez. */
 const PONTOS_ACERTO = 1000;
@@ -53,16 +54,18 @@ export class PartidaService {
     // turma atribuída ao Qlick (compat) — ou nenhuma.
     const turmasDoQlick = qlick.turmas;
     const escolhida = turmaId ?? (turmasDoQlick.length === 1 ? turmasDoQlick[0] : undefined);
-    if (turmaId && !turmasDoQlick.includes(turmaId)) {
-      throw new BadRequestException({
-        code: 'TURMA_NAO_ATRIBUIDA',
-        message: 'Este Qlick não está atribuído a essa turma.',
-      });
-    }
     if (escolhida) {
       const turma = await this.turmaRepo.findById(escolhida);
       if (!turma || turma.professorId !== professorId) {
         throw new NotFoundException('Turma nao encontrada.');
+      }
+      // Aceita turma explicitamente atribuída OU (jogo só-disciplina) uma turma
+      // cuja disciplina bate com a do Qlick (ENH-002).
+      if (turmaId && !turmaCasaComJogo(turma, qlick)) {
+        throw new BadRequestException({
+          code: 'TURMA_NAO_ATRIBUIDA',
+          message: 'Este Qlick não está atribuído a essa turma.',
+        });
       }
       if (turma.encerradaManualmente) {
         throw new BadRequestException({

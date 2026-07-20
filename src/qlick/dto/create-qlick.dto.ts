@@ -45,6 +45,13 @@ export class CreateQlickDto {
   @IsString()
   topicoId?: string;
 
+  /** Aula (1..N) fixada manualmente quando não há tópicos (ENH-001/002). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  numeroAula?: number;
+
   @IsOptional()
   @IsString()
   turmaId?: string;

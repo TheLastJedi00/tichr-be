@@ -5,8 +5,26 @@ import {
 } from '@nestjs/common';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { ProfessorService } from '../professor/professor.service';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import {
+  ContextoPrompt,
+  PromptIaService,
+} from '../ia-governanca/prompt-ia.service';
 import { GeminiService } from '../wor/gemini.service';
 import { IsolateusIaService } from './isolateus-ia.service';
+
+/** Mocks de PromptIaService/ConfigIaService compartilhados pelos testes de IA. */
+function iaGovMocks(limite = 1) {
+  const prompts = {
+    montar: jest.fn((_jogo: string, ctx: ContextoPrompt) =>
+      Promise.resolve(JSON.stringify(ctx)),
+    ),
+  } as unknown as PromptIaService;
+  const configIa = {
+    limiteGeracoesDia: jest.fn().mockResolvedValue(limite),
+  } as unknown as ConfigIaService;
+  return { prompts, configIa };
+}
 
 describe('IA das questões do Isolateus', () => {
   describe('IsolateusIaService.extrairQuestoes', () => {
@@ -67,14 +85,19 @@ describe('IA das questões do Isolateus', () => {
       const prof = new ProfessorEntity({
         uid: 'u1',
         planoAtual: opts.phd === false ? 'ESTAGIARIO' : 'PHD',
-        isolateusIaUltimoUso: opts.usouHoje ? `${hoje}T10:00:00.000Z` : undefined,
+        isolateusIaUsos: opts.usouHoje ? { dia: hoje, n: 1 } : undefined,
       });
       const marcar = jest.fn().mockResolvedValue(undefined);
       const professores = {
         getProfile: jest.fn().mockResolvedValue(prof),
-        marcarUsoIaIsolateus: marcar,
+        registrarUsoIa: marcar,
       } as unknown as ProfessorService;
-      return { service: new IsolateusIaService(gemini, professores), gemini, marcar };
+      const { prompts, configIa } = iaGovMocks();
+      return {
+        service: new IsolateusIaService(gemini, professores, prompts, configIa),
+        gemini,
+        marcar,
+      };
     }
 
     it('503 quando a IA está indisponível (sem chave)', async () => {
@@ -115,19 +138,25 @@ describe('IA das questões do Isolateus', () => {
       const prof = new ProfessorEntity({
         uid: 'u1',
         planoAtual: 'PHD',
-        qlickIaUltimoUso: `${hoje}T10:00:00.000Z`,
-        worIaUltimoUso: `${hoje}T10:00:00.000Z`,
+        qlickIaUsos: { dia: hoje, n: 1 },
+        worIaUsos: { dia: hoje, n: 1 },
       });
       const marcar = jest.fn().mockResolvedValue(undefined);
       const professores = {
         getProfile: jest.fn().mockResolvedValue(prof),
-        marcarUsoIaIsolateus: marcar,
+        registrarUsoIa: marcar,
       } as unknown as ProfessorService;
-      const service = new IsolateusIaService(gemini, professores);
+      const { prompts, configIa } = iaGovMocks();
+      const service = new IsolateusIaService(
+        gemini,
+        professores,
+        prompts,
+        configIa,
+      );
 
       const r = await service.gerarQuestoes('u1', dto);
       expect(r.questoes).toHaveLength(1);
-      expect(marcar).toHaveBeenCalledWith('u1');
+      expect(marcar).toHaveBeenCalledWith('u1', 'isolateus', hoje);
     });
 
     it('não consome a cota quando a IA devolve algo inválido', async () => {
@@ -152,7 +181,7 @@ describe('IA das questões do Isolateus', () => {
       const prompt = (gemini.gerarTexto as jest.Mock).mock.calls[0][0] as string;
       expect(prompt).toContain('Ciências');
       expect(prompt).toContain('ciclo da água');
-      expect(marcar).toHaveBeenCalledWith('u1');
+      expect(marcar).toHaveBeenCalledWith('u1', 'isolateus', hoje);
     });
   });
 });

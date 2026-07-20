@@ -15,6 +15,7 @@ import { WorModule } from './wor/wor.module';
 import { IsolateusModule } from './isolateus/isolateus.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { CheckoutModule } from './checkout/checkout.module';
+import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { CheckoutModule } from './checkout/checkout.module';
     IsolateusModule,
     FeedbackModule,
     CheckoutModule,
+    IaGovernancaModule,
   ],
   controllers: [AppController],
   providers: [AppService],

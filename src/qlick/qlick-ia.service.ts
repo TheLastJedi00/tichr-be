@@ -6,6 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ProfessorService } from '../professor/professor.service';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import { PromptIaService } from '../ia-governanca/prompt-ia.service';
 import { GeminiService } from '../wor/gemini.service';
 import { GerarPerguntasDto } from './dto/gerar-perguntas.dto';
 import { PerguntaQlick } from './entities/qlick.entity';
@@ -24,12 +26,14 @@ export class QlickIaService {
   constructor(
     private readonly gemini: GeminiService,
     private readonly professores: ProfessorService,
+    private readonly prompts: PromptIaService,
+    private readonly configIa: ConfigIaService,
   ) {}
 
   async gerarPerguntas(
     uid: string,
     dto: GerarPerguntasDto,
-  ): Promise<{ perguntas: PerguntaQlick[] }> {
+  ): Promise<{ perguntas: PerguntaQlick[]; restantes: number }> {
     if (!this.gemini.disponivel()) {
       throw new ServiceUnavailableException({
         code: 'IA_INDISPONIVEL',
@@ -45,18 +49,28 @@ export class QlickIaService {
         message: 'O Tichr Qlick é exclusivo do plano PhD.',
       });
     }
-    if (prof.usouIaQlickHoje(hoje)) {
+    const limite = await this.configIa.limiteGeracoesDia();
+    const usados = prof.usosIaHoje('qlick', hoje);
+    if (usados >= limite) {
       throw new HttpException(
         {
           code: 'IA_RATE_LIMIT',
           message:
-            'Sua geração diária se esgotou! A IA cria perguntas 1 vez por dia. Você ainda pode escrever/editar as perguntas manualmente, ou voltar amanhã.',
+            'Sua geração diária se esgotou! A IA cria perguntas um número limitado de vezes por dia. Você ainda pode escrever/editar as perguntas manualmente, ou voltar amanhã.',
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    const prompt = QlickIaService.montarPrompt(dto);
+    const prompt = await this.prompts.montar('qlick', {
+      disciplina: dto.disciplina,
+      topico: dto.topico,
+      instrucao: dto.instrucao,
+      quantidades: {
+        qtdPerguntas: QTD_PERGUNTAS,
+        qtdAlternativas: QTD_ALTERNATIVAS,
+      },
+    });
     const texto = await this.gemini.gerarTexto(prompt, {
       json: true,
       maxOutputTokens: 4096,
@@ -71,25 +85,8 @@ export class QlickIaService {
     }
 
     // Só consome a cota diária quando a IA respondeu com perguntas válidas.
-    await this.professores.marcarUsoIaQlick(uid);
-    return { perguntas };
-  }
-
-  /** Monta o prompt do quiz com o contexto (disciplina/tópico) + instrução do professor. */
-  private static montarPrompt(dto: GerarPerguntasDto): string {
-    return [
-      'Você cria quizzes de múltipla escolha em português do Brasil para uso em sala de aula.',
-      dto.disciplina ? `Disciplina: ${dto.disciplina}.` : '',
-      dto.topico ? `Tópico da aula: ${dto.topico}.` : '',
-      `Instruções do professor: ${dto.instrucao}`,
-      `Gere EXATAMENTE ${QTD_PERGUNTAS} perguntas, cada uma com ${QTD_ALTERNATIVAS} alternativas e APENAS uma correta.`,
-      'As perguntas devem ser claras e as alternativas plausíveis (sem "todas as anteriores").',
-      'Responda SOMENTE com um array JSON, sem markdown, no formato:',
-      '[{"enunciado":"...","alternativas":["a","b","c","d"],"corretaIndex":0}]',
-      'onde corretaIndex é o índice (base 0) da alternativa correta.',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    await this.professores.registrarUsoIa(uid, 'qlick', hoje);
+    return { perguntas, restantes: Math.max(0, limite - (usados + 1)) };
   }
 
   /**

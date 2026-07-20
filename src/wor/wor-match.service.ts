@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { embaralhar } from '../common/shuffle.util';
+import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { WorJogoRepository } from './wor-jogo.repository';
@@ -66,7 +67,7 @@ export class WorMatchService {
       throw new BadRequestException('Adicione ao menos uma palavra ao arsenal.');
     }
 
-    const escolhida = await this.resolverTurma(professorId, jogo.turmas, turmaId);
+    const escolhida = await this.resolverTurma(professorId, jogo, turmaId);
 
     const primeira = jogo.palavras[0];
     return this.matches.criar({
@@ -98,21 +99,23 @@ export class WorMatchService {
    */
   private async resolverTurma(
     professorId: string,
-    turmasDoJogo: string[],
+    jogo: { turmas: string[]; disciplina?: string },
     turmaId?: string,
   ): Promise<string | undefined> {
+    const turmasDoJogo = jogo.turmas;
     const escolhida =
       turmaId ?? (turmasDoJogo.length === 1 ? turmasDoJogo[0] : undefined);
-    if (turmaId && !turmasDoJogo.includes(turmaId)) {
-      throw new BadRequestException({
-        code: 'TURMA_NAO_ATRIBUIDA',
-        message: 'Esta batalha não está atribuída a essa turma.',
-      });
-    }
     if (escolhida) {
       const turma = await this.turmaRepo.findById(escolhida);
       if (!turma || turma.professorId !== professorId) {
         throw new NotFoundException('Turma não encontrada.');
+      }
+      // Turma atribuída OU (batalha só-disciplina) turma da mesma disciplina.
+      if (turmaId && !turmaCasaComJogo(turma, jogo)) {
+        throw new BadRequestException({
+          code: 'TURMA_NAO_ATRIBUIDA',
+          message: 'Esta batalha não está atribuída a essa turma.',
+        });
       }
       if (turma.encerradaManualmente) {
         throw new BadRequestException({

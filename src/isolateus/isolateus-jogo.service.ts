@@ -9,6 +9,7 @@ import { TurmaService } from '../turma/turma.service';
 import { CreateIsolateusJogoDto } from './dto/create-isolateus-jogo.dto';
 import { IsolateusJogoEntity } from './entities/isolateus-jogo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
+import { assertTurmaOuDisciplina } from '../common/vinculo-jogo.util';
 
 /** Gate padrão do ecossistema: todo jogo é exclusivo do plano PhD. */
 export const ISOLATEUS_LOCKED = {
@@ -91,6 +92,7 @@ export class IsolateusJogoService {
     dto: CreateIsolateusJogoDto,
   ): Promise<IsolateusJogoEntity> {
     await this.assertPhd(professorId);
+    assertTurmaOuDisciplina(dto);
     this.validarQuestoes(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     return this.repo.create(
@@ -99,6 +101,7 @@ export class IsolateusJogoService {
         nome: dto.nome.trim(),
         disciplina: dto.disciplina,
         topicoId: dto.topicoId,
+        numeroAula: dto.numeroAula,
         turmaIds,
         turmaId: turmaIds[0], // mantém o campo legado apontando p/ a 1ª turma
         duracaoSegundos: dto.duracaoSegundos ?? 60,
@@ -113,12 +116,14 @@ export class IsolateusJogoService {
     dto: CreateIsolateusJogoDto,
   ): Promise<IsolateusJogoEntity> {
     const jogo = await this.obter(professorId, id);
+    assertTurmaOuDisciplina(dto);
     this.validarQuestoes(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
     const dados = {
       nome: dto.nome.trim(),
       disciplina: dto.disciplina ?? null,
       topicoId: dto.topicoId ?? null,
+      numeroAula: dto.numeroAula ?? null,
       turmaIds,
       turmaId: turmaIds[0] ?? null,
       duracaoSegundos: dto.duracaoSegundos ?? 60,
