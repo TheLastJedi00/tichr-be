@@ -6,6 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ProfessorService } from '../professor/professor.service';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import { PromptIaService } from '../ia-governanca/prompt-ia.service';
 import { GeminiService } from '../wor/gemini.service';
 import { GerarQuestoesDto } from './dto/gerar-questoes.dto';
 import { QuestaoIsolateus } from './entities/isolateus-jogo.entity';
@@ -26,12 +28,14 @@ export class IsolateusIaService {
   constructor(
     private readonly gemini: GeminiService,
     private readonly professores: ProfessorService,
+    private readonly prompts: PromptIaService,
+    private readonly configIa: ConfigIaService,
   ) {}
 
   async gerarQuestoes(
     uid: string,
     dto: GerarQuestoesDto,
-  ): Promise<{ questoes: QuestaoIsolateus[] }> {
+  ): Promise<{ questoes: QuestaoIsolateus[]; restantes: number }> {
     if (!this.gemini.disponivel()) {
       throw new ServiceUnavailableException({
         code: 'IA_INDISPONIVEL',
@@ -45,18 +49,28 @@ export class IsolateusIaService {
     if (!prof.podeGamificar) {
       throw new ForbiddenException(ISOLATEUS_LOCKED);
     }
-    if (prof.usouIaIsolateusHoje(hoje)) {
+    const limite = await this.configIa.limiteGeracoesDia();
+    const usados = prof.usosIaHoje('isolateus', hoje);
+    if (usados >= limite) {
       throw new HttpException(
         {
           code: 'IA_RATE_LIMIT',
           message:
-            'A transmissão diária com o Comando Central se esgotou! A IA monta as questões 1 vez por dia. Você ainda pode escrever/editar as questões manualmente, ou voltar amanhã.',
+            'A transmissão diária com o Comando Central se esgotou! A IA monta as questões um número limitado de vezes por dia. Você ainda pode escrever/editar as questões manualmente, ou voltar amanhã.',
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    const prompt = IsolateusIaService.montarPrompt(dto);
+    const prompt = await this.prompts.montar('isolateus', {
+      disciplina: dto.disciplina,
+      topico: dto.topico,
+      instrucao: dto.instrucao,
+      quantidades: {
+        qtdQuestoes: QTD_QUESTOES,
+        qtdAlternativas: QTD_ALTERNATIVAS,
+      },
+    });
     const texto = await this.gemini.gerarTexto(prompt, {
       json: true,
       maxOutputTokens: 4096,
@@ -72,31 +86,8 @@ export class IsolateusIaService {
     }
 
     // Só consome a cota diária quando a IA respondeu com questões válidas.
-    await this.professores.marcarUsoIaIsolateus(uid);
-    return { questoes };
-  }
-
-  /**
-   * Monta o prompt das questões. O conteúdo é pedagógico e sério (é o que vale
-   * XP); a ambientação de vila sob invasão fica só no enunciado, para o aluno
-   * sentir que está defendendo um setor — e nunca no lugar da matéria.
-   */
-  private static montarPrompt(dto: GerarQuestoesDto): string {
-    return [
-      'Você cria questões de múltipla escolha em português do Brasil para uso em sala de aula.',
-      'Elas serão usadas em um jogo de dedução (Tichr Isolateus) em que a turma defende os setores de uma vila isolada respondendo corretamente.',
-      dto.disciplina ? `Disciplina: ${dto.disciplina}.` : '',
-      dto.topico ? `Tópico da aula: ${dto.topico}.` : '',
-      `Instruções do professor: ${dto.instrucao}`,
-      `Gere EXATAMENTE ${QTD_QUESTOES} questões, cada uma com ${QTD_ALTERNATIVAS} alternativas e APENAS uma correta.`,
-      'O conteúdo deve ser rigorosamente pedagógico: a ambientação do jogo NÃO entra nas questões nem nas alternativas.',
-      'As questões devem ser claras e as alternativas plausíveis (sem "todas as anteriores"), porque um infiltrado vai tentar convencer a turma a escolher uma alternativa errada.',
-      'Responda SOMENTE com um array JSON, sem markdown, no formato:',
-      '[{"enunciado":"...","alternativas":["a","b","c","d"],"corretaIndex":0}]',
-      'onde corretaIndex é o índice (base 0) da alternativa correta.',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    await this.professores.registrarUsoIa(uid, 'isolateus', hoje);
+    return { questoes, restantes: Math.max(0, limite - (usados + 1)) };
   }
 
   /**

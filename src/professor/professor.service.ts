@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { FirebaseService } from '../firebase/firebase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
+  JogoIa,
   PlanoAtual,
   ProfessorEntity,
   StatusAssinatura,
@@ -204,20 +205,26 @@ export class ProfessorService {
     } as unknown as Partial<ProfessorEntity>);
   }
 
-  /** Registra o uso da IA do Tichr Wor agora (base do rate limit diario). */
-  async marcarUsoIaWor(uid: string): Promise<void> {
-    await this.repo.upsert(uid, { worIaUltimoUso: new Date().toISOString() });
-  }
-
-  /** Registra o uso da IA do Tichr Qlick agora (rate limit diario, separado do Wor). */
-  async marcarUsoIaQlick(uid: string): Promise<void> {
-    await this.repo.upsert(uid, { qlickIaUltimoUso: new Date().toISOString() });
-  }
-
-  /** Registra o uso da IA do Tichr Isolateus agora (rate limit diario, contador proprio). */
-  async marcarUsoIaIsolateus(uid: string): Promise<void> {
+  /**
+   * Incrementa o contador diario de geracoes por IA do `jogo` para o dia
+   * `hojeISO` (zera automaticamente na virada do dia). Chamado so quando a IA
+   * respondeu algo valido, para uma geracao falha nao consumir a cota.
+   */
+  async registrarUsoIa(
+    uid: string,
+    jogo: JogoIa,
+    hojeISO: string,
+  ): Promise<void> {
+    const prof = await this.getProfile(uid);
+    const atual = prof.usosIaHoje(jogo, hojeISO);
+    const campo =
+      jogo === 'wor'
+        ? 'worIaUsos'
+        : jogo === 'qlick'
+          ? 'qlickIaUsos'
+          : 'isolateusIaUsos';
     await this.repo.upsert(uid, {
-      isolateusIaUltimoUso: new Date().toISOString(),
-    });
+      [campo]: { dia: hojeISO, n: atual + 1 },
+    } as unknown as Partial<ProfessorEntity>);
   }
 }

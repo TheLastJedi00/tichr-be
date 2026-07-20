@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
 import { TurmaModule } from '../turma/turma.module';
+import { IaGovernancaModule } from '../ia-governanca/ia-governanca.module';
 import { GeminiService } from '../wor/gemini.service';
 import { AlunoQlickController } from './aluno-qlick.controller';
 import { PartidaController } from './partida.controller';
@@ -13,7 +14,7 @@ import { QlickService } from './qlick.service';
 
 /** Módulo independente do Tichr Qlick (definição + partidas + geração por IA). */
 @Module({
-  imports: [ProfessorModule, TurmaModule],
+  imports: [ProfessorModule, TurmaModule, IaGovernancaModule],
   controllers: [QlickController, PartidaController, AlunoQlickController],
   providers: [
     QlickService,

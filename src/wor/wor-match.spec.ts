@@ -167,9 +167,29 @@ describe('Tichr Wor — partida (Fase 3)', () => {
     });
 
     it('rejeita turma não atribuída à batalha (TURMA_NAO_ATRIBUIDA)', async () => {
-      const { service } = build();
+      const { service } = build({ turma: { id: 'outra', professorId: 'p1' } });
       await expect(service.criar('p1', 'j1', 'outra')).rejects.toBeInstanceOf(
         BadRequestException,
+      );
+    });
+
+    it('aceita turma da mesma disciplina numa batalha só-disciplina (ENH-002)', async () => {
+      const { service, criar } = build({
+        jogo: {
+          id: 'j1',
+          professorId: 'p1',
+          nome: 'Batalha',
+          palavras: [{ id: 'w', palavra: 'REI', dicas: ['dica'] }],
+          disciplina: 'História',
+          get turmas() {
+            return [];
+          },
+        },
+        turma: { id: 't9', professorId: 'p1', disciplina: 'História' },
+      });
+      await service.criar('p1', 'j1', 't9');
+      expect(criar).toHaveBeenCalledWith(
+        expect.objectContaining({ turmaId: 't9' }),
       );
     });
 

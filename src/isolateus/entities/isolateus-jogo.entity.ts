@@ -22,6 +22,9 @@ export class IsolateusJogoEntity {
   disciplina?: string;
   topicoId?: string;
 
+  /** Aula (1..N) fixada manualmente quando a turma não usa tópicos (ENH-001/002). */
+  numeroAula?: number;
+
   /** Legado: turma única. Substituído por `turmaIds` (N:N). */
   turmaId?: string;
 

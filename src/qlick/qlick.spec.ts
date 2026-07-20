@@ -13,6 +13,7 @@ const professorFake = (plano: 'PHD' | 'MESTRE' = 'PHD') =>
 
 const dtoValido = (): CreateQlickDto => ({
   titulo: 'Revisão HTML',
+  disciplina: 'Programação',
   perguntas: [
     { enunciado: 'Tag de parágrafo?', alternativas: ['<p>', '<div>'], corretaIndex: 0 },
   ],
@@ -59,8 +60,22 @@ describe('QlickService', () => {
       alternativas: ['a', 'b'],
       corretaIndex: 0,
     });
-    await service.criar('p1', { titulo: 'X', perguntas: [pergunta] });
+    await service.criar('p1', {
+      titulo: 'X',
+      disciplina: 'Programação',
+      perguntas: [pergunta],
+    });
     expect(Object.getPrototypeOf(salvo!.perguntas[0])).toBe(Object.prototype);
+  });
+
+  it('rejeita criação sem turma e sem disciplina (400 TURMA_OU_DISCIPLINA)', async () => {
+    const service = new QlickService({} as never, professorFake('PHD'), {} as never);
+    await expect(
+      service.criar('p1', {
+        titulo: 'X',
+        perguntas: [{ enunciado: 'q', alternativas: ['a', 'b'], corretaIndex: 0 }],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'TURMA_OU_DISCIPLINA' } });
   });
 
   it('rejeita corretaIndex fora do intervalo', async () => {
@@ -71,6 +86,7 @@ describe('QlickService', () => {
     );
     const dto: CreateQlickDto = {
       titulo: 'X',
+      disciplina: 'Programação',
       perguntas: [{ enunciado: 'q', alternativas: ['a', 'b'], corretaIndex: 5 }],
     };
     await expect(service.criar('p1', dto)).rejects.toBeInstanceOf(

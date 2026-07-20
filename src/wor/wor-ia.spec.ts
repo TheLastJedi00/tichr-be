@@ -7,6 +7,11 @@ import { GeminiService } from './gemini.service';
 import { WorIaService } from './wor-ia.service';
 import { ProfessorService } from '../professor/professor.service';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import {
+  ContextoPrompt,
+  PromptIaService,
+} from '../ia-governanca/prompt-ia.service';
 
 describe('IA do arsenal do Wor', () => {
   describe('WorIaService.extrairArsenal', () => {
@@ -45,7 +50,9 @@ describe('IA do arsenal do Wor', () => {
       usouHoje: boolean;
       phd?: boolean;
       texto?: string;
+      limite?: number;
     }) {
+      const limite = opts.limite ?? 1;
       const gemini = {
         disponivel: () => opts.disponivel,
         gerarTexto: jest.fn().mockResolvedValue(opts.texto ?? resposta),
@@ -53,14 +60,26 @@ describe('IA do arsenal do Wor', () => {
       const prof = new ProfessorEntity({
         uid: 'u1',
         planoAtual: opts.phd === false ? 'ESTAGIARIO' : 'PHD',
-        worIaUltimoUso: opts.usouHoje ? `${hoje}T10:00:00.000Z` : undefined,
+        worIaUsos: opts.usouHoje ? { dia: hoje, n: limite } : undefined,
       });
       const marcar = jest.fn().mockResolvedValue(undefined);
       const professores = {
         getProfile: jest.fn().mockResolvedValue(prof),
-        marcarUsoIaWor: marcar,
+        registrarUsoIa: marcar,
       } as unknown as ProfessorService;
-      return { service: new WorIaService(gemini, professores), gemini, marcar };
+      const prompts = {
+        montar: jest.fn((_jogo: string, ctx: ContextoPrompt) =>
+          Promise.resolve(JSON.stringify(ctx)),
+        ),
+      } as unknown as PromptIaService;
+      const configIa = {
+        limiteGeracoesDia: jest.fn().mockResolvedValue(limite),
+      } as unknown as ConfigIaService;
+      return {
+        service: new WorIaService(gemini, professores, prompts, configIa),
+        gemini,
+        marcar,
+      };
     }
 
     it('503 quando a IA está indisponível (sem chave)', async () => {
@@ -117,7 +136,14 @@ describe('IA do arsenal do Wor', () => {
       const prompt = (gemini.gerarTexto as jest.Mock).mock.calls[0][0] as string;
       expect(prompt).toContain('História');
       expect(prompt).toContain('termos da Revolução Francesa');
-      expect(marcar).toHaveBeenCalledWith('u1');
+      expect(marcar).toHaveBeenCalledWith('u1', 'wor', hoje);
+      expect(r.restantes).toBe(0);
+    });
+
+    it('permite mais de uma geração quando o limite global é maior', async () => {
+      const { service } = make({ disponivel: true, usouHoje: false, limite: 3 });
+      const r = await service.gerarArsenal('u1', dto);
+      expect(r.restantes).toBe(2);
     });
   });
 });

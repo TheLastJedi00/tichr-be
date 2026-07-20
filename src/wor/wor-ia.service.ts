@@ -6,6 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ProfessorService } from '../professor/professor.service';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import { PromptIaService } from '../ia-governanca/prompt-ia.service';
 import { GeminiService } from './gemini.service';
 import { GerarArsenalDto } from './dto/gerar-arsenal.dto';
 
@@ -20,22 +22,25 @@ export interface PalavraGerada {
 }
 
 /**
- * Orquestra a geração do arsenal do Tichr Wor por IA, com **rate limit de 1×/dia
- * por professor** (separado do Qlick) e gate de plano **PhD**. Gera um lote de
- * {@link QTD_PALAVRAS} palavras, cada uma com {@link QTD_DICAS} dicas
- * progressivas; o professor edita depois. Arsenal manual segue sempre disponível.
+ * Orquestra a geração do arsenal do Tichr Wor por IA, com **rate limit diário
+ * configurável** (limite global em `config/ia`, contador por professor/jogo) e
+ * gate de plano **PhD**. Gera um lote de {@link QTD_PALAVRAS} palavras, cada uma
+ * com {@link QTD_DICAS} dicas progressivas; o professor edita depois. O prompt
+ * vem do {@link PromptIaService} (editável pelo admin). Arsenal manual sempre livre.
  */
 @Injectable()
 export class WorIaService {
   constructor(
     private readonly gemini: GeminiService,
     private readonly professores: ProfessorService,
+    private readonly prompts: PromptIaService,
+    private readonly configIa: ConfigIaService,
   ) {}
 
   async gerarArsenal(
     uid: string,
     dto: GerarArsenalDto,
-  ): Promise<{ palavras: PalavraGerada[] }> {
+  ): Promise<{ palavras: PalavraGerada[]; restantes: number }> {
     if (!this.gemini.disponivel()) {
       throw new ServiceUnavailableException({
         code: 'IA_INDISPONIVEL',
@@ -52,18 +57,26 @@ export class WorIaService {
         message: 'O Tichr Wor é exclusivo do plano PhD.',
       });
     }
-    if (prof.usouIaWorHoje(hoje)) {
+    const limite = await this.configIa.limiteGeracoesDia();
+    const usados = prof.usosIaHoje('wor', hoje);
+    if (usados >= limite) {
       throw new HttpException(
         {
           code: 'IA_RATE_LIMIT',
           message:
-            'Sua magia diária se esgotou! Para manter a performance, a IA forja o arsenal 1 vez por dia. Escreva suas próprias palavras e dicas, ou volte amanhã.',
+            'Sua magia diária se esgotou! Para manter a performance, a IA forja o arsenal um número limitado de vezes por dia. Escreva suas próprias palavras e dicas, ou volte amanhã.',
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    const texto = await this.gemini.gerarTexto(WorIaService.montarPrompt(dto), {
+    const prompt = await this.prompts.montar('wor', {
+      disciplina: dto.disciplina,
+      topico: dto.topico,
+      instrucao: dto.instrucao,
+      quantidades: { qtdPalavras: QTD_PALAVRAS, qtdDicas: QTD_DICAS },
+    });
+    const texto = await this.gemini.gerarTexto(prompt, {
       json: true,
       maxOutputTokens: 2048,
     });
@@ -78,25 +91,8 @@ export class WorIaService {
     }
 
     // Só consome a cota diária quando a IA respondeu com um arsenal válido.
-    await this.professores.marcarUsoIaWor(uid);
-    return { palavras };
-  }
-
-  /** Monta o prompt do arsenal com o contexto (disciplina/tópico) + instrução do professor. */
-  private static montarPrompt(dto: GerarArsenalDto): string {
-    return [
-      'Você cria palavras secretas e dicas para um jogo de adivinhação (estilo forca) em português do Brasil, para uso em sala de aula.',
-      dto.disciplina ? `Disciplina: ${dto.disciplina}.` : '',
-      dto.topico ? `Tópico da aula: ${dto.topico}.` : '',
-      `Instruções do professor: ${dto.instrucao}`,
-      `Gere EXATAMENTE ${QTD_PALAVRAS} palavras secretas, cada uma com ${QTD_DICAS} dicas progressivas, da MAIS DIFÍCIL (1) para a MAIS FÁCIL (3).`,
-      'Cada palavra deve ser um termo único (sem espaços, acentos ou hífens), com no máximo 40 letras.',
-      'As dicas NÃO podem conter a própria palavra secreta.',
-      'Responda SOMENTE com um array JSON, sem markdown, no formato:',
-      '[{"palavra":"GUILHOTINA","dicas":["dica 1","dica 2","dica 3"]}]',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    await this.professores.registrarUsoIa(uid, 'wor', hoje);
+    return { palavras, restantes: Math.max(0, limite - (usados + 1)) };
   }
 
   /**

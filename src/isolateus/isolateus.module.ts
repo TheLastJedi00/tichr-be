@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
 import { TurmaModule } from '../turma/turma.module';
+import { IaGovernancaModule } from '../ia-governanca/ia-governanca.module';
 import { GeminiService } from '../wor/gemini.service';
 import { AlunoIsolateusController } from './aluno-isolateus.controller';
 import { IsolateusGameService } from './isolateus-game.service';
@@ -14,7 +15,7 @@ import { IsolateusMatchService } from './isolateus-match.service';
 
 /** Módulo independente do Tichr Isolateus (definição + partidas + geração por IA). */
 @Module({
-  imports: [ProfessorModule, TurmaModule],
+  imports: [ProfessorModule, TurmaModule, IaGovernancaModule],
   controllers: [
     IsolateusJogoController,
     IsolateusMatchController,

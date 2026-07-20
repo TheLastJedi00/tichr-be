@@ -12,6 +12,15 @@ export type PlanoAtual = 'ESTAGIARIO' | 'GRADUADO' | 'MESTRE' | 'PHD';
  */
 export type StatusAssinatura = 'ATIVA' | 'PENDENTE' | 'INADIMPLENTE' | 'CANCELADA';
 
+/** Jogos com geração de conteúdo por IA (cada um tem cota diária própria). */
+export type JogoIa = 'wor' | 'qlick' | 'isolateus';
+
+/** Uso diário de IA: quantas gerações (`n`) num dado dia (`dia`, YYYY-MM-DD). */
+export interface UsoDiarioIa {
+  dia: string;
+  n: number;
+}
+
 /** Data de hoje em `YYYY-MM-DD` (base das comparacoes de vigencia). */
 function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -113,14 +122,15 @@ export class ProfessorEntity {
    */
   isAdmin?: boolean;
 
-  /** Última geração de dicas por IA do Tichr Wor (ISO). Base do rate limit 1×/dia. */
-  worIaUltimoUso?: string;
-
-  /** Última geração de perguntas por IA do Tichr Qlick (ISO). Rate limit 1×/dia (separado do Wor). */
-  qlickIaUltimoUso?: string;
-
-  /** Última geração de questões por IA do Tichr Isolateus (ISO). Rate limit 1×/dia (contador próprio). */
-  isolateusIaUltimoUso?: string;
+  /**
+   * Contador diário de gerações por IA, por jogo. O limite máximo por dia é
+   * **global e configurável** pelo admin (doc `config/ia`), então guardamos
+   * quantas gerações o professor já fez **hoje** e comparamos com esse limite —
+   * substitui o antigo booleano "usou hoje" (`*IaUltimoUso`), que era 1×/dia fixo.
+   */
+  worIaUsos?: UsoDiarioIa;
+  qlickIaUsos?: UsoDiarioIa;
+  isolateusIaUsos?: UsoDiarioIa;
 
   /** Aceite dos Termos de Uso no cadastro (ISO). Registro de consentimento LGPD. */
   aceiteTermosEm?: string;
@@ -135,19 +145,15 @@ export class ProfessorEntity {
     Object.assign(this, partial);
   }
 
-  /** Verdadeiro se o professor já usou a IA do Wor no dia `hojeISO` (YYYY-MM-DD). */
-  usouIaWorHoje(hojeISO: string): boolean {
-    return (this.worIaUltimoUso ?? '').slice(0, 10) === hojeISO;
-  }
-
-  /** Verdadeiro se o professor já usou a IA do Qlick no dia `hojeISO` (YYYY-MM-DD). */
-  usouIaQlickHoje(hojeISO: string): boolean {
-    return (this.qlickIaUltimoUso ?? '').slice(0, 10) === hojeISO;
-  }
-
-  /** Verdadeiro se o professor já usou a IA do Isolateus no dia `hojeISO` (YYYY-MM-DD). */
-  usouIaIsolateusHoje(hojeISO: string): boolean {
-    return (this.isolateusIaUltimoUso ?? '').slice(0, 10) === hojeISO;
+  /** Quantas gerações de IA o professor já fez **hoje** (`hojeISO`) para o `jogo`. */
+  usosIaHoje(jogo: JogoIa, hojeISO: string): number {
+    const uso =
+      jogo === 'wor'
+        ? this.worIaUsos
+        : jogo === 'qlick'
+          ? this.qlickIaUsos
+          : this.isolateusIaUsos;
+    return uso?.dia === hojeISO ? (uso.n ?? 0) : 0;
   }
 
   get temNome(): boolean {

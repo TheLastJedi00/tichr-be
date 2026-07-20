@@ -3,8 +3,13 @@ import { ConfigService } from '@nestjs/config';
 
 const GEMINI_BASE =
   'https://generativelanguage.googleapis.com/v1beta/models';
-/** Modelo padrão quando `GEMINI_MODEL` não está no ambiente. */
-const GEMINI_MODEL_PADRAO = 'gemini-3.5-flash';
+/**
+ * Modelo padrão quando `GEMINI_MODEL` não está no ambiente. `gemini-2.5-flash`
+ * é um id válido e vigente na API v1beta — o antigo `gemini-3.5-flash` NÃO
+ * existe, então todo generateContent voltava 404 (503 `IA_UPSTREAM`) e a geração
+ * por IA ficava quebrada nos três jogos (Qlick/Wor/Isolateus).
+ */
+const GEMINI_MODEL_PADRAO = 'gemini-2.5-flash';
 
 /**
  * Provedor de IA (Gemini). Abstrai a REST do Google. A chave (`GEMINI_API_KEY`)

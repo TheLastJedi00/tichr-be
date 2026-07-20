@@ -2,9 +2,12 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -38,6 +41,13 @@ export class CreateWorJogoDto {
   @IsOptional()
   @IsString()
   topicoId?: string;
+
+  /** Aula (1..N) fixada manualmente quando não há tópicos (ENH-001/002). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  numeroAula?: number;
 
   @IsOptional()
   @IsString()

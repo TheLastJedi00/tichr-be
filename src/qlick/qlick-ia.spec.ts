@@ -4,6 +4,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
+import { ConfigIaService } from '../ia-governanca/config-ia.service';
+import {
+  ContextoPrompt,
+  PromptIaService,
+} from '../ia-governanca/prompt-ia.service';
 import { QlickIaService } from './qlick-ia.service';
 
 const PERGUNTAS_JSON = JSON.stringify(
@@ -24,16 +29,28 @@ function montar(opts: {
     disponivel: () => opts.disponivel ?? true,
     gerarTexto: jest.fn().mockResolvedValue(opts.texto ?? PERGUNTAS_JSON),
   } as never;
+  const hoje = new Date().toISOString().slice(0, 10);
   const prof = new ProfessorEntity({
     planoAtual: opts.plano ?? 'PHD',
-    qlickIaUltimoUso: opts.usouHoje ? new Date().toISOString() : undefined,
+    qlickIaUsos: opts.usouHoje ? { dia: hoje, n: 1 } : undefined,
   });
   const marcar = jest.fn().mockResolvedValue(undefined);
   const professores = {
     getProfile: jest.fn().mockResolvedValue(prof),
-    marcarUsoIaQlick: marcar,
+    registrarUsoIa: marcar,
   } as never;
-  return { service: new QlickIaService(gemini, professores), marcar };
+  const prompts = {
+    montar: jest.fn((_jogo: string, ctx: ContextoPrompt) =>
+      Promise.resolve(JSON.stringify(ctx)),
+    ),
+  } as unknown as PromptIaService;
+  const configIa = {
+    limiteGeracoesDia: jest.fn().mockResolvedValue(1),
+  } as unknown as ConfigIaService;
+  return {
+    service: new QlickIaService(gemini, professores, prompts, configIa),
+    marcar,
+  };
 }
 
 const dto = { instrucao: 'perguntas de revisão', disciplina: 'História', topico: 'Idade Média' };
@@ -44,7 +61,7 @@ describe('QlickIaService.gerarPerguntas', () => {
     const { perguntas } = await service.gerarPerguntas('uid1', dto);
     expect(perguntas).toHaveLength(10);
     expect(perguntas[0].alternativas).toHaveLength(4);
-    expect(marcar).toHaveBeenCalledWith('uid1');
+    expect(marcar).toHaveBeenCalledWith('uid1', 'qlick', expect.any(String));
   });
 
   it('IA indisponível: 503 e não consome cota', async () => {
