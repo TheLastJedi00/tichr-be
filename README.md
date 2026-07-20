@@ -327,12 +327,19 @@ Um quiz do professor (template reutilizável). **PhD-exclusivo**.
 |---|---|---|
 | `id` / `professorId` | string | |
 | `titulo` | string | |
-| `disciplina` | string? | |
+| `disciplina` | string? | **turma OU disciplina é obrigatória** na criação (400 `TURMA_OU_DISCIPLINA`) |
 | `topicoId` | string? | vínculo opcional com um tópico do plano de aula |
+| `numeroAula` | number? | aula (1..N) fixada manualmente quando não há tópicos — controla a visibilidade no painel |
 | `turmaId` | string? | **legado** — turma única (mantido; unificado por `turmas`) |
 | `turmaIds` | string[]? | turmas atribuídas ao Qlick (**N:N**) |
 | `duracaoSegundos` | number | tempo por pergunta (default `60`) |
 | `perguntas` | `{ enunciado, alternativas: string[], corretaIndex }[]` | `corretaIndex` **nunca** é exposto ao cliente |
+
+> `wor_jogos` e `isolateus_jogos` espelham os mesmos campos de vínculo
+> (`disciplina`/`topicoId`/`numeroAula`/`turmaId`/`turmaIds`) e a mesma regra
+> **turma OU disciplina**. Jogo **só com disciplina** (sem `turmaIds`) fica
+> disponível para todas as turmas daquela disciplina — a criação de partida aceita
+> uma turma que case por disciplina.
 
 ### `qlick_partidas`
 Estado **em tempo real** de uma rodada ao vivo — a **única** coleção lida pelo cliente
@@ -366,6 +373,26 @@ aluno/pergunta** (idempotência).
 | `alternativaIndex` | number | escolha do aluno |
 | `correta` | boolean | |
 | `pontos` | number | acerto: `1000` + bônus de rapidez (até `500`) |
+
+### `prompts_ia` (doc id = jogo)
+Governança dos prompts de IA (BUG-ENH-006). **Server-only**, editável pelo admin —
+sem doc, o serviço usa o template default embutido no código (a coleção pode nascer vazia).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `jogo` | `'qlick' \| 'wor' \| 'isolateus'` | o doc id **é** o jogo |
+| `template` | string | prompt com tokens (`{contexto}`, `{instrucao}`, `{qtdPerguntas}`…) |
+| `atualizadoEm` | string? | ISO |
+
+### `config/ia`
+Configuração global da IA. Hoje guarda só o **limite de gerações por dia por jogo**
+(default `1`). O contador diário por professor/jogo vive em `professores/{uid}`
+(`worIaUsos`/`qlickIaUsos`/`isolateusIaUsos` = `{ dia, n }`).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `limiteGeracoesDia` | number | `1..20`; enforcement nos `*IaService` (devolvem `restantes`) |
+| `atualizadoEm` | string? | ISO |
 
 ### `feedbacks`
 Relatos enviados pelos professores (bug, sugestão, dúvida, elogio) e a triagem do admin.
@@ -445,6 +472,12 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 | `POST` | `/admin/usuarios/:uid/admin` | `{ conceder }` | concede/revoga admin gravando `professores/{uid}.isAdmin` (vale na hora, sem re-login) |
 | `GET` | `/admin/feedbacks` | — | `FeedbackEntity[]`, mais novos primeiro. **REST, não `onSnapshot`** — ver [`feedbacks`](#feedbacks) |
 | `PATCH` | `/admin/feedbacks/:id` | `{ status?, notaInterna? }` | triagem. Ambos opcionais: **o que não vem não é tocado** (mudar o status não apaga a nota). `404` se o id não existe |
+| `GET` | `/admin/ia/prompts` | — | `PromptIaView[]` — os 3 jogos com template vigente + o default |
+| `GET` | `/admin/ia/prompts/:jogo` | — | `PromptIaView` |
+| `PUT` | `/admin/ia/prompts/:jogo` | `{ template }` | grava o override do prompt (≥20 chars) |
+| `DELETE` | `/admin/ia/prompts/:jogo` | — | remove o override → volta ao template default |
+| `GET` | `/admin/ia/config` | — | `{ limiteGeracoesDia, atualizadoEm? }` |
+| `PATCH` | `/admin/ia/config` | `{ limiteGeracoesDia }` | ajusta o limite global (`1..20`), reflete na hora |
 
 ### Feedback
 | Método | Rota | Corpo | Resposta |
