@@ -35,33 +35,49 @@ export class InstituicaoEntity {
   /** Duracao padrao de cada aula, em minutos. */
   duracaoAula: number;
 
-  /** Horario de inicio do intervalo/recreio ('HH:mm'). Opcional. */
+  /** Horario de inicio do intervalo/recreio ('HH:mm'). Legado (1 intervalo). */
   inicioIntervalo?: string;
 
-  /** Duracao do intervalo, em minutos. Opcional. */
+  /** Duracao do intervalo, em minutos. Legado (1 intervalo). */
   duracaoIntervalo?: number;
+
+  /** Intervalos/recreios da grade (formato atual, aceita mais de um). */
+  intervalos?: { inicio: string; duracao: number }[];
 
   constructor(partial: Partial<InstituicaoEntity> = {}) {
     Object.assign(this, partial);
   }
 
   /**
+   * Intervalos efetivos: usa a lista `intervalos` (formato atual) e cai no
+   * campo legado de intervalo unico (`inicioIntervalo`/`duracaoIntervalo`)
+   * quando a lista nao existe — sem quebrar instituicoes antigas.
+   */
+  intervalosEfetivos(): { inicio: string; duracao: number }[] {
+    if (this.intervalos?.length) {
+      return this.intervalos;
+    }
+    if (this.inicioIntervalo && (this.duracaoIntervalo ?? 0) > 0) {
+      return [{ inicio: this.inicioIntervalo, duracao: this.duracaoIntervalo! }];
+    }
+    return [];
+  }
+
+  /**
    * Monta a grade de slots cruzando os parametros: aulas contiguas de
-   * `duracaoAula` a partir de `inicioPrimeiroPeriodo`, inserindo o intervalo na
-   * primeira fronteira de slot >= `inicioIntervalo` (ou seja, depois do periodo
-   * que contem aquele horario). Para quando a proxima aula ultrapassaria
-   * `fimUltimoPeriodo`. So os slots do tipo AULA recebem `periodo` (1..N).
+   * `duracaoAula` a partir de `inicioPrimeiroPeriodo`, inserindo cada intervalo
+   * na primeira fronteira de slot >= seu inicio (depois do periodo que contem
+   * aquele horario). Para quando a proxima aula ultrapassaria `fimUltimoPeriodo`.
+   * So os slots do tipo AULA recebem `periodo` (1..N).
    */
   gerarGrade(): GradeSlot[] {
     const inicio = horaParaMinutos(this.inicioPrimeiroPeriodo);
     const fim = horaParaMinutos(this.fimUltimoPeriodo);
     const dur = this.duracaoAula;
-    const temIntervalo =
-      !!this.inicioIntervalo && (this.duracaoIntervalo ?? 0) > 0;
-    const intInicio = temIntervalo
-      ? horaParaMinutos(this.inicioIntervalo!)
-      : null;
-    const intDur = this.duracaoIntervalo ?? 0;
+    const intervalos = this.intervalosEfetivos()
+      .filter((iv) => !!iv.inicio && iv.duracao > 0)
+      .map((iv) => ({ inicio: horaParaMinutos(iv.inicio), duracao: iv.duracao }))
+      .sort((a, b) => a.inicio - b.inicio);
 
     const slots: GradeSlot[] = [];
     if (dur <= 0 || fim <= inicio) {
@@ -70,24 +86,24 @@ export class InstituicaoEntity {
 
     let cursor = inicio;
     let periodo = 1;
-    let intervaloInserido = false;
+    let idxIntervalo = 0;
 
     while (slots.length < MAX_SLOTS) {
+      const proximo = intervalos[idxIntervalo];
       if (
-        intInicio !== null &&
-        !intervaloInserido &&
-        cursor >= intInicio &&
-        cursor + intDur <= fim
+        proximo &&
+        cursor >= proximo.inicio &&
+        cursor + proximo.duracao <= fim
       ) {
         slots.push({
           ordem: slots.length,
           tipo: 'INTERVALO',
           rotulo: 'Intervalo',
           horaInicio: minutosParaHora(cursor),
-          horaFim: minutosParaHora(cursor + intDur),
+          horaFim: minutosParaHora(cursor + proximo.duracao),
         });
-        cursor += intDur;
-        intervaloInserido = true;
+        cursor += proximo.duracao;
+        idxIntervalo++;
         continue;
       }
       if (cursor + dur > fim) {

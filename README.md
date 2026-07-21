@@ -216,12 +216,15 @@ e devolvidos na resposta como `grade` (não persistidos → sem drift).
 | `inicioPrimeiroPeriodo` | string | `'HH:mm'` |
 | `fimUltimoPeriodo` | string | `'HH:mm'` |
 | `duracaoAula` | number | minutos |
-| `inicioIntervalo` | string? | `'HH:mm'` (opcional) |
-| `duracaoIntervalo` | number? | minutos (obrigatório se houver `inicioIntervalo`) |
+| `intervalos` | `{inicio, duracao}[]`? | intervalos/recreios (formato atual, **aceita mais de um**) |
+| `inicioIntervalo` | string? | legado — intervalo único (`'HH:mm'`) |
+| `duracaoIntervalo` | number? | legado — minutos do intervalo único |
 
-O intervalo entra na **primeira fronteira de slot ≥ `inicioIntervalo`** (após o
+Cada intervalo entra na **primeira fronteira de slot ≥ seu início** (após o
 período que contém aquele horário). A geração para quando a próxima aula
 ultrapassaria `fimUltimoPeriodo`; só os slots `AULA` recebem `periodo` (1..N).
+`intervalosEfetivos()` usa a lista `intervalos` e cai no campo legado de
+intervalo único quando ela não existe (sem quebrar instituições antigas).
 
 ### `sessoes`
 A instância real de cada aula (o que aparece no calendário). Gerada pelo motor.

@@ -1,4 +1,6 @@
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -8,7 +10,9 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { IntervaloDto } from './intervalo.dto';
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -29,11 +33,18 @@ export class CreateInstituicaoDto {
   @Max(240)
   duracaoAula: number;
 
+  /** Intervalos/recreios da grade (formato atual, aceita mais de um). */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => IntervaloDto)
+  intervalos?: IntervaloDto[];
+
+  // Legado — intervalo unico (ainda aceito para compatibilidade).
   @IsOptional()
   @Matches(HORA, { message: 'inicioIntervalo deve estar no formato HH:mm' })
   inicioIntervalo?: string;
 
-  /** Obrigatorio (e positivo) quando ha inicioIntervalo. */
   @ValidateIf((o: CreateInstituicaoDto) => !!o.inicioIntervalo)
   @IsInt()
   @Min(1)

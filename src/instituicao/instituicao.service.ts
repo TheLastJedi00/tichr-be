@@ -44,6 +44,7 @@ export class InstituicaoService {
         dto.inicioPrimeiroPeriodo ?? instituicao.inicioPrimeiroPeriodo,
       fimUltimoPeriodo: dto.fimUltimoPeriodo ?? instituicao.fimUltimoPeriodo,
       duracaoAula: dto.duracaoAula ?? instituicao.duracaoAula,
+      intervalos: dto.intervalos ?? instituicao.intervalos,
       inicioIntervalo: dto.inicioIntervalo ?? instituicao.inicioIntervalo,
       duracaoIntervalo: dto.duracaoIntervalo ?? instituicao.duracaoIntervalo,
     };

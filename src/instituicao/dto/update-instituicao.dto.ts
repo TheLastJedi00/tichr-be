@@ -1,4 +1,6 @@
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -7,7 +9,9 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { IntervaloDto } from './intervalo.dto';
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -31,6 +35,12 @@ export class UpdateInstituicaoDto {
   @Min(5)
   @Max(240)
   duracaoAula?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => IntervaloDto)
+  intervalos?: IntervaloDto[];
 
   @IsOptional()
   @Matches(HORA, { message: 'inicioIntervalo deve estar no formato HH:mm' })
