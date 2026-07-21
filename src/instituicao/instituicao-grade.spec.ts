@@ -50,6 +50,43 @@ describe('InstituicaoEntity.gerarGrade', () => {
     expect(grade.every((s) => s.horaFim <= '10:20')).toBe(true);
   });
 
+  it('insere multiplos intervalos, cada um na sua fronteira', () => {
+    const inst = new InstituicaoEntity({
+      nome: 'Dois recreios',
+      inicioPrimeiroPeriodo: '07:00',
+      fimUltimoPeriodo: '12:00',
+      duracaoAula: 50,
+      intervalos: [
+        { inicio: '08:40', duracao: 15 },
+        { inicio: '10:30', duracao: 10 },
+      ],
+    });
+    const grade = inst.gerarGrade();
+    const intervalos = grade.filter((s) => s.tipo === 'INTERVALO');
+    expect(intervalos).toHaveLength(2);
+    // 07:00,07:50 -> intervalo 08:40-08:55 -> 08:55,09:45 -> intervalo 10:35-10:45 ...
+    expect(intervalos[0]).toMatchObject({ horaInicio: '08:40', horaFim: '08:55' });
+    expect(intervalos[1].tipo).toBe('INTERVALO');
+    // Numeracao das aulas ignora os dois intervalos.
+    const aulas = grade.filter((s) => s.tipo === 'AULA');
+    expect(aulas.map((a) => a.periodo)).toEqual(
+      aulas.map((_, i) => i + 1),
+    );
+  });
+
+  it('cai no intervalo legado (campo unico) quando nao ha lista', () => {
+    const inst = new InstituicaoEntity({
+      nome: 'Legado',
+      inicioPrimeiroPeriodo: '07:00',
+      fimUltimoPeriodo: '10:00',
+      duracaoAula: 50,
+      inicioIntervalo: '08:40',
+      duracaoIntervalo: 20,
+    });
+    const grade = inst.gerarGrade();
+    expect(grade.filter((s) => s.tipo === 'INTERVALO')).toHaveLength(1);
+  });
+
   it('funciona sem intervalo configurado', () => {
     const inst = new InstituicaoEntity({
       nome: 'Sem recreio',
