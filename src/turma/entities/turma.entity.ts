@@ -5,6 +5,8 @@ export type TipoModalidade = 'GRADE_FIXA' | 'MODULO_FECHADO';
 
 export type NivelEnsino = 'FUNDAMENTAL' | 'MEDIO';
 
+export type TipoTurno = 'MATUTINO' | 'VESPERTINO' | 'NOTURNO';
+
 /** Alocacao da turma num horario da grade da instituicao. */
 export interface GradeHorariaItem {
   /** Dia da semana. 0 = Domingo .. 6 = Sabado. */
@@ -108,6 +110,9 @@ export class TurmaEntity {
 
   /** Ano/Serie (ex.: '6º Ano', '1ª Série'). */
   anoSerie?: string;
+
+  /** Turno da escola a que a turma pertence (grade das alocacoes). */
+  turno?: TipoTurno;
 
   /** Horarios da grade da instituicao ocupados pela turma. */
   gradeHoraria?: GradeHorariaItem[];

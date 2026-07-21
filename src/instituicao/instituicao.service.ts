@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { paraPlano } from '../common/plain.util';
 import { CreateInstituicaoDto } from './dto/create-instituicao.dto';
 import { UpdateInstituicaoDto } from './dto/update-instituicao.dto';
 import {
@@ -34,7 +35,13 @@ export class InstituicaoService {
     dto: CreateInstituicaoDto,
   ): Promise<InstituicaoView> {
     const instituicao = await this.repo.create(
-      new InstituicaoEntity({ ...dto, professorId }),
+      new InstituicaoEntity({
+        ...dto,
+        professorId,
+        // DTOs viram objetos planos — o Firestore recusa prototipos de classe.
+        turnos: paraPlano(dto.turnos),
+        intervalos: paraPlano(dto.intervalos),
+      }),
     );
     return this.comGrades(instituicao);
   }
@@ -47,12 +54,14 @@ export class InstituicaoService {
     const instituicao = await this.assertPosse(professorId, id);
     const campos: Partial<InstituicaoEntity> = {
       nome: dto.nome ?? instituicao.nome,
-      turnos: dto.turnos ?? instituicao.turnos,
+      turnos: dto.turnos ? paraPlano(dto.turnos) : instituicao.turnos,
       inicioPrimeiroPeriodo:
         dto.inicioPrimeiroPeriodo ?? instituicao.inicioPrimeiroPeriodo,
       fimUltimoPeriodo: dto.fimUltimoPeriodo ?? instituicao.fimUltimoPeriodo,
       duracaoAula: dto.duracaoAula ?? instituicao.duracaoAula,
-      intervalos: dto.intervalos ?? instituicao.intervalos,
+      intervalos: dto.intervalos
+        ? paraPlano(dto.intervalos)
+        : instituicao.intervalos,
       inicioIntervalo: dto.inicioIntervalo ?? instituicao.inicioIntervalo,
       duracaoIntervalo: dto.duracaoIntervalo ?? instituicao.duracaoIntervalo,
     };
