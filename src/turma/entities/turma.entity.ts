@@ -3,6 +3,16 @@ import { SessaoAulaEntity, StatusSessao } from './sessao-aula.entity';
 
 export type TipoModalidade = 'GRADE_FIXA' | 'MODULO_FECHADO';
 
+export type NivelEnsino = 'FUNDAMENTAL' | 'MEDIO';
+
+/** Alocacao da turma num horario da grade da instituicao. */
+export interface GradeHorariaItem {
+  /** Dia da semana. 0 = Domingo .. 6 = Sabado. */
+  diaSemana: number;
+  /** Numero do horario/periodo (1-based) na grade da instituicao. */
+  periodo: number;
+}
+
 /** Horizonte padrao (dias) de projecao de uma grade fixa continua. */
 const HORIZONTE_GRADE_FIXA_DIAS = 120;
 
@@ -84,6 +94,23 @@ export class TurmaEntity {
 
   /** PIN de 6 digitos da turma (portal do aluno); gerado no cadastro. */
   pinTurma?: string;
+
+  // ===== Ensino regular (escola de educacao basica) =====
+
+  /** Instituicao (escola) a que a turma pertence. */
+  instituicaoId?: string;
+
+  /** Marca a turma como de ensino regular (grade da instituicao). */
+  ensinoRegular?: boolean;
+
+  /** Nivel de ensino: Fundamental ou Medio. */
+  nivelEnsino?: NivelEnsino;
+
+  /** Ano/Serie (ex.: '6º Ano', '1ª Série'). */
+  anoSerie?: string;
+
+  /** Horarios da grade da instituicao ocupados pela turma. */
+  gradeHoraria?: GradeHorariaItem[];
 
   constructor(partial: Partial<TurmaEntity> = {}) {
     Object.assign(this, partial);
@@ -205,4 +232,13 @@ export class TurmaEntity {
       status,
     });
   }
+}
+
+/**
+ * Dias da semana distintos (ordenados) presentes numa grade horaria. Usado para
+ * derivar o `diasSemana` de uma turma de ensino regular a partir das alocacoes,
+ * mantendo o motor de projecao (que trabalha por dia da semana) inalterado.
+ */
+export function diasDaGrade(grade: GradeHorariaItem[] = []): number[] {
+  return [...new Set(grade.map((g) => g.diaSemana))].sort((a, b) => a - b);
 }
