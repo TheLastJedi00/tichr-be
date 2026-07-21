@@ -15,7 +15,11 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import type { NivelEnsino, TipoModalidade } from '../entities/turma.entity';
+import type {
+  NivelEnsino,
+  TipoModalidade,
+  TipoTurno,
+} from '../entities/turma.entity';
 import { GradeHorariaItemDto } from './grade-horaria-item.dto';
 
 export class UpdateTurmaDto {
@@ -134,6 +138,10 @@ export class UpdateTurmaDto {
   @IsString()
   @MaxLength(20)
   anoSerie?: string;
+
+  @IsOptional()
+  @IsIn(['MATUTINO', 'VESPERTINO', 'NOTURNO'])
+  turno?: TipoTurno;
 
   @IsOptional()
   @IsArray()

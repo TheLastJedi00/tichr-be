@@ -5,6 +5,11 @@ export class CreateFeriasDto {
   @IsString()
   turmaId?: string;
 
+  /** Escopo por instituicao: as ferias valem so para as turmas daquela escola. */
+  @IsOptional()
+  @IsString()
+  instituicaoId?: string;
+
   @Matches(/^\d{4}-\d{2}-\d{2}$/, {
     message: 'dataInicio deve estar no formato YYYY-MM-DD',
   })

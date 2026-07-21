@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -13,6 +14,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { IntervaloDto } from './intervalo.dto';
+import { TurnoDto } from './turno.dto';
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -22,25 +24,39 @@ export class CreateInstituicaoDto {
   @MaxLength(80)
   nome: string;
 
+  /** Turnos da escola (formato atual). Cada um gera a propria grade. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TurnoDto)
+  turnos?: TurnoDto[];
+
+  /** Uma aula por turno (o turno inteiro e uma aula so). */
+  @IsOptional()
+  @IsBoolean()
+  aulaUnicaPorTurno?: boolean;
+
+  // ===== Legado — turno unico (ainda aceito) =====
+  @IsOptional()
   @Matches(HORA, { message: 'inicioPrimeiroPeriodo deve estar no formato HH:mm' })
-  inicioPrimeiroPeriodo: string;
+  inicioPrimeiroPeriodo?: string;
 
+  @IsOptional()
   @Matches(HORA, { message: 'fimUltimoPeriodo deve estar no formato HH:mm' })
-  fimUltimoPeriodo: string;
+  fimUltimoPeriodo?: string;
 
+  @IsOptional()
   @IsInt()
   @Min(5)
   @Max(240)
-  duracaoAula: number;
+  duracaoAula?: number;
 
-  /** Intervalos/recreios da grade (formato atual, aceita mais de um). */
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => IntervaloDto)
   intervalos?: IntervaloDto[];
 
-  // Legado — intervalo unico (ainda aceito para compatibilidade).
   @IsOptional()
   @Matches(HORA, { message: 'inicioIntervalo deve estar no formato HH:mm' })
   inicioIntervalo?: string;

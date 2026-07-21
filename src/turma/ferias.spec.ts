@@ -1,7 +1,54 @@
 import { expandirIntervalo } from '../common/date.util';
 import { TurmaEntity } from './entities/turma.entity';
+import { montarBloqueador } from './ferias.util';
 
 describe('Ferias', () => {
+  describe('montarBloqueador (isolamento de escopo)', () => {
+    // turmaA -> Escola A; turmaB -> Escola B; turmaMod -> sem instituicao.
+    const instDaTurma = new Map<string, string | undefined>([
+      ['turmaA', 'escolaA'],
+      ['turmaB', 'escolaB'],
+      ['turmaMod', undefined],
+    ]);
+
+    it('ferias por instituicao so bloqueiam as turmas daquela escola', () => {
+      const bloqueador = montarBloqueador(
+        [],
+        [{ instituicaoId: 'escolaA', dataInicio: '2026-07-06', dataFim: '2026-07-10' }],
+        instDaTurma,
+      );
+      // Escola A: bloqueada no periodo.
+      expect(bloqueador('turmaA').has('2026-07-08')).toBe(true);
+      // Escola B e turma modular: NAO bloqueadas (isolamento).
+      expect(bloqueador('turmaB').has('2026-07-08')).toBe(false);
+      expect(bloqueador('turmaMod').has('2026-07-08')).toBe(false);
+    });
+
+    it('ferias globais bloqueiam todas as turmas', () => {
+      const bloqueador = montarBloqueador(
+        [],
+        [{ dataInicio: '2026-07-06', dataFim: '2026-07-10' }],
+        instDaTurma,
+      );
+      expect(bloqueador('turmaA').has('2026-07-08')).toBe(true);
+      expect(bloqueador('turmaB').has('2026-07-08')).toBe(true);
+      expect(bloqueador('turmaMod').has('2026-07-08')).toBe(true);
+    });
+
+    it('ferias por turma so bloqueiam aquela turma; excecoes sao globais', () => {
+      const bloqueador = montarBloqueador(
+        ['2026-05-01'],
+        [{ turmaId: 'turmaA', dataInicio: '2026-07-06', dataFim: '2026-07-10' }],
+        instDaTurma,
+      );
+      expect(bloqueador('turmaA').has('2026-07-08')).toBe(true);
+      expect(bloqueador('turmaB').has('2026-07-08')).toBe(false);
+      // excecao (feriado) vale para todas.
+      expect(bloqueador('turmaA').has('2026-05-01')).toBe(true);
+      expect(bloqueador('turmaB').has('2026-05-01')).toBe(true);
+    });
+  });
+
   describe('expandirIntervalo', () => {
     it('expande [inicio, fim] inclusive', () => {
       expect(expandirIntervalo('2026-03-02', '2026-03-05')).toEqual([
