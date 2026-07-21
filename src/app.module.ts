@@ -16,6 +16,7 @@ import { IsolateusModule } from './isolateus/isolateus.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { CheckoutModule } from './checkout/checkout.module';
 import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
+import { InstituicaoModule } from './instituicao/instituicao.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
     FeedbackModule,
     CheckoutModule,
     IaGovernancaModule,
+    InstituicaoModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
@@ -12,8 +13,10 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
-import type { TipoModalidade } from '../entities/turma.entity';
+import type { NivelEnsino, TipoModalidade } from '../entities/turma.entity';
+import { GradeHorariaItemDto } from './grade-horaria-item.dto';
 
 export class UpdateTurmaDto {
   @IsOptional()
@@ -112,4 +115,29 @@ export class UpdateTurmaDto {
   @IsInt()
   @Min(1)
   nivelPlatina?: number;
+
+  // ===== Ensino regular =====
+
+  @IsOptional()
+  @IsString()
+  instituicaoId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  ensinoRegular?: boolean;
+
+  @IsOptional()
+  @IsIn(['FUNDAMENTAL', 'MEDIO'])
+  nivelEnsino?: NivelEnsino;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  anoSerie?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GradeHorariaItemDto)
+  gradeHoraria?: GradeHorariaItemDto[];
 }
