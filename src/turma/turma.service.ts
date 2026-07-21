@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { expandirIntervalo, hojeISO } from '../common/date.util';
+import { paraPlano } from '../common/plain.util';
 import {
   LIMITE_ALUNOS_TURMA,
   LIMITE_TURMAS_ATIVAS,
@@ -93,6 +94,8 @@ export class TurmaService {
         dto.ensinoRegular && dto.gradeHoraria?.length
           ? diasDaGrade(dto.gradeHoraria)
           : dto.diasSemana,
+      // DTOs viram objetos planos — o Firestore recusa prototipos de classe.
+      gradeHoraria: paraPlano(dto.gradeHoraria),
       ativo: true,
       pinTurma: this.gerarPinTurma(pinsUsados),
     });
@@ -215,7 +218,9 @@ export class TurmaService {
     const turma = await this.buscarTurma(professorId, turmaId);
 
     const ensinoRegular = dto.ensinoRegular ?? turma.ensinoRegular ?? false;
-    const gradeHoraria = dto.gradeHoraria ?? turma.gradeHoraria;
+    const gradeHoraria = dto.gradeHoraria
+      ? paraPlano(dto.gradeHoraria)
+      : turma.gradeHoraria;
     // Turma regular deriva os dias das alocacoes; senao usa o campo cru.
     const diasSemana =
       ensinoRegular && gradeHoraria?.length
@@ -230,6 +235,7 @@ export class TurmaService {
       ensinoRegular,
       nivelEnsino: dto.nivelEnsino ?? turma.nivelEnsino,
       anoSerie: dto.anoSerie ?? turma.anoSerie,
+      turno: dto.turno ?? turma.turno,
       gradeHoraria,
       dataInicio: dto.dataInicio ?? turma.dataInicio,
       totalAulas: dto.totalAulas ?? turma.totalAulas,
