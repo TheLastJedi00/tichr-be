@@ -108,4 +108,48 @@ describe('InstituicaoEntity.gerarGrade', () => {
     });
     expect(inst.gerarGrade()).toEqual([]);
   });
+
+  it('gera uma grade por turno, cada um com seus horarios/intervalos', () => {
+    const inst = new InstituicaoEntity({
+      nome: 'Dois turnos',
+      turnos: [
+        {
+          tipo: 'MATUTINO',
+          inicioPrimeiroPeriodo: '07:00',
+          fimUltimoPeriodo: '12:00',
+          duracaoAula: 50,
+          intervalos: [{ inicio: '09:30', duracao: 20 }],
+        },
+        {
+          tipo: 'NOTURNO',
+          inicioPrimeiroPeriodo: '19:00',
+          fimUltimoPeriodo: '22:00',
+          duracaoAula: 45,
+          intervalos: [{ inicio: '20:30', duracao: 10 }],
+        },
+      ],
+    });
+    const grades = inst.gerarGrades();
+    expect(grades.map((g) => g.turno)).toEqual(['MATUTINO', 'NOTURNO']);
+    expect(grades[0].slots[0]).toMatchObject({ horaInicio: '07:00' });
+    expect(grades[1].slots[0]).toMatchObject({ horaInicio: '19:00' });
+    expect(grades[0].slots.some((s) => s.tipo === 'INTERVALO')).toBe(true);
+    expect(grades[1].slots.some((s) => s.tipo === 'INTERVALO')).toBe(true);
+    // gerarGrade (compat) = primeiro turno.
+    expect(inst.gerarGrade()).toEqual(grades[0].slots);
+  });
+
+  it('sintetiza um turno MATUTINO a partir dos campos legados', () => {
+    const inst = new InstituicaoEntity({
+      nome: 'Legado turno unico',
+      inicioPrimeiroPeriodo: '07:00',
+      fimUltimoPeriodo: '10:00',
+      duracaoAula: 50,
+      intervalos: [{ inicio: '08:40', duracao: 20 }],
+    });
+    const grades = inst.gerarGrades();
+    expect(grades).toHaveLength(1);
+    expect(grades[0].turno).toBe('MATUTINO');
+    expect(grades[0].slots.some((s) => s.tipo === 'INTERVALO')).toBe(true);
+  });
 });

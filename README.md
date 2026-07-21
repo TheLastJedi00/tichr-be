@@ -205,21 +205,23 @@ Agrupa as regras de recorrência de um conjunto de aulas.
 > são opcionais → nenhuma turma antiga muda.
 
 ### `instituicoes`
-Escola do ensino regular. Guarda só os **parâmetros** da grade; os slots
-(`1º Horário`, `Intervalo`, …) são **calculados** por `InstituicaoEntity.gerarGrade()`
-e devolvidos na resposta como `grade` (não persistidos → sem drift).
+Escola do ensino regular. Guarda só os **parâmetros** dos turnos; as grades
+(`1º Horário`, `Intervalo`, …) são **calculadas** por `InstituicaoEntity.gerarGrades()`
+e devolvidas na resposta como `grades` (uma por turno; não persistidas → sem drift).
+`grade` (grade única) permanece na resposta = primeiro turno, para compat.
 
 | Campo | Tipo | Observação |
 |---|---|---|
 | `id` / `professorId` | string | dono (uid) |
 | `nome` | string | |
-| `inicioPrimeiroPeriodo` | string | `'HH:mm'` |
-| `fimUltimoPeriodo` | string | `'HH:mm'` |
-| `duracaoAula` | number | minutos |
-| `intervalos` | `{inicio, duracao}[]`? | intervalos/recreios (formato atual, **aceita mais de um**) |
-| `inicioIntervalo` | string? | legado — intervalo único (`'HH:mm'`) |
-| `duracaoIntervalo` | number? | legado — minutos do intervalo único |
+| `turnos` | `TurnoInstituicao[]`? | **turnos da escola** (formato atual): `{tipo:'MATUTINO'\|'VESPERTINO'\|'NOTURNO', inicioPrimeiroPeriodo, fimUltimoPeriodo, duracaoAula, intervalos?}`. Cada turno gera a própria grade |
+| `inicioPrimeiroPeriodo` / `fimUltimoPeriodo` | string? | legado — turno único (`'HH:mm'`) |
+| `duracaoAula` | number? | legado — turno único |
+| `intervalos` | `{inicio, duracao}[]`? | legado — recreios do turno único |
+| `inicioIntervalo` / `duracaoIntervalo` | string?/number? | legado — intervalo único mais antigo |
 
+`turnosEfetivos()` usa `turnos` e, na ausência, **sintetiza um turno `MATUTINO`**
+a partir dos campos legados (instituições antigas seguem funcionando).
 Cada intervalo entra na **primeira fronteira de slot ≥ seu início** (após o
 período que contém aquele horário). A geração para quando a próxima aula
 ultrapassaria `fimUltimoPeriodo`; só os slots `AULA` recebem `periodo` (1..N).
@@ -547,16 +549,17 @@ mesmos, todos opcionais, + `encerradaManualmente?`.
 ### Instituições (ensino regular)
 | Método | Rota | Corpo | Resposta |
 |---|---|---|---|
-| `GET` | `/instituicoes` | — | `InstituicaoView[]` (cada uma com a `grade` calculada) |
+| `GET` | `/instituicoes` | — | `InstituicaoView[]` (cada uma com as `grades` por turno) |
 | `GET` | `/instituicoes/:id` | — | `InstituicaoView` (404 se não for do professor) |
 | `POST` | `/instituicoes` | `CreateInstituicaoDto` | `InstituicaoView` |
 | `PUT` | `/instituicoes/:id` | `UpdateInstituicaoDto` | `InstituicaoView` |
 | `DELETE` | `/instituicoes/:id` | — | `204` |
 
-`CreateInstituicaoDto`: `nome`, `inicioPrimeiroPeriodo`/`fimUltimoPeriodo` (`HH:mm`),
-`duracaoAula` (min), `inicioIntervalo?` (`HH:mm`), `duracaoIntervalo?` (min,
-obrigatório se houver intervalo). `InstituicaoView` = a entidade + `grade`
-(`{ordem, tipo, periodo?, rotulo, horaInicio, horaFim}[]`).
+`CreateInstituicaoDto`: `nome` + `turnos` (`{tipo, inicioPrimeiroPeriodo,
+fimUltimoPeriodo, duracaoAula, intervalos?}[]`). Campos legados de turno único
+(`inicioPrimeiroPeriodo`/`fimUltimoPeriodo`/`duracaoAula`/`intervalos`) ainda são
+aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade`
+(slots do 1º turno; `{ordem, tipo, periodo?, rotulo, horaInicio, horaFim}`).
 
 ### Checkout / pagamentos (Abacate Pay)
 | Método | Rota | Corpo | Resposta |
