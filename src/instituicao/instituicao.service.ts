@@ -1,11 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateInstituicaoDto } from './dto/create-instituicao.dto';
 import { UpdateInstituicaoDto } from './dto/update-instituicao.dto';
-import { GradeSlot, InstituicaoEntity } from './entities/instituicao.entity';
+import {
+  GradeSlot,
+  GradeTurno,
+  InstituicaoEntity,
+} from './entities/instituicao.entity';
 import { InstituicaoRepository } from './repositories/instituicao.repository';
 
-/** Instituicao com a grade calculada anexada (o que o front consome). */
+/** Instituicao com as grades por turno anexadas (o que o front consome). */
 export interface InstituicaoView extends InstituicaoEntity {
+  /** Grades por turno (formato atual). */
+  grades: GradeTurno[];
+  /** Grade do primeiro turno (compat com consumidores de grade unica). */
   grade: GradeSlot[];
 }
 
@@ -15,11 +22,11 @@ export class InstituicaoService {
 
   async listar(professorId: string): Promise<InstituicaoView[]> {
     const instituicoes = await this.repo.findByProfessor(professorId);
-    return instituicoes.map((i) => this.comGrade(i));
+    return instituicoes.map((i) => this.comGrades(i));
   }
 
   async buscar(professorId: string, id: string): Promise<InstituicaoView> {
-    return this.comGrade(await this.assertPosse(professorId, id));
+    return this.comGrades(await this.assertPosse(professorId, id));
   }
 
   async criar(
@@ -29,7 +36,7 @@ export class InstituicaoService {
     const instituicao = await this.repo.create(
       new InstituicaoEntity({ ...dto, professorId }),
     );
-    return this.comGrade(instituicao);
+    return this.comGrades(instituicao);
   }
 
   async atualizar(
@@ -40,6 +47,7 @@ export class InstituicaoService {
     const instituicao = await this.assertPosse(professorId, id);
     const campos: Partial<InstituicaoEntity> = {
       nome: dto.nome ?? instituicao.nome,
+      turnos: dto.turnos ?? instituicao.turnos,
       inicioPrimeiroPeriodo:
         dto.inicioPrimeiroPeriodo ?? instituicao.inicioPrimeiroPeriodo,
       fimUltimoPeriodo: dto.fimUltimoPeriodo ?? instituicao.fimUltimoPeriodo,
@@ -50,7 +58,7 @@ export class InstituicaoService {
     };
     Object.assign(instituicao, campos);
     await this.repo.update(id, campos);
-    return this.comGrade(instituicao);
+    return this.comGrades(instituicao);
   }
 
   async remover(professorId: string, id: string): Promise<void> {
@@ -58,8 +66,12 @@ export class InstituicaoService {
     await this.repo.delete(id);
   }
 
-  private comGrade(instituicao: InstituicaoEntity): InstituicaoView {
-    return Object.assign(instituicao, { grade: instituicao.gerarGrade() });
+  private comGrades(instituicao: InstituicaoEntity): InstituicaoView {
+    const grades = instituicao.gerarGrades();
+    return Object.assign(instituicao, {
+      grades,
+      grade: grades[0]?.slots ?? [],
+    });
   }
 
   private async assertPosse(

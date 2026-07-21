@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { IntervaloDto } from './intervalo.dto';
+import { TurnoDto } from './turno.dto';
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -22,6 +23,13 @@ export class UpdateInstituicaoDto {
   @MaxLength(80)
   nome?: string;
 
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TurnoDto)
+  turnos?: TurnoDto[];
+
+  // ===== Legado — turno unico =====
   @IsOptional()
   @Matches(HORA, { message: 'inicioPrimeiroPeriodo deve estar no formato HH:mm' })
   inicioPrimeiroPeriodo?: string;
