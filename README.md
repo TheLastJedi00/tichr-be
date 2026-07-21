@@ -190,9 +190,38 @@ Agrupa as regras de recorrência de um conjunto de aulas.
 | `rankingAtivo` | boolean? | liga/desliga o ranking (default `true`) |
 | `rotuloAdicionar` / `rotuloRemover` | string? | rótulos dos botões de pontuar (ex.: `Moggar` / `Punir`; default `Adicionar`/`Remover`) |
 | `pinTurma` | string? | **Smart PIN** da turma (portal do aluno): **2 dígitos** (novo) ou 6 díg (legado). Gerado no cadastro; **backfill** ao abrir turmas antigas |
+| `instituicaoId` | string? | escola (ensino regular) a que a turma pertence |
+| `ensinoRegular` | boolean? | marca a turma como de ensino regular (grade da instituição) |
+| `nivelEnsino` | `'FUNDAMENTAL' \| 'MEDIO'`? | nível do ensino regular |
+| `anoSerie` | string? | ano/série (ex.: `6º Ano`, `1ª Série`) |
+| `gradeHoraria` | `{diaSemana, periodo}[]`? | horários da grade ocupados pela turma |
 
 > Os 5 campos de config têm defaults aplicados no getter `TurmaEntity.configPontuacao`
 > — turmas antigas sem os campos assumem `XP`/ativos.
+
+> **Ensino regular:** quando `ensinoRegular` é `true`, a turma é `GRADE_FIXA`
+> contínua e o backend **deriva `diasSemana`** dos dias distintos de `gradeHoraria`
+> (o motor de projeção segue por dia da semana, sem alteração). Todos os campos
+> são opcionais → nenhuma turma antiga muda.
+
+### `instituicoes`
+Escola do ensino regular. Guarda só os **parâmetros** da grade; os slots
+(`1º Horário`, `Intervalo`, …) são **calculados** por `InstituicaoEntity.gerarGrade()`
+e devolvidos na resposta como `grade` (não persistidos → sem drift).
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `id` / `professorId` | string | dono (uid) |
+| `nome` | string | |
+| `inicioPrimeiroPeriodo` | string | `'HH:mm'` |
+| `fimUltimoPeriodo` | string | `'HH:mm'` |
+| `duracaoAula` | number | minutos |
+| `inicioIntervalo` | string? | `'HH:mm'` (opcional) |
+| `duracaoIntervalo` | number? | minutos (obrigatório se houver `inicioIntervalo`) |
+
+O intervalo entra na **primeira fronteira de slot ≥ `inicioIntervalo`** (após o
+período que contém aquele horário). A geração para quando a próxima aula
+ultrapassaria `fimUltimoPeriodo`; só os slots `AULA` recebem `periodo` (1..N).
 
 ### `sessoes`
 A instância real de cada aula (o que aparece no calendário). Gerada pelo motor.
@@ -506,9 +535,25 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
 `totalAulas?` (obrigatório se módulo), `cor?` (`#RRGGBB`), `disciplina?`,
-`horaInicio?`/`horaFim?` (`HH:mm`), e a **config de pontuação** `pontuacaoAtiva?`,
-`nomePontuacao?`, `rankingAtivo?`, `rotuloAdicionar?`, `rotuloRemover?`. `UpdateTurmaDto` =
-os mesmos, todos opcionais, + `encerradaManualmente?`.
+`horaInicio?`/`horaFim?` (`HH:mm`), a **config de pontuação** `pontuacaoAtiva?`,
+`nomePontuacao?`, `rankingAtivo?`, `rotuloAdicionar?`, `rotuloRemover?`, e os campos
+de **ensino regular** `instituicaoId?`, `ensinoRegular?`, `nivelEnsino?`,
+`anoSerie?`, `gradeHoraria?` (`{diaSemana, periodo}[]`). `UpdateTurmaDto` = os
+mesmos, todos opcionais, + `encerradaManualmente?`.
+
+### Instituições (ensino regular)
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| `GET` | `/instituicoes` | — | `InstituicaoView[]` (cada uma com a `grade` calculada) |
+| `GET` | `/instituicoes/:id` | — | `InstituicaoView` (404 se não for do professor) |
+| `POST` | `/instituicoes` | `CreateInstituicaoDto` | `InstituicaoView` |
+| `PUT` | `/instituicoes/:id` | `UpdateInstituicaoDto` | `InstituicaoView` |
+| `DELETE` | `/instituicoes/:id` | — | `204` |
+
+`CreateInstituicaoDto`: `nome`, `inicioPrimeiroPeriodo`/`fimUltimoPeriodo` (`HH:mm`),
+`duracaoAula` (min), `inicioIntervalo?` (`HH:mm`), `duracaoIntervalo?` (min,
+obrigatório se houver intervalo). `InstituicaoView` = a entidade + `grade`
+(`{ordem, tipo, periodo?, rotulo, horaInicio, horaFim}[]`).
 
 ### Checkout / pagamentos (Abacate Pay)
 | Método | Rota | Corpo | Resposta |

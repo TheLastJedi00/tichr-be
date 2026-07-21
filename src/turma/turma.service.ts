@@ -18,7 +18,11 @@ import { UpdateTurmaDto } from './dto/update-turma.dto';
 import { ExcecaoEntity } from './entities/excecao.entity';
 import { FeriasEntity } from './entities/ferias.entity';
 import { SessaoAulaEntity } from './entities/sessao-aula.entity';
-import { NIVEIS_TURMA_DEFAULT, TurmaEntity } from './entities/turma.entity';
+import {
+  diasDaGrade,
+  NIVEIS_TURMA_DEFAULT,
+  TurmaEntity,
+} from './entities/turma.entity';
 import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
@@ -84,6 +88,11 @@ export class TurmaService {
     const turma = new TurmaEntity({
       ...dto,
       professorId,
+      // Turma regular: os dias vem das alocacoes na grade (nao do campo cru).
+      diasSemana:
+        dto.ensinoRegular && dto.gradeHoraria?.length
+          ? diasDaGrade(dto.gradeHoraria)
+          : dto.diasSemana,
       ativo: true,
       pinTurma: this.gerarPinTurma(pinsUsados),
     });
@@ -205,10 +214,23 @@ export class TurmaService {
   ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
     const turma = await this.buscarTurma(professorId, turmaId);
 
+    const ensinoRegular = dto.ensinoRegular ?? turma.ensinoRegular ?? false;
+    const gradeHoraria = dto.gradeHoraria ?? turma.gradeHoraria;
+    // Turma regular deriva os dias das alocacoes; senao usa o campo cru.
+    const diasSemana =
+      ensinoRegular && gradeHoraria?.length
+        ? diasDaGrade(gradeHoraria)
+        : (dto.diasSemana ?? turma.diasSemana);
+
     const campos: Partial<TurmaEntity> = {
       nome: dto.nome ?? turma.nome,
       tipoModalidade: dto.tipoModalidade ?? turma.tipoModalidade,
-      diasSemana: dto.diasSemana ?? turma.diasSemana,
+      diasSemana,
+      instituicaoId: dto.instituicaoId ?? turma.instituicaoId,
+      ensinoRegular,
+      nivelEnsino: dto.nivelEnsino ?? turma.nivelEnsino,
+      anoSerie: dto.anoSerie ?? turma.anoSerie,
+      gradeHoraria,
       dataInicio: dto.dataInicio ?? turma.dataInicio,
       totalAulas: dto.totalAulas ?? turma.totalAulas,
       cor: dto.cor ?? turma.cor,
