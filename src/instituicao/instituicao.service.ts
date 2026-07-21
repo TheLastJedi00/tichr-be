@@ -55,6 +55,8 @@ export class InstituicaoService {
     const campos: Partial<InstituicaoEntity> = {
       nome: dto.nome ?? instituicao.nome,
       turnos: dto.turnos ? paraPlano(dto.turnos) : instituicao.turnos,
+      aulaUnicaPorTurno:
+        dto.aulaUnicaPorTurno ?? instituicao.aulaUnicaPorTurno,
       inicioPrimeiroPeriodo:
         dto.inicioPrimeiroPeriodo ?? instituicao.inicioPrimeiroPeriodo,
       fimUltimoPeriodo: dto.fimUltimoPeriodo ?? instituicao.fimUltimoPeriodo,

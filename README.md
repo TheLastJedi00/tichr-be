@@ -215,6 +215,7 @@ e devolvidas na resposta como `grades` (uma por turno; não persistidas → sem 
 | `id` / `professorId` | string | dono (uid) |
 | `nome` | string | |
 | `turnos` | `TurnoInstituicao[]`? | **turnos da escola** (formato atual): `{tipo:'MATUTINO'\|'VESPERTINO'\|'NOTURNO', inicioPrimeiroPeriodo, fimUltimoPeriodo, duracaoAula, intervalos?}`. Cada turno gera a própria grade |
+| `aulaUnicaPorTurno` | boolean? | quando `true`, cada turno é **uma aula única** (turno inteiro = 1 slot); o dashboard omite o "Nº horário" |
 | `inicioPrimeiroPeriodo` / `fimUltimoPeriodo` | string? | legado — turno único (`'HH:mm'`) |
 | `duracaoAula` | number? | legado — turno único |
 | `intervalos` | `{inicio, duracao}[]`? | legado — recreios do turno único |
