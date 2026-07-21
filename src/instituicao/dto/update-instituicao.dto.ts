@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -28,6 +29,10 @@ export class UpdateInstituicaoDto {
   @ValidateNested({ each: true })
   @Type(() => TurnoDto)
   turnos?: TurnoDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  aulaUnicaPorTurno?: boolean;
 
   // ===== Legado — turno unico =====
   @IsOptional()

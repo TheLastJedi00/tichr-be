@@ -95,6 +95,23 @@ export function gerarSlots(
   return slots;
 }
 
+/** Grade de um turno com aula unica: um slot cobrindo o turno inteiro. */
+function aulaUnicaSlot(t: TurnoInstituicao): GradeSlot[] {
+  if (!(t.fimUltimoPeriodo > t.inicioPrimeiroPeriodo)) {
+    return [];
+  }
+  return [
+    {
+      ordem: 0,
+      tipo: 'AULA',
+      periodo: 1,
+      rotulo: 'Aula',
+      horaInicio: t.inicioPrimeiroPeriodo,
+      horaFim: t.fimUltimoPeriodo,
+    },
+  ];
+}
+
 /**
  * Instituicao (escola) do ensino regular. Guarda apenas os parametros dos
  * turnos; as grades (1º Horário, Intervalo, ...) sao **calculadas** por
@@ -107,6 +124,13 @@ export class InstituicaoEntity {
 
   /** Turnos da escola (formato atual). Cada um gera a propria grade. */
   turnos?: TurnoInstituicao[];
+
+  /**
+   * Quando true, cada turno e uma **aula unica** que ocupa o turno inteiro
+   * (uma aula por turno). A grade do turno vira um unico slot [inicio, fim];
+   * o dashboard omite o "Nº horário" nesse caso.
+   */
+  aulaUnicaPorTurno?: boolean;
 
   // ===== Legado — instituicao de turno unico (compat) =====
   /** Horario de inicio do primeiro periodo ('HH:mm'). */
@@ -162,12 +186,14 @@ export class InstituicaoEntity {
   gerarGrades(): GradeTurno[] {
     return this.turnosEfetivos().map((t) => ({
       turno: t.tipo,
-      slots: gerarSlots(
-        t.inicioPrimeiroPeriodo,
-        t.fimUltimoPeriodo,
-        t.duracaoAula,
-        t.intervalos ?? [],
-      ),
+      slots: this.aulaUnicaPorTurno
+        ? aulaUnicaSlot(t)
+        : gerarSlots(
+            t.inicioPrimeiroPeriodo,
+            t.fimUltimoPeriodo,
+            t.duracaoAula,
+            t.intervalos ?? [],
+          ),
     }));
   }
 
