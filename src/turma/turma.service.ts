@@ -3,8 +3,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { expandirIntervalo, hojeISO } from '../common/date.util';
+import { hojeISO } from '../common/date.util';
 import { paraPlano } from '../common/plain.util';
+import { montarBloqueador } from './ferias.util';
 import {
   LIMITE_ALUNOS_TURMA,
   LIMITE_TURMAS_ATIVAS,
@@ -319,23 +320,16 @@ export class TurmaService {
   private async carregarBloqueador(
     professorId: string,
   ): Promise<(turmaId: string) => Set<string>> {
-    const [excecoes, ferias] = await Promise.all([
+    const [excecoes, ferias, turmas] = await Promise.all([
       this.excecaoRepo.findByProfessor(professorId),
       this.feriasRepo.findByProfessor(professorId),
+      this.turmaRepo.findByProfessor(professorId),
     ]);
-
-    const base = new Set(excecoes.map((e) => e.data));
-    const porTurma = new Map<string, string[]>();
-    for (const f of ferias) {
-      const dias = expandirIntervalo(f.dataInicio, f.dataFim);
-      if (f.turmaId) {
-        porTurma.set(f.turmaId, [...(porTurma.get(f.turmaId) ?? []), ...dias]);
-      } else {
-        for (const d of dias) base.add(d);
-      }
-    }
-
-    return (turmaId: string) =>
-      new Set([...base, ...(porTurma.get(turmaId) ?? [])]);
+    const instDaTurma = new Map(turmas.map((t) => [t.id, t.instituicaoId]));
+    return montarBloqueador(
+      excecoes.map((e) => e.data),
+      ferias,
+      instDaTurma,
+    );
   }
 }
