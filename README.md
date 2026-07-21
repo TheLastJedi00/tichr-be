@@ -256,9 +256,15 @@ Bloqueio de um **intervalo** de datas.
 | Campo | Tipo | Observação |
 |---|---|---|
 | `id` / `professorId` | string | |
-| `turmaId` | string? | **ausente = global** (todas as turmas); presente = só aquela turma |
+| `turmaId` | string? | escopo por turma: vale só para aquela turma |
+| `instituicaoId` | string? | escopo por instituição: vale só para as turmas daquela escola |
 | `dataInicio` / `dataFim` | string | `'YYYY-MM-DD'` (inclusive) |
 | `descricao` | string? | |
+
+Escopo (BUG-ENH-011): **global** (sem `turmaId` nem `instituicaoId`) bloqueia
+todas as turmas; **por instituição** bloqueia só as turmas daquela escola; **por
+turma** só aquela. O isolamento é montado em `montarBloqueador` (`ferias.util.ts`),
+que cruza escopo com o mapa turmaId→instituicaoId.
 
 ### `professores` (doc id = `uid`)
 Perfil do professor.
