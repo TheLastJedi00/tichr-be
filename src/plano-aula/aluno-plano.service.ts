@@ -39,8 +39,11 @@ export class AlunoPlanoService {
     const nomePorId = new Map(topicos.map((t) => [t.id, t.nome]));
 
     const lista = alocacoes
+      // Só as modulares (por número de aula) espelham no portal do aluno; as
+      // regulares (por unidade eletiva) não têm número de aula.
+      .filter((a) => a.numeroAula != null)
       .map((a) => ({
-        numeroAula: a.numeroAula,
+        numeroAula: a.numeroAula as number,
         topico: nomePorId.get(a.topicoId),
       }))
       .filter((x): x is TopicoAula => !!x.topico);
