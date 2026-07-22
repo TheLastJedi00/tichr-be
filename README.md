@@ -343,13 +343,16 @@ Backlog de tópicos de uma disciplina (microplanejamento, Graduado+).
 | `nome` | string | cadastrado em lote |
 
 ### `alocacoes`
-Vínculo tópico↔aula, ancorado no **número da aula** (não na data).
+Vínculo tópico↔turma em **dois modos** que convivem na mesma coleção (todos os
+campos de âncora são opcionais, sem migração):
 
 | Campo | Tipo | Observação |
 |---|---|---|
 | `id` / `turmaId` | string | |
-| `numeroAula` | number | ancora a alocação — sobrevive ao deslizamento da grade |
 | `topicoId` | string | |
+| `numeroAula` | number? | **modo modular:** ancora a alocação no número da aula — sobrevive ao deslizamento da grade |
+| `unidade` | number? | **modo regular:** Unidade Eletiva (1–4) do ensino regular |
+| `ordem` | number? | **modo regular:** posição do tópico dentro da unidade (0-based) — a numeração 1., 2., 3. é derivada dela |
 
 ### `xp_logs`
 Registro (event sourcing) de cada distribuição de pontos.
@@ -639,8 +642,9 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 | `GET` | `/topicos?disciplina=` | — | `TopicoEntity[]` (403 `PLANO_LOCKED` se `< GRADUADO`) |
 | `POST` | `/topicos` | `{ disciplina, nomes: string[] }` | `TopicoEntity[]` — lote |
 | `DELETE` | `/topicos/:id` | — | `{ removido: true }` — limpa as alocações do tópico |
-| `GET` | `/turmas/:turmaId/alocacoes` | — | `AlocacaoEntity[]` |
-| `PUT` | `/turmas/:turmaId/alocacoes/:numero` | `{ topicoId: string \| null }` | aloca (upsert por número) ou desaloca (`null`) |
+| `GET` | `/turmas/:turmaId/alocacoes` | — | `AlocacaoEntity[]` (modulares e regulares) |
+| `PUT` | `/turmas/:turmaId/alocacoes/:numero` | `{ topicoId: string \| null }` | **modular:** aloca (upsert por número) ou desaloca (`null`) |
+| `PUT` | `/turmas/:turmaId/alocacoes-regulares` | `{ unidades: { unidade, topicoIds[] }[] }` | **regular:** regrava o board das Unidades Eletivas de uma vez (idempotente; `ordem` = índice) |
 
 ### Tichr Qlick (professor — comandos REST)
 | Método | Rota | Corpo | Resposta |
@@ -901,6 +905,12 @@ O **Plano de Aula** escala com o plano do professor (`PlanoAulaModule`, independ
   **`numeroAula`**, não na data — como a reprojeção regenera as sessões mantendo o `numero`, o
   **tópico desliza junto com a aula** automaticamente quando a grade recalcula. Excluir um
   tópico limpa suas alocações.
+- **Ensino Regular — alocação por Unidade Eletiva:** turmas de ensino regular (200 dias letivos)
+  não alocam por dia/aula: o alvo de soltura é a **Unidade Eletiva** (1ª–4ª, agrupadas em
+  1º/2º Semestre). A alocação usa `unidade` (1–4) + `ordem` (numeração sequencial dentro da
+  unidade). O board inteiro é regravado de uma vez por `PUT /turmas/:turmaId/alocacoes-regulares`
+  (idempotente: apaga as regulares atuais e recria a partir do payload; **preserva** as
+  modulares). Reordenar recalcula a numeração no próprio índice do array.
 - **PhD — sincronização com o portal:** `GET /aluno/plano` devolve os tópicos alocados às aulas
   da turma do aluno (join `alocacoes` × `topicos` por número), **apenas quando o professor é
   PhD** — alimentando o "o que já vimos" (aulas concluídas) e "o que vem por aí" (próxima aula)

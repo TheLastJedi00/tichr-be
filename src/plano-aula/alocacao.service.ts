@@ -64,4 +64,31 @@ export class AlocacaoService {
       new AlocacaoEntity({ turmaId, numeroAula, topicoId }),
     );
   }
+
+  /**
+   * Regrava o board REGULAR de uma turma (ensino regular): recebe o estado
+   * completo das Unidades Eletivas e persiste `unidade`+`ordem` para cada
+   * tópico. Idempotente — apaga as alocações regulares atuais e recria a partir
+   * do payload. As alocações modulares (por `numeroAula`) ficam intactas.
+   */
+  async definirRegulares(
+    professorId: string,
+    turmaId: string,
+    unidades: { unidade: number; topicoIds: string[] }[],
+  ): Promise<AlocacaoEntity[]> {
+    await this.assertGraduado(professorId);
+    await this.turmaService.buscarTurma(professorId, turmaId);
+
+    const existentes = await this.alocacaoRepo.findByTurma(turmaId);
+    const regularesAtuais = existentes.filter((a) => a.unidade != null);
+    await this.alocacaoRepo.deleteMany(regularesAtuais.map((a) => a.id));
+
+    const novas = unidades.flatMap((u) =>
+      u.topicoIds.map(
+        (topicoId, ordem) =>
+          new AlocacaoEntity({ turmaId, topicoId, unidade: u.unidade, ordem }),
+      ),
+    );
+    return this.alocacaoRepo.createMany(novas);
+  }
 }

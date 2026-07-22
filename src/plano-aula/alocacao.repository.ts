@@ -17,6 +17,18 @@ export class AlocacaoRepository extends FirestoreRepository<AlocacaoEntity> {
     return this.findBy('turmaId', turmaId);
   }
 
+  /** Cria varias alocacoes de uma vez (usado no board regular). */
+  async createMany(
+    alocacoes: Omit<AlocacaoEntity, 'id'>[],
+  ): Promise<AlocacaoEntity[]> {
+    return Promise.all(alocacoes.map((a) => this.create(a)));
+  }
+
+  /** Remove varias alocacoes por id (usado ao regravar o board regular). */
+  async deleteMany(ids: string[]): Promise<void> {
+    await Promise.all(ids.map((id) => this.delete(id)));
+  }
+
   /** Remove todas as alocacoes de um topico (usado ao excluir o topico). */
   deleteByTopico(topicoId: string): Promise<void> {
     return this.deleteBy('topicoId', topicoId);
