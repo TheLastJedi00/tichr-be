@@ -48,6 +48,13 @@ export interface Habitante {
   nome: string;
   vivo: boolean;
   preso: boolean;
+  /**
+   * O setor que o habitante ocupa agora. **Público de propósito**: sem posição
+   * pública não há mapa. O recorte "só vejo quem está no meu setor" é regra de
+   * UI — posição não revela papel nem resposta, e recortá-la no servidor custaria
+   * uma rodada de REST por movimento sem proteger segredo nenhum.
+   */
+  setorId: string;
 }
 
 /** Um dos 6 setores vitais. */

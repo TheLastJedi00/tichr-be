@@ -24,18 +24,21 @@ const QUESTOES = Array.from({ length: 3 }, (_, i) => ({
  * Monta uma vila: `reais` habitantes reais (o 1º é o Alien) + `npcs` virtuais.
  * O repositório é em memória e separa camada pública de cofre, como o real.
  */
-function cenario(opts: { reais?: number; npcs?: number; rodada?: number } = {}) {
+function cenario(opts: { reais?: number; npcs?: number; rodada?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
+  // A vila inteira num setor so: mantem todos ao alcance da Ameaca, para que
+  // estes testes exercitem o motor e nao a geografia (que tem specs proprias).
+  const setor = opts.setor ?? 'seguranca';
 
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];
   for (let i = 1; i <= nReais; i++) {
-    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `h${i}`, alunoId: `a${i}` });
   }
   for (let i = 1; i <= nNpcs; i++) {
-    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `n${i}` });
   }
 
@@ -74,7 +77,7 @@ function cenario(opts: { reais?: number; npcs?: number; rodada?: number } = {}) 
     partidaId: 'p1',
     alienAlunoId: 'a1', // o primeiro real é sempre a Ameaça nos testes
     vinculos,
-    acaoRodada: { tipo: 'SABOTAR', alvoId: 'medico' },
+    acaoRodada: { tipo: 'SABOTAR', alvoId: 'saude' },
     pontos: {},
   });
 
@@ -139,7 +142,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     await todosRespondem(service, 4, 3); // todos na alternativa errada
 
     expect(partida.resumoRodada?.defendida).toBe(false);
-    expect(partida.setores.find((s) => s.id === 'medico')!.intacto).toBe(false);
+    expect(partida.setores.find((s) => s.id === 'saude')!.intacto).toBe(false);
     expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
     // Sabotagem validada: o Alien pontua como se tivesse acertado a questão.
     expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);

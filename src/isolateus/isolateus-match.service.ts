@@ -18,7 +18,7 @@ import { VinculoHabitante } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { ISOLATEUS_LOCKED } from './isolateus-jogo.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
-import { SETORES, sortearCodinomes } from './isolateus.data';
+import { SETOR_IDS, SETORES, sortearCodinomes } from './isolateus.data';
 
 /**
  * Ciclo de vida da partida até o início: criação, lobby (pseudônimos), veto de
@@ -66,7 +66,13 @@ export class IsolateusMatchService {
         status: 'LOBBY',
         criadaEm: new Date().toISOString(),
         esperanca: ISOLATEUS.ESPERANCA_INICIAL,
-        setores: SETORES.map((s) => ({ ...s, intacto: true })),
+        // Sem `vizinhos`: a malha é imutável e vive no banco estático. Copiá-la
+        // no documento seria pagar leitura por um dado que nunca muda.
+        setores: SETORES.map((s) => ({
+          id: s.id,
+          nome: s.nome,
+          intacto: true,
+        })),
         habitantes: [],
         rodada: -1,
         totalRodadas: jogo.questoes.length,
@@ -236,7 +242,13 @@ export class IsolateusMatchService {
 
     reais.forEach((inscrito, i) => {
       const id = randomUUID();
-      habitantes.push({ id, nome: codinomes[i], vivo: true, preso: false });
+      habitantes.push({
+        id,
+        nome: codinomes[i],
+        vivo: true,
+        preso: false,
+        setorId: '',
+      });
       vinculos.push({ habitanteId: id, alunoId: inscrito.alunoId });
     });
     for (let i = 0; i < qtdNpcs; i++) {
@@ -246,6 +258,7 @@ export class IsolateusMatchService {
         nome: codinomes[reais.length + i],
         vivo: true,
         preso: false,
+        setorId: '',
       });
       vinculos.push({ habitanteId: id }); // sem alunoId = NPC
     }
@@ -257,7 +270,7 @@ export class IsolateusMatchService {
 
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'TURNO_AMEACA',
-      habitantes: embaralhar(habitantes),
+      habitantes: this.distribuirPeloMapa(embaralhar(habitantes)),
       rodada: 0,
       faseIniciadaEm: null,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
@@ -270,5 +283,20 @@ export class IsolateusMatchService {
       pontos: {},
     });
     return partida;
+  }
+
+  /**
+   * Espalha a vila pelos 6 setores em round-robin sobre a lista **já
+   * embaralhada**: com 7 habitantes, um setor fica com 2 e cinco com 1.
+   *
+   * A distribuição é cega quanto a real × NPC de propósito. Se ela olhasse, a
+   * proporção de habitantes reais por setor viraria pista — e um aluno que
+   * contasse quantos há no setor dele já saberia algo sobre a Névoa de Guerra.
+   */
+  private distribuirPeloMapa(habitantes: Habitante[]): Habitante[] {
+    return habitantes.map((h, i) => ({
+      ...h,
+      setorId: SETOR_IDS[i % SETOR_IDS.length],
+    }));
   }
 }

@@ -7,7 +7,7 @@ import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { IsolateusMatchService } from './isolateus-match.service';
-import { NOMES_CIDADES } from './isolateus.data';
+import { NOMES_CIDADES, SETOR_IDS } from './isolateus.data';
 
 /** Repositório em memória: guarda a camada pública e o cofre separados. */
 function repoFake() {
@@ -134,6 +134,45 @@ describe('Isolateus — lobby e Despertar', () => {
     expect(new Set(habitantes.map((h) => h.nome)).size).toBe(7);
   });
 
+  it('o Despertar espalha a vila pelos 6 setores, de forma equilibrada', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 7); // 7 reais + 6 NPCs = 13 habitantes
+    await service.iniciar('prof', p.id);
+
+    const { habitantes } = partidas.get(p.id)!;
+    const porSetor = new Map<string, number>();
+    for (const h of habitantes) {
+      expect(SETOR_IDS).toContain(h.setorId);
+      porSetor.set(h.setorId, (porSetor.get(h.setorId) ?? 0) + 1);
+    }
+    // 13 em 6 setores: nenhum setor fica vazio e a diferença nunca passa de 1.
+    expect(porSetor.size).toBe(SETOR_IDS.length);
+    const contagens = [...porSetor.values()];
+    expect(Math.max(...contagens) - Math.min(...contagens)).toBeLessThanOrEqual(1);
+  });
+
+  it('a distribuição é cega quanto a real × NPC', async () => {
+    // Se ela olhasse, a proporção de reais por setor viraria pista: bastaria
+    // contar quantos há no seu setor para inferir algo sobre a Névoa de Guerra.
+    const posicoesDoAlien = new Set<string>();
+    for (let tentativa = 0; tentativa < 30; tentativa++) {
+      const { service, partidas, segredos } = make();
+      const p = await service.criar('prof', 'j1', 't1');
+      await povoar(service, p.id, 6);
+      await service.iniciar('prof', p.id);
+
+      const segredo = segredos.get(p.id)!;
+      const habitantes = partidas.get(p.id)!.habitantes;
+      const alien = habitantes.find(
+        (h) => h.id === segredo.habitanteDe(segredo.alienAlunoId),
+      )!;
+      posicoesDoAlien.add(alien.setorId);
+    }
+    // A Ameaça não nasce presa a um canto do mapa.
+    expect(posicoesDoAlien.size).toBeGreaterThan(2);
+  });
+
   it('não inicia com menos de 4 investigadores reais', async () => {
     const { service } = make();
     const p = await service.criar('prof', 'j1', 't1');
@@ -198,7 +237,7 @@ describe('Isolateus — lobby e Despertar', () => {
     expect(json).not.toContain('"a1"');
     // Os habitantes têm id opaco e são indistinguíveis entre si.
     for (const h of publico.habitantes) {
-      expect(Object.keys(h).sort()).toEqual(['id', 'nome', 'preso', 'vivo']);
+      expect(Object.keys(h).sort()).toEqual(['id', 'nome', 'preso', 'setorId', 'vivo']);
       expect(h.id).toMatch(/^[0-9a-f-]{36}$/);
     }
   });

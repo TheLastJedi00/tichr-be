@@ -10,15 +10,50 @@ import { embaralhar } from '../common/shuffle.util';
  * geração das questões (o conteúdo pedagógico, que é o que vale XP).
  */
 
-/** Os 6 setores vitais da vila (§8: o total de 6 é a base do critério de vitória). */
-export const SETORES: Array<{ id: string; nome: string }> = [
-  { id: 'seguranca', nome: 'Setor de Segurança' },
-  { id: 'comercio', nome: 'Setor de Comércio' },
-  { id: 'medico', nome: 'Setor Médico' },
-  { id: 'energia', nome: 'Setor de Energia' },
-  { id: 'comunicacao', nome: 'Setor de Comunicação' },
-  { id: 'abastecimento', nome: 'Setor de Abastecimento' },
+/**
+ * Os 6 setores vitais da vila e as estradas que os ligam (§8: o total de 6 é a
+ * base do critério de vitória).
+ *
+ * A malha mora aqui, e não no documento da partida: ela é imutável, e trafegá-la
+ * a cada snapshot seria pagar leitura por um dado que nunca muda.
+ *
+ * Topologia (Protótipo 1 do Figma):
+ *
+ *   Segurança ── Energia ── Comunicação ── Abastecimento
+ *       │                        │
+ *    Comércio ──────────────── Saúde
+ *
+ * Comunicação é o coração (3 saídas) e é de lá que se convoca a Quarentena.
+ * Abastecimento é beco sem saída (1 saída): quem entra fica sem rota alternativa.
+ */
+export const SETORES: Array<{ id: string; nome: string; vizinhos: string[] }> = [
+  { id: 'seguranca', nome: 'Setor de Segurança', vizinhos: ['energia', 'comercio'] },
+  { id: 'comercio', nome: 'Setor de Comércio', vizinhos: ['seguranca', 'saude'] },
+  { id: 'saude', nome: 'Setor de Saúde', vizinhos: ['comercio', 'comunicacao'] },
+  { id: 'energia', nome: 'Setor de Energia', vizinhos: ['seguranca', 'comunicacao'] },
+  {
+    id: 'comunicacao',
+    nome: 'Setor de Comunicação',
+    vizinhos: ['energia', 'saude', 'abastecimento'],
+  },
+  { id: 'abastecimento', nome: 'Setor de Abastecimento', vizinhos: ['comunicacao'] },
 ];
+
+/** O setor de onde a Quarentena pode ser convocada (§6). */
+export const SETOR_COMUNICACAO = 'comunicacao';
+
+/** Os ids dos setores, na ordem canônica do mapa. */
+export const SETOR_IDS: string[] = SETORES.map((s) => s.id);
+
+/** `true` se dá para ir de `origem` a `destino` num salto. */
+export function saoVizinhos(origem: string, destino: string): boolean {
+  return !!SETORES.find((s) => s.id === origem)?.vizinhos.includes(destino);
+}
+
+/** Os vizinhos de um setor (vazio se o id não existe). */
+export function vizinhosDe(setorId: string): string[] {
+  return SETORES.find((s) => s.id === setorId)?.vizinhos ?? [];
+}
 
 /**
  * Os codinomes da vila: 99 cidades conhecidas do mundo.

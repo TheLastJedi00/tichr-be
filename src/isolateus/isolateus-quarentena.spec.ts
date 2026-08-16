@@ -12,18 +12,21 @@ import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { SETORES } from './isolateus.data';
 
 /** Vila em `RESULTADO_RODADA`, pronta para convocar a Quarentena. Alien = a1. */
-function cenario(opts: { reais?: number; npcs?: number } = {}) {
+function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
+  // A vila inteira num setor so: mantem todos ao alcance da Ameaca, para que
+  // estes testes exercitem o motor e nao a geografia (que tem specs proprias).
+  const setor = opts.setor ?? 'seguranca';
 
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];
   for (let i = 1; i <= nReais; i++) {
-    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `h${i}`, alunoId: `a${i}` });
   }
   for (let i = 1; i <= nNpcs; i++) {
-    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `n${i}` });
   }
 
