@@ -1103,11 +1103,13 @@ restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
 
 ---
 
-## Tichr Isolateus (dedução social + defesa pedagógica)
+## Tichr Isolateus (dedução social + mapa da vila)
 
-Uma vila isolada, um infiltrado. A turma responde questões da matéria para defender
-os 6 setores e debate para descobrir quem é a **Ameaça**. Exclusivo do plano **PhD**
-(`ISOLATEUS_LOCKED`).
+Uma vila isolada num mapa de 6 setores, e um infiltrado andando entre eles. Cada
+habitante **ocupa um setor** e se desloca à noite; a Ameaça só age em quem e no que
+está ao seu alcance. A turma responde questões da matéria para **repelir abduções** e
+**reconstruir setores destruídos**, e debate para descobrir quem é a Ameaça.
+Exclusivo do plano **PhD** (`ISOLATEUS_LOCKED`).
 
 ### A regra que governa o desenho: o segredo nunca toca o Firestore
 
@@ -1116,6 +1118,32 @@ partido em **duas coleções**: o cliente escuta uma, e a outra ele nem consegue
 Nenhuma informação oculta transita pela rede até o navegador — nem no `onSnapshot`,
 nem em payload de resposta.
 
+### O mapa e a economia da informação
+
+Os 6 setores são ligados por estradas fixas (`SETORES` em `isolateus.data.ts`):
+
+```
+Segurança ── Energia ── Comunicação ── Abastecimento
+    │                        │
+ Comércio ──────────────── Saúde
+```
+
+Comunicação é o hub (3 saídas) e o **único lugar de onde se convoca a Quarentena**;
+Abastecimento é beco sem saída. A malha **não é copiada** para o documento da partida:
+é imutável, e trafegá-la a cada snapshot seria pagar leitura por dado que nunca muda.
+
+As duas jogadas da Ameaça vazam informação de formas diferentes, **de propósito**:
+
+| Jogada | O que a vila aprende | Reversível? |
+|---|---|---|
+| **Sabotagem** (só o setor onde ela está) | **certeza geográfica**: ela estava ali | sim, pelo reparo |
+| **Abdução** (presencial **ou** às cegas em qualquer setor) | **nada** — ninguém distingue os dois modos | não |
+
+Isso dá à Ameaça uma forma de sujar o rastro depois de se expor sabotando, ao custo de
+não escolher a vítima. O corolário no código: **abdução repelida e tiro às cegas em
+setor vazio produzem o mesmo evento, texto por texto** — qualquer diferença contaria de
+onde ela atacou. Há teste comparando os dois campo a campo.
+
 ### Estrutura de dados
 
 - **`isolateus_jogos`** (definição, server-only): `professorId`, `nome`, `disciplina?`,
@@ -1123,89 +1151,118 @@ nem em payload de resposta.
   (`enunciado`, `alternativas[]`, `corretaIndex`). O `corretaIndex` mora aqui — coleção fechada.
 - **`isolateus_partidas`** (camada **pública**, lida por `onSnapshot`): `status`, `criadaEm`,
   `esperanca` (0..100), `setores[]` (`id`, `nome`, `intacto`), `habitantes[]`
-  (`id` **opaco/UUID**, `nome`, `vivo`, `preso` — **sem marca de NPC**), `rodada`,
-  `totalRodadas`, `duracaoSegundos`, `faseIniciadaEm`, `questaoPublica` (**sem** a correta),
-  `corretaIndex` (só em `RESULTADO_RODADA`), `alerta`, `rumores[]`, `debate[]`,
-  `resumoRodada`, `quarentenaRodada` (rodada da última Quarentena; cabe uma por
-  rodada), `vereditoQuarentena`, `votosRecebidos`, `pulosRecebidos` (**só a
-  contagem** — quem pulou o debate mora no cofre),
-  `inscritos[]` (**esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
+  (`id` **opaco/UUID**, `nome`, `vivo`, `preso`, **`setorId`** — **sem marca de NPC**),
+  `rodada` (a **noite**), `questaoIndex` (ponteiro no banco), `totalRodadas`,
+  `reparoSetorId` (o reparo declarado na noite, **sem autor**), `duracaoSegundos`,
+  `faseIniciadaEm`, `questaoPublica` (**sem** a correta), `corretaIndex` (só em
+  `RESULTADO_RODADA`), `alerta`, **`acontecimentos[]`** (o Diário, aparado em 60),
+  `rumores[]`, `debate[]`, `resumoRodada`, `quarentenaRodada`, `vereditoQuarentena`,
+  `votosRecebidos`, `pulosRecebidos` e `movimentosRecebidos` (**só as contagens** — as
+  listas são listas de habitantes reais e moram no cofre),
+  `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
 - **`isolateus_segredos`** (o **cofre**, deny-all): `alienAlunoId`, `vinculos[]`
-  (`habitanteId` → `alunoId`; sem `alunoId` = NPC), `acaoRodada`, `pulosDebate[]`
-  (quem pulou o debate — a lista denunciaria quem é real), `pontos{}`.
+  (`habitanteId` → `alunoId`; sem `alunoId` = NPC), `acaoRodada`
+  (`SABOTAR | ABDUZIR | AGUARDAR`, com `alvoId` **ou** `setorId`), `pulosDebate[]`,
+  `confirmacoesNoite[]` (quem fechou a jogada da noite), `pontos{}`.
 - **`isolateus_respostas`** / **`isolateus_votos`** (deny-all): doc-id determinístico
-  (`{partidaId}_{rodada}_{alunoId}` nos dois) = idempotência **por rodada** — é o
-  que permite uma Quarentena nova sem reaproveitar os votos da anterior.
+  (`{partidaId}_{rodada}_{alunoId}` nos dois) = idempotência **por rodada**.
 
 Partida e cofre são gravados no **mesmo `WriteBatch`** (`commitPartida`) — a vila nunca
-vê um alerta cuja ação ainda não foi registrada, nem o contrário.
+vê um alerta cuja ação ainda não foi registrada, nem o contrário. Pelo mesmo motivo, o
+**evento do Diário entra no commit da mudança que o gerou**: em commits separados, o
+cliente mostraria um card antes de o mapa refletir o fato.
+
+### `rodada` e `questaoIndex` são contadores independentes
+
+As questões deixaram de contar as noites: elas só são consumidas quando há **disputa**
+(abdução a repelir ou reparo a fazer). Uma noite de pura sabotagem não gasta pergunta.
+A partida encerra por: **banco de questões esgotado**, **Esperança em 0**, **Ameaça
+trancada na Quarentena** ou **teto de `TETO_NOITES` noites** — este último é válvula
+contra partida infinita, e por isso fica bem acima do orçamento pedagógico.
 
 ### Estados
 
-`LOBBY → TURNO_AMEACA → QUESTAO_ATIVA → RESULTADO_RODADA → (próxima noite) …`
+```
+LOBBY → DESLOCAMENTO → [QUESTAO_ATIVA] → RESULTADO_RODADA → (próxima noite) …
+```
+
 com desvio opcional para `QUARENTENA_DEBATE → QUARENTENA_VOTO` e saída em `ENCERRADO`.
+
+`DESLOCAMENTO` é **a noite inteira**: todos andam (ou ficam) e a Ameaça joga na mesma
+janela. `fecharNoite` é o ponto único de virada — antes, era a ação da Ameaça que abria
+o dia, e demorar a agir era um *tell* dela. `QUESTAO_ATIVA` só acontece se houve
+abdução ou reparo; senão o dia vai direto ao card.
 
 ### Endpoints — Investigação & IA (professor)
 - `POST /isolateus/jogos/questoes` — gera **10 questões** por IA (Gemini). Rate limit
-  **1×/dia** com contador próprio (`isolateusIaUltimoUso`), separado do Qlick e do Wor;
-  a cota só é consumida no sucesso. Não persiste — devolve para o professor editar.
+  **1×/dia** com contador próprio (`isolateusIaUltimoUso`); a cota só é consumida no sucesso.
 - `GET|POST /isolateus/jogos` · `GET|PUT|DELETE /isolateus/jogos/:id`
 
 ### Endpoints — Partida (professor / telão)
 - `POST /isolateus/jogos/:jogoId/partida` — cria no `LOBBY`.
 - `GET /isolateus/matches/:id`
-- `POST /isolateus/matches/:id/vetar/:alunoId` — auditoria do pseudônimo (aprovar é implícito).
-- `POST /isolateus/matches/:id/renomear/:alunoId` — corrige o apelido **sem** tirar o aluno do lobby
-  (`{ pseudonimo }`; mesma checagem de colisão do `entrar`). **Só no `LOBBY`**: ao iniciar, o vínculo
-  aluno↔pseudônimo é apagado de propósito, e nem o professor pode desfazê-lo.
-- `POST /isolateus/matches/:id/iniciar` — **o Despertar**: preenche a vila com NPCs e sorteia a Ameaça.
-- `POST /isolateus/matches/:id/tempo` — o telão fecha a fase cronometrada (**não há timer no servidor**;
-  o servidor revalida o prazo com margem de 2s).
+- `POST /isolateus/matches/:id/remover/:alunoId` — tira do lobby quem entrou por engano.
+  **Só no `LOBBY`.** (Não há mais vetar/renomear: ninguém digita nome.)
+- `POST /isolateus/matches/:id/iniciar` — **o Despertar**: sorteia os codinomes, espalha a
+  vila pelos 6 setores e sorteia a Ameaça.
+- `POST /isolateus/matches/:id/tempo` — o telão fecha a fase cronometrada (**não há timer no
+  servidor**; o servidor revalida o prazo com margem de 2s). É também o que faz o **avanço
+  automático**: zerada a janela de decisão, a noite cai sem o professor clicar em nada.
 - `POST /isolateus/matches/:id/proxima` · `POST /isolateus/matches/:id/quarentena`
 
 ### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick/Wor)
 - `GET /aluno/isolateus` — a investigação ativa da turma (janela de 12h).
-- `POST /aluno/isolateus/:id/entrar` — o **Voto de Silêncio**: entra com um pseudônimo.
-- `GET /aluno/isolateus/:id/painel` — **a única porta do segredo**: devolve o papel do aluno e,
-  **só para a Ameaça**, o `corretaIndex` da questão no ar e os disfarces (nomes de NPC).
-  O Aldeão recebe apenas o próprio papel — nem inspecionando o payload ele ganha vantagem.
-- `POST /aluno/isolateus/:id/acao` — Turno da Ameaça (`SABOTAR` um setor | `ABDUZIR` um morador).
-- `POST /aluno/isolateus/:id/resposta` — a defesa. **Abduzidos e presos continuam pontuando.**
-- `POST /aluno/isolateus/:id/rumor` — o rumor forjado da Ameaça (1×/noite, sob nome de NPC).
-- `POST /aluno/isolateus/:id/sinal` — o Sinal de Rádio anônimo de quem saiu da vila.
-- `POST /aluno/isolateus/:id/quarentena` · `/debate` · `/pular-debate` · `/suspeito`
-  — `/pular-debate` é o avanço rápido do chat: idempotente, publica só a **contagem**
-  (`pulosRecebidos`) e abre a votação quando todos os reais na vila já pularam.
+- `POST /aluno/isolateus/:id/entrar` — declara presença. **Sem payload**: o codinome é
+  sorteado no Despertar.
+- `GET /aluno/isolateus/:id/painel` — **a única porta do segredo**: o papel do aluno e,
+  **só para a Ameaça**, o `corretaIndex` e os disfarces. O Aldeão recebe apenas o próprio papel.
+- `POST /aluno/isolateus/:id/mover` `{ setorId }` — anda **um** setor pelas estradas.
+- `POST /aluno/isolateus/:id/confirmar-posicao` — "eu fico"; fecha a jogada da noite.
+- `POST /aluno/isolateus/:id/reparo` — organiza o reparo da ruína **onde você está**.
+  Um por noite, **anônimo** (autor visível atestaria que aquele habitante é real).
+- `POST /aluno/isolateus/:id/acao` — a jogada da Ameaça:
+  `SABOTAR` (o `alvoId` do cliente é **ignorado** — sabota-se onde se está),
+  `ABDUZIR` com `alvoId` (presencial, só o próprio setor) **ou** `setorId` (às cegas,
+  qualquer outro), `AGUARDAR`.
+- `POST /aluno/isolateus/:id/resposta` — a questão. **Abduzidos e presos continuam pontuando.**
+- `POST /aluno/isolateus/:id/rumor` · `/sinal` · `/quarentena` · `/debate` ·
+  `/pular-debate` · `/suspeito` — `/quarentena` exige estar **vivo, no Setor de
+  Comunicação e com ele de pé**; o professor segue isento pelo telão.
 
 ### Regras (constantes em `ISOLATEUS`, ajustáveis)
 
 Mínimo de **4** investigadores reais. **Névoa de Guerra:** abaixo de 10 reais, a vila ganha
-`reais - 1` NPCs (nomes de `NOMES_NPC`); com 10+, nenhum. **A Ameaça é sempre um habitante real.**
+`reais - 1` NPCs; com 10+, nenhum. **A Ameaça é sempre um habitante real.** Os codinomes
+saem de **`NOMES_CIDADES` (99 cidades)**, num sorteio único para reais e NPCs — bancos
+separados fariam da origem do nome uma pista.
 
-Esperança inicial **100** · sabotagem **−15** · abdução **−10** · inocente preso **−20**.
-Esperança em 0 = vitória da Ameaça.
+**Movimento:** janela de **20s**, um salto por noite. Os **NPCs também andam**
+(`CHANCE_MOVER_NPC`), decididos só no fechamento: NPC parado seria identificado em uma
+noite, e NPC se mexendo fora de hora denunciaria que não é um colega decidindo.
+
+Esperança inicial **100** · sabotagem **−15** (não contestada) · abdução **−10** (contestada
+pela questão) · inocente preso **−20** · reparo bem-sucedido **+15**. Esperança em 0 =
+vitória da Ameaça.
 
 **Apuração:** votam os reais na vila + os NPCs (aleatório). No empate vale o **Instinto Humano** —
 ganha a alternativa mais votada pelos **reais**; persistindo, a de menor índice (determinístico).
 
-**Quarentena:** **uma por rodada** (a opção volta a cada noite), convocada por qualquer real vivo
-ou pelo professor. Debate **90s** → votação **60s**, os dois com avanço rápido: no debate, quando
-todos os reais na vila pulam (`POST /aluno/isolateus/:id/pular-debate`); na votação, no consenso.
-Prendeu a Ameaça → Vila vence; prendeu inocente → −20 de Esperança e **a identidade do preso
-permanece em segredo**.
+**Quarentena:** **uma por rodada**, convocada de dentro da Comunicação (ou pelo professor).
+Debate **90s** → votação **60s**, os dois com avanço rápido. Prendeu a Ameaça → Vila vence;
+prendeu inocente → −20 e **a identidade do preso permanece em segredo**.
 
-**Fim por esgotamento das questões (§8):** a **Ameaça é avaliada primeiro** (abduziu mais da metade
-da população **ou** destruiu mais de 3 setores); só então a Vila (mais de 3 setores intactos **ou**
-mais da metade sobreviveu). Sem nenhum critério batido, vence a Vila por resistência. O veredito
-carrega o **motivo técnico** exibido no card.
+**Fim por esgotamento (§8):** a **Ameaça é avaliada primeiro** (abduziu mais da metade da
+população **ou** destruiu mais de 3 setores); só então a Vila. Sem critério batido, vence a
+Vila por resistência. O veredito carrega o **motivo técnico** exibido no card.
 
-**Economia de XP:** acerto **1000** + bônus de rapidez até **500** (proporcional ao tempo restante);
-sabotagem validada (a vila errou) credita **1000 à Ameaça**; o lado vencedor leva **+1000** de
-Vitória de Partida. Os pontos ficam no cofre e viram XP **1:1** no encerramento
-(`XpService.creditarPartida`, motivo `ISOLATEUS`).
+**Economia de XP:** acerto **1000** + bônus de rapidez até **500**; **erro da turma** (defesa
+ou Perícia) credita **1000 à Ameaça** — a sabotagem em si não pontua, porque sendo automática
+seria ponto de graça toda noite; o lado vencedor leva **+1000**. Os pontos ficam no cofre e
+viram XP **1:1** no encerramento (`XpService.creditarPartida`, motivo `ISOLATEUS`).
 
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração das 10 questões (sem ela, escrita manual).
 - `firestore.rules`: `isolateus_partidas/{id}` **leitura pública, escrita negada**;
-  `isolateus_segredos`, `isolateus_respostas` e `isolateus_votos` ficam no **deny-all** — é isso que
-  impede o DevTools de revelar o infiltrado.
+  `isolateus_segredos`, `isolateus_respostas` e `isolateus_votos` no **deny-all** — é isso que
+  impede o DevTools de revelar o infiltrado. **Sem alteração nesta spec.**
+
