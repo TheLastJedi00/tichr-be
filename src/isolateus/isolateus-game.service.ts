@@ -17,7 +17,12 @@ import {
 import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
-import { FRASES_DEBATE_NPC, FRASES_NPC } from './isolateus.data';
+import {
+  FRASES_DEBATE_NPC,
+  FRASES_NPC,
+  saoVizinhos,
+  vizinhosDe,
+} from './isolateus.data';
 
 /** Autor anônimo do feed quando a vila não tem NPCs para vestir o rumor. */
 const VOZ_ANONIMA = 'Voz na Névoa';
@@ -129,10 +134,168 @@ export class IsolateusGameService {
     return nomes.length ? nomes : [VOZ_ANONIMA];
   }
 
+  // ===== A Noite =====
+
+  /**
+   * O deslocamento: o habitante anda **um setor**, pelas estradas do mapa.
+   *
+   * Mover é também confirmar — quem andou fechou sua jogada da noite. Passar o
+   * próprio setor como destino é o "eu fico", tratado por `confirmarPosicao`.
+   */
+  async mover(
+    alunoId: string,
+    partidaId: string,
+    setorId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
+
+    if (habitante.setorId === setorId) {
+      return this.confirmarPosicao(alunoId, partidaId);
+    }
+    if (!saoVizinhos(habitante.setorId, setorId)) {
+      throw new BadRequestException({
+        code: 'SEM_ESTRADA',
+        message: 'Não há estrada daqui para lá. Você anda um setor por noite.',
+      });
+    }
+
+    habitante.setorId = setorId;
+    await this.matches.commitPartida(partidaId, {
+      habitantes: partida.habitantes,
+    });
+    return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /** "Eu fico." Fecha a jogada da noite sem sair do lugar. */
+  async confirmarPosicao(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    this.habitanteDaNoite(partida, segredo, alunoId);
+    return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /** O habitante do aluno, exigindo que ele esteja na vila e que seja noite. */
+  private habitanteDaNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ) {
+    if (partida.status !== 'DESLOCAMENTO') {
+      throw new BadRequestException('A noite não está aberta.');
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Quem saiu da vila não se desloca.');
+    }
+    return habitante;
+  }
+
+  /**
+   * Contabiliza a confirmação e, quando **todos** os habitantes reais na vila já
+   * fecharam a jogada, encerra a noite na hora — ninguém fica olhando um
+   * cronômetro que não serve mais a ninguém (mesmo Avanço Rápido do debate).
+   *
+   * Idempotente: confirmar duas vezes não conta dobrado.
+   */
+  private async registrarConfirmacao(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const confirmacoes = [
+      ...new Set([...(segredo.confirmacoesNoite ?? []), alunoId]),
+    ];
+    segredo.confirmacoesNoite = confirmacoes;
+    partida.movimentosRecebidos = confirmacoes.length;
+    await this.matches.commitPartida(
+      partida.id,
+      { movimentosRecebidos: confirmacoes.length },
+      { confirmacoesNoite: confirmacoes },
+    );
+
+    if (this.noiteEstaFechada(partida, segredo)) {
+      return this.fecharNoite(partida, segredo);
+    }
+    return partida;
+  }
+
+  /**
+   * A noite só fecha cedo quando **todos** os reais confirmaram **e** a Ameaça
+   * já jogou. Fechar sem a jogada dela transformaria a pressa da vila numa forma
+   * de anular o turno do infiltrado.
+   */
+  private noiteEstaFechada(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): boolean {
+    const reais = this.reaisNaVila(partida, segredo);
+    const todosConfirmaram =
+      (segredo.confirmacoesNoite ?? []).length >= reais.length;
+    return todosConfirmaram && !!segredo.acaoRodada;
+  }
+
+  /**
+   * O amanhecer. Ponto **único** de virada da noite para o dia: move os NPCs,
+   * publica as posições finais e abre a questão.
+   *
+   * Ter um ponto só importa porque antes era a ação da Ameaça que virava o dia:
+   * ela controlava o relógio da turma, e demorar a agir era um *tell* dela.
+   */
+  private async fecharNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
+    this.moverNpcs(partida, segredo);
+    await this.matches.commitPartida(
+      partida.id,
+      { habitantes: partida.habitantes },
+      { confirmacoesNoite: [] },
+    );
+    segredo.confirmacoesNoite = [];
+
+    const acao = segredo.acaoRodada;
+    if (!acao) {
+      // A Ameaça não jogou dentro da janela (desconectou, hesitou, ficou sem
+      // alvo). O dia nasce mesmo assim, com um alerta que não diz nada: se a
+      // vila percebesse "a Ameaça não agiu", saberia que o infiltrado estava
+      // ausente — e cruzaria isso com quem sumiu do jogo.
+      return this.ativarQuestao(partida, segredo, null, {
+        tipo: 'SABOTAGEM',
+        texto: 'ALERTA: movimento estranho na vila durante a noite.',
+      });
+    }
+    return this.ativarQuestao(partida, segredo, acao, this.alertaDe(partida, acao));
+  }
+
+  /**
+   * A Névoa de Guerra também anda. Cada NPC troca de setor com probabilidade
+   * `CHANCE_MOVER_NPC`, pelas mesmas estradas que os habitantes reais usam.
+   *
+   * Decidido aqui, no fechamento — e não ao longo da janela —, para que ninguém
+   * veja um NPC se mexendo fora de hora e conclua que aquele habitante não é um
+   * colega tomando decisão.
+   */
+  private moverNpcs(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): void {
+    const npcs = new Set(segredo.npcIds);
+    for (const h of partida.habitantes) {
+      if (!npcs.has(h.id) || !h.vivo || h.preso) continue;
+      if (Math.random() >= ISOLATEUS.CHANCE_MOVER_NPC) continue;
+      const destinos = vizinhosDe(h.setorId);
+      if (!destinos.length) continue;
+      h.setorId = destinos[Math.floor(Math.random() * destinos.length)];
+    }
+  }
+
   /**
    * O Turno da Ameaça: sabotar um setor ou abduzir um morador. A escolha é
    * gravada **no cofre** e só se materializa se a vila errar a questão — a vila
-   * vê apenas o alerta ("O Setor Médico foi sabotado!"), nunca o alvo da abdução.
+   * vê apenas o alerta ("O Setor de Saúde foi sabotado!"), nunca o alvo da abdução.
    */
   async acaoAmeaca(
     alunoId: string,
@@ -143,34 +306,38 @@ export class IsolateusGameService {
     if (segredo.alienAlunoId !== alunoId) {
       throw new ForbiddenException('Você é um Aldeão.');
     }
-    if (partida.status !== 'TURNO_AMEACA') {
-      throw new BadRequestException('Não é o turno da Ameaça.');
+    if (partida.status !== 'DESLOCAMENTO') {
+      throw new BadRequestException('A noite não está aberta.');
+    }
+    if (segredo.acaoRodada) {
+      throw new BadRequestException({
+        code: 'JOGADA_FEITA',
+        message: 'Você já fez sua jogada esta noite.',
+      });
     }
 
-    const alerta = this.validarAlvo(partida, segredo, dto);
-    return this.ativarQuestao(
-      partida,
-      segredo,
-      { tipo: dto.tipo, alvoId: dto.alvoId },
-      alerta,
-    );
+    this.validarAlvo(partida, segredo, dto);
+    const acao = { tipo: dto.tipo, alvoId: dto.alvoId };
+    segredo.acaoRodada = acao;
+    await this.matches.commitPartida(partidaId, {}, { acaoRodada: acao });
+
+    // A jogada da Ameaça também é uma confirmação da noite dela — e é ela que
+    // pode ser a última peça a faltar para o amanhecer.
+    return this.registrarConfirmacao(partida, segredo, alunoId);
   }
 
-  /** Valida o alvo e devolve o alerta global correspondente. */
+  /** Recusa alvo inválido. Não decide nada: só barra o que não pode acontecer. */
   private validarAlvo(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
     dto: AcaoAmeacaDto,
-  ): { tipo: 'SABOTAGEM' | 'ABDUCAO'; texto: string } {
+  ): void {
     if (dto.tipo === 'SABOTAR') {
       const setor = partida.setores.find((s) => s.id === dto.alvoId);
       if (!setor || !setor.intacto) {
         throw new BadRequestException('Este setor já está em ruínas.');
       }
-      return {
-        tipo: 'SABOTAGEM',
-        texto: `ALERTA: O ${setor.nome} foi sabotado!`,
-      };
+      return;
     }
 
     const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
@@ -179,6 +346,20 @@ export class IsolateusGameService {
     }
     if (segredo.alunoDe(alvo.id) === segredo.alienAlunoId) {
       throw new BadRequestException('A Ameaça não pode abduzir a si mesma.');
+    }
+  }
+
+  /** O alerta global que a vila vê ao amanhecer — sem revelar o alvo. */
+  private alertaDe(
+    partida: IsolateusMatchEntity,
+    acao: { tipo: 'SABOTAR' | 'ABDUZIR'; alvoId: string },
+  ): { tipo: 'SABOTAGEM' | 'ABDUCAO'; texto: string } {
+    if (acao.tipo === 'SABOTAR') {
+      const setor = partida.setores.find((s) => s.id === acao.alvoId);
+      return {
+        tipo: 'SABOTAGEM',
+        texto: `ALERTA: O ${setor?.nome ?? 'setor'} foi sabotado!`,
+      };
     }
     return {
       tipo: 'ABDUCAO',
@@ -193,7 +374,7 @@ export class IsolateusGameService {
   private async ativarQuestao(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
-    acao: { tipo: 'SABOTAR' | 'ABDUZIR'; alvoId: string },
+    acao: { tipo: 'SABOTAR' | 'ABDUZIR'; alvoId: string } | null,
     alerta: { tipo: 'SABOTAGEM' | 'ABDUCAO'; texto: string },
   ): Promise<IsolateusMatchEntity> {
     const questao = await this.questaoDaRodada(partida);
@@ -423,6 +604,7 @@ export class IsolateusGameService {
     if (!partida.faseIniciadaEm) return partida;
 
     const limites: Partial<Record<typeof partida.status, number>> = {
+      DESLOCAMENTO: ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
       QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
       QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
       QUARENTENA_VOTO: ISOLATEUS.LIMITE_VOTO_MS,
@@ -435,6 +617,9 @@ export class IsolateusGameService {
       return partida;
     }
 
+    if (partida.status === 'DESLOCAMENTO') {
+      return this.fecharNoite(partida, segredo);
+    }
     if (partida.status === 'QUESTAO_ATIVA') {
       return this.resolverRodada(partida, segredo);
     }
@@ -598,17 +783,23 @@ export class IsolateusGameService {
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
-      status: 'TURNO_AMEACA',
+      status: 'DESLOCAMENTO',
       rodada: proxima,
       questaoPublica: null,
       corretaIndex: null,
       alerta: null,
       rumores: [],
       resumoRodada: null,
-      faseIniciadaEm: null,
+      // A noite é cronometrada: a janela de deslocamento precisa de base.
+      faseIniciadaEm: new Date().toISOString(),
+      movimentosRecebidos: 0,
     };
     Object.assign(partida, dados);
-    await this.matches.commitPartida(partida.id, dados);
+    segredo.confirmacoesNoite = [];
+    await this.matches.commitPartida(partida.id, dados, {
+      confirmacoesNoite: [],
+      acaoRodada: null,
+    });
     return partida;
   }
 

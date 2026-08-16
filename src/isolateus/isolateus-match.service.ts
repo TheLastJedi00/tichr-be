@@ -88,6 +88,7 @@ export class IsolateusMatchService {
         vereditoQuarentena: null,
         votosRecebidos: 0,
         pulosRecebidos: 0,
+        movimentosRecebidos: 0,
         inscritos: [],
         veredito: null,
         rankingFinal: [],
@@ -97,6 +98,7 @@ export class IsolateusMatchService {
         vinculos: [],
         acaoRodada: null,
         pulosDebate: [],
+        confirmacoesNoite: [],
         pontos: {},
       },
     );
@@ -269,10 +271,13 @@ export class IsolateusMatchService {
     const alienAlunoId = embaralhar(reais)[0].alunoId;
 
     const dados: Partial<IsolateusMatchEntity> = {
-      status: 'TURNO_AMEACA',
+      status: 'DESLOCAMENTO',
       habitantes: this.distribuirPeloMapa(embaralhar(habitantes)),
       rodada: 0,
-      faseIniciadaEm: null,
+      // A primeira noite já nasce cronometrada: a janela de deslocamento
+      // precisa de base de relógio desde o Despertar.
+      faseIniciadaEm: new Date().toISOString(),
+      movimentosRecebidos: 0,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
     };
     Object.assign(partida, dados);

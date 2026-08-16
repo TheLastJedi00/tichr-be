@@ -25,12 +25,30 @@ export const ISOLATEUS = {
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,
   LIMITE_VOTO_MS: 60_000,
+  /** A noite: janela para se deslocar um setor (ou confirmar que fica). */
+  LIMITE_DESLOCAMENTO_MS: 20_000,
+
+  /**
+   * Chance de um NPC trocar de setor a cada noite.
+   *
+   * NPC parado seria identificado em uma única noite — e, por eliminação, a vila
+   * saberia quem é real, estreitando a caça ao infiltrado sem deduzir nada. O
+   * valor aproxima a taxa de movimentação humana observável.
+   */
+  CHANCE_MOVER_NPC: 0.45,
   /** Margem de segurança ao revalidar o prazo disparado pelo projetor. */
   MARGEM_TEMPO_MS: 2_000,
 } as const;
 
 export type StatusIsolateus =
   | 'LOBBY'
+  /**
+   * A noite. Todos se deslocam (ou ficam) e a Ameaça escolhe sua jogada — tudo
+   * dentro da mesma janela. Substitui o antigo `TURNO_AMEACA` como fase de
+   * abertura da rodada: com o turno separado, a Ameaça controlava sozinha quando
+   * o dia começava, e demorar a agir era um *tell* dela.
+   */
+  | 'DESLOCAMENTO'
   | 'TURNO_AMEACA'
   | 'QUESTAO_ATIVA'
   | 'RESULTADO_RODADA'
@@ -168,6 +186,12 @@ export class IsolateusMatchEntity {
   votosRecebidos: number;
   /** Quantos já pularam o debate (contagem apenas — quem pulou é segredo). */
   pulosRecebidos: number;
+
+  /**
+   * Quantos habitantes reais já fecharam a jogada da noite. **Contagem apenas**:
+   * a lista seria uma lista de reais, e entregaria a Névoa de Guerra.
+   */
+  movimentosRecebidos: number;
 
   /**
    * Quem está no lobby. Carrega **só o `alunoId`** — o codinome de cidade é

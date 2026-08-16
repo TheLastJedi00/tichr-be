@@ -251,7 +251,7 @@ describe('Isolateus — lobby e Despertar', () => {
     const publico = partidas.get(p.id)!;
     expect(publico.esperanca).toBe(100);
     expect(publico.setoresIntactos).toBe(6);
-    expect(publico.status).toBe('TURNO_AMEACA');
+    expect(publico.status).toBe('DESLOCAMENTO'); // a noite abre junto com o Despertar
     expect(publico.rodada).toBe(0);
     expect(publico.totalRodadas).toBe(10);
   });

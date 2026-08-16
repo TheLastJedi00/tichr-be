@@ -41,6 +41,16 @@ export class IsolateusSegredoEntity {
    */
   pulosDebate: string[];
 
+  /**
+   * Alunos que já fecharam a própria jogada da noite (moveram-se ou confirmaram
+   * que ficam). Limpa a cada noite.
+   *
+   * Mesma razão de `pulosDebate` para viver no cofre: a lista é uma lista de
+   * habitantes **reais**, e publicá-la entregaria a Névoa de Guerra de graça. A
+   * vila só vê a contagem, em `movimentosRecebidos`.
+   */
+  confirmacoesNoite: string[];
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 

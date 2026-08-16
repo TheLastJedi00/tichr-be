@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
+import { MoverDto } from './dto/mover.dto';
 import {
   ForjarRumorDto,
   MensagemDto,
@@ -46,6 +47,25 @@ export class AlunoIsolateusController {
     @Param('id') id: string,
   ) {
     return this.game.painel(aluno.alunoId, id);
+  }
+
+  /** O deslocamento da noite: anda um setor pelas estradas do mapa. */
+  @Post(':id/mover')
+  mover(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: MoverDto,
+  ) {
+    return this.game.mover(aluno.alunoId, id, dto.setorId);
+  }
+
+  /** "Eu fico." Fecha a jogada da noite sem sair do lugar. */
+  @Post(':id/confirmar-posicao')
+  confirmarPosicao(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.confirmarPosicao(aluno.alunoId, id);
   }
 
   /** O Turno da Ameaça: sabotar um setor ou abduzir um morador. */
