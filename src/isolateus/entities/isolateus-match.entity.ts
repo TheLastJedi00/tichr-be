@@ -30,13 +30,19 @@ export const ISOLATEUS = {
   MAX_ACONTECIMENTOS: 60,
 
   /**
-   * Teto de noites da partida.
+   * Teto de noites da partida. **Válvula de segurança, não orçamento.**
    *
    * As questões deixaram de contar as noites: elas só são consumidas quando há
    * abdução ou reparo. Uma Ameaça que só sabota e uma vila que nunca reage
    * fariam a partida girar para sempre — o teto fecha essa porta.
+   *
+   * Começou em 15 e subiu para 25 depois da validação em navegador: com 15, uma
+   * partida encerrou tendo usado **4 das 10 questões**. O teto estava cortando a
+   * aula antes do banco pedagógico acabar, que é justamente o critério de fim
+   * que deveria mandar. Com 25, ele volta a ser o que a spec diz que é: o que
+   * impede a partida infinita, e nada além disso.
    */
-  TETO_NOITES: 15,
+  TETO_NOITES: 25,
 
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,

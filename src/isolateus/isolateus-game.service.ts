@@ -160,12 +160,19 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     tipo: TipoAcontecimento,
     texto: string,
+    /**
+     * Noite do evento, quando ela ainda não é a de `partida.rodada`. O caso é a
+     * queda da noite: o evento é registrado enquanto se monta o `dados` da
+     * virada, antes de o `rodada` novo ser aplicado na entidade — sem isso, o
+     * card "A noite caiu… Noite 2" ficava arquivado sob "Noite 1".
+     */
+    noite = partida.rodada,
   ): Acontecimento[] {
     const evento: Acontecimento = {
       id: randomUUID(),
       tipo,
       texto,
-      noite: partida.rodada,
+      noite,
       em: new Date().toISOString(),
     };
     const lista = [...(partida.acontecimentos ?? []), evento].slice(
@@ -913,6 +920,10 @@ export class IsolateusGameService {
       habitantes: partida.habitantes,
       questaoIndex: partida.questaoIndex + 1,
       reparoSetorId: null,
+      // `resolverAbducao` e `resolverReparo` já empilharam seus eventos em
+      // `partida.acontecimentos`; publicá-los no MESMO commit do estado é o que
+      // impede o cliente de mostrar um card antes de o mapa refletir a mudança.
+      acontecimentos: partida.acontecimentos,
       resumoRodada: {
         seq: partida.rodada,
         defendida: acertou,
@@ -1066,6 +1077,7 @@ export class IsolateusGameService {
         partida,
         'NOITE',
         `A noite caiu sobre a vila. Noite ${proxima + 1}.`,
+        proxima,
       ),
     };
     Object.assign(partida, dados);
