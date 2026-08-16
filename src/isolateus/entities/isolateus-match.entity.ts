@@ -47,8 +47,25 @@ export const ISOLATEUS = {
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,
   LIMITE_VOTO_MS: 60_000,
-  /** A noite: janela para se deslocar um setor (ou confirmar que fica). */
-  LIMITE_DESLOCAMENTO_MS: 20_000,
+  /**
+   * A noite: janela para se deslocar um setor (ou confirmar que fica).
+   *
+   * Começou em 20s e subiu para 60s depois da validação em navegador: 20
+   * cobriam o clique, não a decisão. O aluno lê o próprio setor, abre o mapa,
+   * localiza as ruínas e só então anda — e a Ameaça ainda escolhe a jogada dela
+   * dentro da mesma janela.
+   */
+  LIMITE_DESLOCAMENTO_MS: 60_000,
+  /**
+   * Quando a vila inteira já fechou a jogada e só falta a Ameaça, a noite não
+   * espera o resto do minuto: o relógio colapsa para esta carência.
+   *
+   * Por que não fechar na hora: o alienígena perderia o turno. Por que não
+   * mostrar "falta 1": todo aldeão sabe que confirmou, então o habitante que
+   * falta seria, por eliminação, a Ameaça. A carência resolve os dois — o
+   * relógio encurta para TODO MUNDO, sem nomear ninguém.
+   */
+  CARENCIA_AMEACA_MS: 8_000,
   /**
    * O dia: janela em que a vila lê o resultado e pode convocar a Quarentena
    * antes de a noite cair sozinha. Sem ela, o avanço automático tornaria a

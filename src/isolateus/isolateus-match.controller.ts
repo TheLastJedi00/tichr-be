@@ -44,11 +44,12 @@ export class IsolateusMatchController {
 
   /**
    * O projetor dispara ao zerar o cronômetro. Não há timer no servidor: ele só
-   * revalida o prazo e resolve a rodada (padrão do Wor).
+   * revalida o prazo e resolve a rodada (padrão do Wor). Os celulares da turma
+   * cobram o mesmo prazo pela rota do aluno — o avanço não depende de uma aba só.
    */
   @Post('matches/:id/tempo')
   tempo(@ProfessorId() professorId: string, @Param('id') id: string) {
-    return this.game.resolverPorTempo(professorId, id);
+    return this.game.resolverPorTempo(id, { professorId });
   }
 
   /** A próxima noite. */
@@ -57,9 +58,12 @@ export class IsolateusMatchController {
     return this.game.proxima(professorId, id);
   }
 
-  /** O professor também pode abrir a Quarentena pelo telão. */
-  @Post('matches/:id/quarentena')
-  quarentena(@ProfessorId() professorId: string, @Param('id') id: string) {
-    return this.game.convocarQuarentena(id, { professorId });
+  /**
+   * Encerra a investigação no meio do jogo (o sinal da aula bateu). O veredito
+   * sai pelo estado da vila no instante da interrupção.
+   */
+  @Post('matches/:id/encerrar')
+  encerrar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.encerrarPeloProfessor(professorId, id);
   }
 }

@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { XpService } from '../turma/xp.service';
 import {
   Habitante,
@@ -425,5 +425,64 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
     expect(partida.status).toBe('RESULTADO_RODADA');
     expect(partida.rankingFinal).toEqual([]);
     expect(JSON.stringify(partida)).not.toContain('pontos');
+  });
+});
+
+describe('Isolateus — o professor encerra no meio do jogo', () => {
+  it('publica o veredito pelo estado da vila e credita o XP acumulado', async () => {
+    // O sinal da aula bateu com a partida em andamento. Inventar um "empate"
+    // descartaria pontos que os alunos ja ganharam.
+    const { service, partida, creditar } = cenario({ reais: 4 });
+    await todosRespondem(service, 4, 1); // uma rodada valendo pontos
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    expect(partida.status).toBe('ENCERRADO');
+    expect(partida.veredito?.lado).toBe('VILA'); // 6 setores de pe
+    expect(partida.rankingFinal.length).toBeGreaterThan(0);
+    expect(creditar).toHaveBeenCalled();
+  });
+
+  it('o diario registra que a investigacao foi interrompida', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    const textos = partida.acontecimentos.map((a) => a.texto);
+    expect(textos.some((t) => t.includes('encerrou a investigação'))).toBe(true);
+    // E o card do veredito continua vindo logo depois.
+    expect(textos[textos.length - 1]).toBe(partida.veredito?.motivo);
+  });
+
+  it('a vila arrasada entrega a vitoria a Ameaca, mesmo no encerramento', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    for (const s of partida.setores.slice(0, 4)) s.intacto = false;
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+    expect(partida.veredito?.lado).toBe('AMEACA');
+  });
+
+  it('encerrar duas vezes nao dobra o XP', async () => {
+    const { service, partida, creditar } = cenario({ reais: 4 });
+    await service.encerrarPeloProfessor('prof', 'p1');
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    expect(partida.status).toBe('ENCERRADO');
+    expect(creditar).toHaveBeenCalledTimes(1);
+  });
+
+  it('a partida de outro professor nao e encerrada', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    await expect(
+      service.encerrarPeloProfessor('outro', 'p1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+  });
+
+  it('no lobby nao ha investigacao para encerrar', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.status = 'LOBBY';
+    await expect(
+      service.encerrarPeloProfessor('prof', 'p1'),
+    ).rejects.toMatchObject({ response: { code: 'INVESTIGACAO_NAO_INICIADA' } });
   });
 });

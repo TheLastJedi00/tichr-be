@@ -205,7 +205,7 @@ describe('Isolateus — o Diário da Vila', () => {
 
   it('a Quarentena convocada entra no diário', async () => {
     const c = cenario({ status: 'RESULTADO_RODADA' });
-    await c.service.convocarQuarentena('p1', { alunoId: 'a2' });
+    await c.service.convocarQuarentena('p1', 'a2');
     expect(c.tipos()).toContain('QUARENTENA');
   });
 
@@ -251,7 +251,7 @@ describe('Isolateus — o Diário da Vila', () => {
         em: new Date().toISOString(),
       }),
     );
-    await c.service.convocarQuarentena('p1', { alunoId: 'a2' });
+    await c.service.convocarQuarentena('p1', 'a2');
 
     expect(c.diario()).toHaveLength(
       ISOLATEUS.MAX_ACONTECIMENTOS,

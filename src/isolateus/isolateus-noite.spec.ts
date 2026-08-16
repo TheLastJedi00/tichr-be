@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { XpService } from '../turma/xp.service';
 import {
   Habitante,
@@ -202,6 +206,57 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.status).toBe('DESLOCAMENTO');
   });
 
+  it('a vila inteira decidida encurta a janela para a carência da Ameaça', async () => {
+    const { service, partida, segredo } = noite({ reais: 4 });
+    await todosConfirmam(service, 4);
+    await service.confirmarPosicao('a1', 'p1');
+
+    // A Ameaça CONTA no número — se ela só entrasse depois de atacar, o
+    // contador pararia em N-1 e a vila leria o nome dela ali.
+    expect(partida.movimentosRecebidos).toBe(4);
+    expect(segredo.confirmacoesNoite).toHaveLength(4);
+
+    const resta =
+      Date.parse(partida.faseIniciadaEm!) +
+      ISOLATEUS.LIMITE_DESLOCAMENTO_MS -
+      Date.now();
+    expect(resta).toBeLessThanOrEqual(ISOLATEUS.CARENCIA_AMEACA_MS);
+    expect(resta).toBeGreaterThan(ISOLATEUS.CARENCIA_AMEACA_MS - 2_000);
+  });
+
+  it('a carência não devolve tempo a quem já está nela', async () => {
+    const { service, partida } = noite({ reais: 4 });
+    await todosConfirmam(service, 4);
+    await service.confirmarPosicao('a1', 'p1');
+    const base = partida.faseIniciadaEm;
+
+    await service.confirmarPosicao('a2', 'p1'); // confirmação repetida
+    expect(partida.faseIniciadaEm).toBe(base);
+  });
+
+  it('a Ameaça agindo dentro da carência fecha a noite na hora', async () => {
+    const { service, partida } = noite({ reais: 4 });
+    await todosConfirmam(service, 4);
+    await service.confirmarPosicao('a1', 'p1');
+    expect(partida.status).toBe('DESLOCAMENTO');
+
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    expect(partida.status).toBe('RESULTADO_RODADA');
+  });
+
+  it('vencida a carência, o prazo fecha a noite sem a Ameaça', async () => {
+    const { service, partida } = noite({ reais: 4 });
+    await todosConfirmam(service, 4);
+    await service.confirmarPosicao('a1', 'p1');
+    // O relógio de todos correu os 8s da carência.
+    partida.faseIniciadaEm = new Date(
+      Date.parse(partida.faseIniciadaEm!) - ISOLATEUS.CARENCIA_AMEACA_MS,
+    ).toISOString();
+
+    await service.resolverPorTempo('p1', { alunoId: 'a2' });
+    expect(partida.status).toBe('RESULTADO_RODADA');
+  });
+
   it('sabotagem fecha a noite SEM questão: ela não é contestada', async () => {
     const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
@@ -242,7 +297,7 @@ describe('Isolateus — o amanhecer', () => {
       Date.now() - ISOLATEUS.LIMITE_DESLOCAMENTO_MS - 1000,
     ).toISOString();
 
-    await service.resolverPorTempo('prof', 'p1');
+    await service.resolverPorTempo('p1', { professorId: 'prof' });
 
     // Sem jogada e sem reparo, nao ha o que perguntar: o dia abre direto no card.
     // E o texto e o mesmo de uma noite calma — dizer "a Ameaca nao agiu"
@@ -272,6 +327,34 @@ describe('Isolateus — o amanhecer', () => {
     }
   });
 
+  it('a Ameaça ataca depois de andar — as duas jogadas cabem na mesma noite', async () => {
+    // A UI escondia o painel de ataque assim que ela se deslocava; o motor
+    // sempre aceitou as duas, em qualquer ordem, e é isso que se trava aqui.
+    const { service, partida, setorDe } = noite({
+      reais: 4,
+      posicoes: { h1: 'comunicacao' },
+    });
+    await todosConfirmam(service, 4);
+    await service.mover('a1', 'p1', 'abastecimento');
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+
+    // Sabotou onde TERMINOU a noite, não de onde saiu.
+    expect(setorDe('h1')).toBe('abastecimento');
+    expect(partida.setores.find((s) => s.id === 'abastecimento')!.intacto).toBe(
+      false,
+    );
+  });
+
+  it('a Ameaça anda depois de atacar — a ordem inversa também vale', async () => {
+    const { service, setorDe } = noite({
+      reais: 4,
+      posicoes: { h1: 'comunicacao' },
+    });
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'energia' });
+    await service.mover('a1', 'p1', 'abastecimento');
+    expect(setorDe('h1')).toBe('abastecimento');
+  });
+
   it('a nova noite reabre a janela e zera as confirmações', async () => {
     const { service, partida, segredo } = noite({ reais: 4 });
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
@@ -285,5 +368,69 @@ describe('Isolateus — o amanhecer', () => {
     expect(segredo.confirmacoesNoite).toEqual([]);
     expect(segredo.acaoRodada).toBeNull();
     expect(partida.faseIniciadaEm).not.toBeNull();
+  });
+});
+
+describe('Isolateus — o relógio é de todos, não só do telão', () => {
+  /** Uma fase cronometrada já vencida. */
+  function vencida(c: ReturnType<typeof noite>) {
+    c.partida.faseIniciadaEm = new Date(
+      Date.now() - ISOLATEUS.LIMITE_DESLOCAMENTO_MS - 1_000,
+    ).toISOString();
+  }
+
+  it('um celular da partida cobra o prazo vencido', async () => {
+    // Enquanto só o telão podia, uma aba dormindo parava a aula inteira.
+    const c = noite({ reais: 4 });
+    vencida(c);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.partida.status).toBe('RESULTADO_RODADA');
+  });
+
+  it('quem não é da partida não mexe no relógio dela', async () => {
+    const c = noite({ reais: 4 });
+    vencida(c);
+    await expect(
+      c.service.resolverPorTempo('p1', { alunoId: 'intruso' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(c.partida.status).toBe('DESLOCAMENTO');
+  });
+
+  it('quem saiu da vila continua cobrando o prazo', async () => {
+    // Abduzidos e presos seguem na aula, com a mesma tela cronometrada.
+    const c = noite({ reais: 4 });
+    c.partida.habitantes.find((h) => h.id === 'h3')!.vivo = false;
+    vencida(c);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.partida.status).toBe('RESULTADO_RODADA');
+  });
+
+  it('dois clientes cobrando o mesmo prazo viram a fase UMA vez', async () => {
+    const c = noite({ reais: 4 });
+    vencida(c);
+    await Promise.all([
+      c.service.resolverPorTempo('p1', { professorId: 'prof' }),
+      c.service.resolverPorTempo('p1', { alunoId: 'a2' }),
+    ]);
+    expect(c.partida.status).toBe('RESULTADO_RODADA');
+    expect(c.partida.rodada).toBe(0);
+  });
+
+  it('cliente adiantado não corta a fase dos outros', async () => {
+    const c = noite({ reais: 4 });
+    await c.service.resolverPorTempo('p1', { alunoId: 'a2' });
+    expect(c.partida.status).toBe('DESLOCAMENTO');
+  });
+
+  it('a janela de decisão vencida faz a noite cair sem o professor', async () => {
+    const c = noite({ reais: 4 });
+    c.partida.status = 'RESULTADO_RODADA';
+    c.partida.faseIniciadaEm = new Date(
+      Date.now() - ISOLATEUS.JANELA_DECISAO_MS - 1_000,
+    ).toISOString();
+
+    await c.service.resolverPorTempo('p1', { alunoId: 'a2' });
+    expect(c.partida.status).toBe('DESLOCAMENTO');
+    expect(c.partida.rodada).toBe(1);
   });
 });
