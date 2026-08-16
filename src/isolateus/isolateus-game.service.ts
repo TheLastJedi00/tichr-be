@@ -1164,6 +1164,43 @@ export class IsolateusGameService {
     return partida;
   }
 
+  /**
+   * O professor encerra a investigação **no meio do jogo** — o sinal da aula
+   * bateu, a turma dispersou, o tempo acabou.
+   *
+   * O veredito sai pelo **mesmo critério do esgotamento das questões** (§8): o
+   * estado do mapa e da população no instante da interrupção. Inventar um
+   * "empate" aqui seria pior — a partida tem um placar real acumulado, e os
+   * alunos merecem o XP do que já jogaram. O diário registra que a investigação
+   * foi interrompida, para o card final não parecer um fim natural.
+   *
+   * No LOBBY não há o que encerrar: sem Despertar não existem papéis, mapa nem
+   * pontuação para julgar.
+   */
+  async encerrarPeloProfessor(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (partida.status === 'ENCERRADO') return partida;
+    if (partida.status === 'LOBBY') {
+      throw new BadRequestException({
+        code: 'INVESTIGACAO_NAO_INICIADA',
+        message: 'A investigação ainda não começou.',
+      });
+    }
+
+    this.registrar(
+      partida,
+      'FIM',
+      'O professor encerrou a investigação. O veredito sai pelo estado da vila neste momento.',
+    );
+    return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+  }
+
   // ===== A Quarentena =====
 
   /**

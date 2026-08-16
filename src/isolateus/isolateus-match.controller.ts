@@ -57,4 +57,13 @@ export class IsolateusMatchController {
   proxima(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.game.proxima(professorId, id);
   }
+
+  /**
+   * Encerra a investigação no meio do jogo (o sinal da aula bateu). O veredito
+   * sai pelo estado da vila no instante da interrupção.
+   */
+  @Post('matches/:id/encerrar')
+  encerrar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.encerrarPeloProfessor(professorId, id);
+  }
 }
