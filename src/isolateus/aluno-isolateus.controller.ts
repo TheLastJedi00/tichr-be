@@ -117,13 +117,25 @@ export class AlunoIsolateusController {
     return this.game.sinalDeRadio(aluno.alunoId, id, dto.texto);
   }
 
+  /**
+   * O relógio da vila: qualquer tela da partida pode cobrar um prazo vencido.
+   *
+   * O telão continua sendo o cronômetro principal, mas deixou de ser o único —
+   * era assim que uma aba dormindo, uma falha de rede ou um relógio adiantado
+   * conseguiam parar a partida inteira.
+   */
+  @Post(':id/tempo')
+  tempo(@CurrentStudent() aluno: { alunoId: string }, @Param('id') id: string) {
+    return this.game.resolverPorTempo(id, { alunoId: aluno.alunoId });
+  }
+
   /** O botão vermelho: convoca a Quarentena (uma vez por rodada). */
   @Post(':id/quarentena')
   convocar(
     @CurrentStudent() aluno: { alunoId: string },
     @Param('id') id: string,
   ) {
-    return this.game.convocarQuarentena(id, { alunoId: aluno.alunoId });
+    return this.game.convocarQuarentena(id, aluno.alunoId);
   }
 
   /** O Debate Tático da Quarentena. */
