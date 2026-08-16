@@ -26,6 +26,8 @@ export const ISOLATEUS = {
   LIMIAR_NEVOA: 10,
   /** Total de setores vitais. */
   TOTAL_SETORES: 6,
+  /** Teto do Diário da Vila (mesma disciplina dos 40 rumores). */
+  MAX_ACONTECIMENTOS: 60,
 
   /**
    * Teto de noites da partida.
@@ -142,6 +144,41 @@ export interface VereditoQuarentena {
   texto: string;
 }
 
+/**
+ * Uma entrada do Diário da Vila — o histórico que a turma pode reler.
+ *
+ * Cada evento aparece primeiro como modal em todas as telas e depois fica no
+ * card scrollable. O que **não** entra aqui é tão importante quanto o que entra:
+ * deslocamento não gera evento, porque a lista de quem foi para onde entregaria
+ * o mapa inteiro e anularia a informação parcial em que o jogo se apoia.
+ */
+export interface Acontecimento {
+  id: string;
+  tipo: TipoAcontecimento;
+  texto: string;
+  /** A noite em que aconteceu (para agrupar no diário). */
+  noite: number;
+  em: string;
+}
+
+export type TipoAcontecimento =
+  | 'NOITE'
+  | 'SABOTAGEM'
+  | 'ABDUCAO'
+  /**
+   * Cobre **dois** casos com o mesmo texto: a defesa bem-sucedida e o tiro às
+   * cegas que caiu num setor vazio. Separá-los diria à vila se a Ameaça agiu de
+   * perto ou de longe — exatamente o que a ambiguidade da abdução protege.
+   */
+  | 'REPELIDA'
+  | 'ESPERA'
+  | 'REPARO'
+  | 'RESTAURADO'
+  | 'REPARO_FALHOU'
+  | 'QUARENTENA'
+  | 'VEREDITO'
+  | 'FIM';
+
 /** O veredito final, com o motivo técnico explícito (§8). */
 export interface Veredito {
   lado: 'VILA' | 'AMEACA';
@@ -213,6 +250,14 @@ export class IsolateusMatchEntity {
   corretaIndex: number | null;
 
   alerta: AlertaRodada | null;
+
+  /**
+   * O Diário da Vila. Aparado nas últimas 60 entradas — o documento é lido por
+   * `onSnapshot` a cada mudança, e um histórico ilimitado inflaria toda leitura
+   * da partida.
+   */
+  acontecimentos: Acontecimento[];
+
   rumores: Rumor[];
   debate: MensagemDebate[];
   resumoRodada: ResumoRodada | null;

@@ -9,6 +9,7 @@ import { embaralhar } from '../common/shuffle.util';
 import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import {
+  Acontecimento,
   AlertaRodada,
   ISOLATEUS,
   IsolateusMatchEntity,
@@ -16,6 +17,7 @@ import {
   ResumoRodada,
   Rumor,
   Setor,
+  TipoAcontecimento,
 } from './entities/isolateus-match.entity';
 import {
   AcaoAmeaca,
@@ -144,6 +146,33 @@ export class IsolateusGameService {
       .filter((h) => npcs.has(h.id))
       .map((h) => h.nome);
     return nomes.length ? nomes : [VOZ_ANONIMA];
+  }
+
+  // ===== O Diário da Vila =====
+
+  /**
+   * Acrescenta um evento ao Diário. **Não persiste sozinho**: devolve a lista
+   * nova para entrar no mesmo `commitPartida` da mudança que o gerou — evento e
+   * estado precisam chegar juntos no snapshot, senão o cliente pisca um card
+   * anunciando algo que o mapa ainda não reflete.
+   */
+  private registrar(
+    partida: IsolateusMatchEntity,
+    tipo: TipoAcontecimento,
+    texto: string,
+  ): Acontecimento[] {
+    const evento: Acontecimento = {
+      id: randomUUID(),
+      tipo,
+      texto,
+      noite: partida.rodada,
+      em: new Date().toISOString(),
+    };
+    const lista = [...(partida.acontecimentos ?? []), evento].slice(
+      -ISOLATEUS.MAX_ACONTECIMENTOS,
+    );
+    partida.acontecimentos = lista;
+    return lista;
   }
 
   // ===== A Noite =====
@@ -275,6 +304,11 @@ export class IsolateusGameService {
       await this.matches.commitPartida(partida.id, {
         setores: partida.setores,
         esperanca: partida.esperanca,
+        acontecimentos: this.registrar(
+          partida,
+          'SABOTAGEM',
+          `O ${caiu.nome} foi sabotado e está em ruínas.`,
+        ),
       });
       if (partida.esperanca <= 0) {
         return this.encerrar(partida, segredo, {
@@ -290,7 +324,10 @@ export class IsolateusGameService {
     // ruína no mapa cobrando reação.
     const temAbducao = segredo.acaoRodada?.tipo === 'ABDUZIR';
     if (!temAbducao && !partida.reparoSetorId) {
-      return this.abrirJanelaDeDecisao(partida, this.resumoSemDisputa(partida, caiu));
+      const resumo = this.resumoSemDisputa(partida, caiu);
+    // A sabotagem ja registrou o proprio evento; so a noite calma falta.
+    if (!caiu) this.registrar(partida, 'ESPERA', resumo.texto);
+    return this.abrirJanelaDeDecisao(partida, resumo);
     }
     return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
   }
@@ -528,7 +565,16 @@ export class IsolateusGameService {
     }
 
     partida.reparoSetorId = setor.id;
-    await this.matches.commitPartida(partidaId, { reparoSetorId: setor.id });
+    await this.matches.commitPartida(partidaId, {
+      reparoSetorId: setor.id,
+      // Sem autor: NPC nenhum organiza reparo, e assinar a declaração seria
+      // atestar publicamente que aquele habitante é real.
+      acontecimentos: this.registrar(
+        partida,
+        'REPARO',
+        `A vila mobilizou um reparo no ${setor.nome}.`,
+      ),
+    });
     // Declarar o reparo também fecha a jogada da noite de quem declarou.
     return this.registrarConfirmacao(partida, segredo, alunoId);
   }
@@ -910,16 +956,21 @@ export class IsolateusGameService {
     if (acao?.tipo !== 'ABDUZIR') return null;
 
     const REPELIDA = 'A tentativa de abdução foi repelida. Ninguém foi levado.';
-    if (acertou) return REPELIDA;
+    const repelir = () => {
+      this.registrar(partida, 'REPELIDA', REPELIDA);
+      return REPELIDA;
+    };
+    if (acertou) return repelir();
 
     const alvo = acao.alvoId
       ? partida.vivos.find((h) => h.id === acao.alvoId)
       : embaralhar(partida.vivos.filter((h) => h.setorId === acao.setorId))[0];
 
     // Tiro às cegas num setor vazio (ou alvo que saiu da vila antes). A vila
-    // recebe EXATAMENTE o texto da abdução repelida: se fosse outro, ela saberia
-    // que a Ameaça atirou de longe e errou — e por eliminação, onde ela não está.
-    if (!alvo) return REPELIDA;
+    // recebe EXATAMENTE o mesmo evento da abdução repelida — texto e tipo: se
+    // diferissem, ela saberia que a Ameaça atirou de longe e errou, e por
+    // eliminação onde ela não estava.
+    if (!alvo) return repelir();
 
     alvo.vivo = false;
     partida.esperanca = Math.max(
@@ -927,7 +978,9 @@ export class IsolateusGameService {
       partida.esperanca - ISOLATEUS.DANO_ABDUCAO,
     );
     const setor = partida.setores.find((s) => s.id === alvo.setorId);
-    return `${alvo.nome} foi abduzido no ${setor?.nome ?? 'setor'}.`;
+    const texto = `${alvo.nome} foi abduzido no ${setor?.nome ?? 'setor'}.`;
+    this.registrar(partida, 'ABDUCAO', texto);
+    return texto;
   }
 
   /** A Perícia do reparo. `null` se ninguém declarou reparo nesta noite. */
@@ -939,7 +992,9 @@ export class IsolateusGameService {
     if (!setor) return null;
 
     if (!acertou) {
-      return `O reparo do ${setor.nome} fracassou.`;
+      const texto = `O reparo do ${setor.nome} fracassou.`;
+      this.registrar(partida, 'REPARO_FALHOU', texto);
+      return texto;
     }
     setor.intacto = true;
     // Devolve exatamente o que a sabotagem tirou: a barra segue espelhando o mapa.
@@ -947,7 +1002,9 @@ export class IsolateusGameService {
       ISOLATEUS.ESPERANCA_INICIAL,
       partida.esperanca + ISOLATEUS.CURA_REPARO,
     );
-    return `O ${setor.nome} foi reconstruído.`;
+    const texto = `O ${setor.nome} foi reconstruído.`;
+    this.registrar(partida, 'RESTAURADO', texto);
+    return texto;
   }
 
   /**
@@ -1005,6 +1062,11 @@ export class IsolateusGameService {
       // A noite é cronometrada: a janela de deslocamento precisa de base.
       faseIniciadaEm: new Date().toISOString(),
       movimentosRecebidos: 0,
+      acontecimentos: this.registrar(
+        partida,
+        'NOITE',
+        `A noite caiu sobre a vila. Noite ${proxima + 1}.`,
+      ),
     };
     Object.assign(partida, dados);
     segredo.confirmacoesNoite = [];
@@ -1080,6 +1142,11 @@ export class IsolateusGameService {
       vereditoQuarentena: null,
       votosRecebidos: 0,
       pulosRecebidos: 0,
+      acontecimentos: this.registrar(
+        partida,
+        'QUARENTENA',
+        'A vila convocou a Quarentena.',
+      ),
     };
     Object.assign(partida, dados);
     segredo.pulosDebate = [];
@@ -1257,6 +1324,11 @@ export class IsolateusGameService {
           eraAmeaca: true,
           texto: `Vocês contiveram a AMEAÇA! ${preso.nome} era o infiltrado.`,
         },
+        acontecimentos: this.registrar(
+          partida,
+          'VEREDITO',
+          `Vocês contiveram a AMEAÇA: ${preso.nome} era o infiltrado.`,
+        ),
       };
       Object.assign(partida, dados);
       await this.matches.commitPartida(partida.id, dados);
@@ -1282,6 +1354,13 @@ export class IsolateusGameService {
         // A identidade original do preso permanece em segredo (§5).
         texto: `Vocês aprisionaram um INOCENTE. ${preso.nome} não era a Ameaça — e ela continua entre vocês.`,
       },
+      // O diário não diz se o preso era real ou NPC: a identidade dele fica em
+      // segredo (014 §5).
+      acontecimentos: this.registrar(
+        partida,
+        'VEREDITO',
+        `Vocês aprisionaram um INOCENTE: ${preso.nome}.`,
+      ),
     };
     Object.assign(partida, dados);
     await this.matches.commitPartida(partida.id, dados);
@@ -1386,6 +1465,7 @@ export class IsolateusGameService {
       rankingFinal,
       questaoPublica: null,
       faseIniciadaEm: null,
+      acontecimentos: this.registrar(partida, 'FIM', veredito.motivo),
     };
     Object.assign(partida, dados);
     segredo.pontos = pontos;

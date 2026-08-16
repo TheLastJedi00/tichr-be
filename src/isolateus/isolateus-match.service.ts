@@ -83,6 +83,7 @@ export class IsolateusMatchService {
         questaoPublica: null,
         corretaIndex: null,
         alerta: null,
+        acontecimentos: [],
         rumores: [],
         debate: [],
         resumoRodada: null,
