@@ -68,6 +68,15 @@ export class AlunoIsolateusController {
     return this.game.confirmarPosicao(aluno.alunoId, id);
   }
 
+  /** A Reconstrucao: organiza o reparo do setor em ruinas onde voce esta. */
+  @Post(':id/reparo')
+  reparo(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.declararReparo(aluno.alunoId, id);
+  }
+
   /** O Turno da Ameaça: sabotar um setor ou abduzir um morador. */
   @Post(':id/acao')
   acao(

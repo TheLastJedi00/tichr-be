@@ -1,8 +1,23 @@
-/** A intenção do Alienígena para a rodada corrente (só o servidor conhece). */
+/**
+ * A jogada do Alienígena na noite corrente (só o servidor conhece).
+ *
+ * `SABOTAR` é sempre no setor onde ela está — o `alvoId` do cliente é ignorado.
+ * `ABDUZIR` tem duas formas, e o campo preenchido diz qual foi:
+ *
+ * *   `alvoId` → **presencial**: ela viu a fileira do próprio setor e escolheu a
+ *     vítima pelo nome.
+ * *   `setorId` → **às cegas**: ela apostou num setor qualquer do mapa sem saber
+ *     quem está lá; a vítima é sorteada na resolução.
+ *
+ * A vila **nunca** distingue as duas: a sabotagem entrega a posição da Ameaça
+ * com certeza, mas a abdução é ambígua de propósito (§5.1.1 da spec 023).
+ */
 export interface AcaoAmeaca {
-  tipo: 'SABOTAR' | 'ABDUZIR';
-  /** Id do setor (SABOTAR) ou do habitante (ABDUZIR). */
-  alvoId: string;
+  tipo: 'SABOTAR' | 'ABDUZIR' | 'AGUARDAR';
+  /** Habitante alvo (abdução presencial). */
+  alvoId?: string;
+  /** Setor apostado (abdução às cegas). */
+  setorId?: string;
 }
 
 /** Vínculo entre um habitante da vila e o aluno por trás dele. Sem `alunoId` = NPC. */

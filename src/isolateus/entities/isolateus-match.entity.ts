@@ -8,6 +8,11 @@ export const ISOLATEUS = {
   DANO_ABDUCAO: 10,
   /** A vila trancou um inocente na Quarentena ("dano severo"). */
   DANO_INOCENTE: 20,
+  /**
+   * Reconstruir um setor devolve exatamente o que a sabotagem dele tirou. A
+   * barra de Esperança continua sendo espelho fiel do estado do mapa.
+   */
+  CURA_REPARO: 15,
 
   /** Pontos por acerto + bônus máximo de rapidez (espelha o Qlick). */
   PONTOS_ACERTO: 1000,
@@ -22,11 +27,26 @@ export const ISOLATEUS = {
   /** Total de setores vitais. */
   TOTAL_SETORES: 6,
 
+  /**
+   * Teto de noites da partida.
+   *
+   * As questões deixaram de contar as noites: elas só são consumidas quando há
+   * abdução ou reparo. Uma Ameaça que só sabota e uma vila que nunca reage
+   * fariam a partida girar para sempre — o teto fecha essa porta.
+   */
+  TETO_NOITES: 15,
+
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,
   LIMITE_VOTO_MS: 60_000,
   /** A noite: janela para se deslocar um setor (ou confirmar que fica). */
   LIMITE_DESLOCAMENTO_MS: 20_000,
+  /**
+   * O dia: janela em que a vila lê o resultado e pode convocar a Quarentena
+   * antes de a noite cair sozinha. Sem ela, o avanço automático tornaria a
+   * Quarentena inconvocável.
+   */
+  JANELA_DECISAO_MS: 15_000,
 
   /**
    * Chance de um NPC trocar de setor a cada noite.
@@ -159,9 +179,31 @@ export class IsolateusMatchEntity {
   setores: Setor[];
   habitantes: Habitante[];
 
-  rodada: number; // -1 no lobby, 0-based depois
+  /** A noite corrente. -1 no lobby, 0-based depois. Conta o ciclo, não a questão. */
+  rodada: number;
+
+  /**
+   * Ponteiro no banco de questões.
+   *
+   * Separado de `rodada` de propósito: as questões deixaram de ser consumidas
+   * por noite e passaram a sê-lo **por disputa** — só há questão quando a Ameaça
+   * abduz ou a vila declara um reparo. Uma noite de sabotagem sem reação não
+   * gasta questão nenhuma.
+   */
+  questaoIndex: number;
+
+  /** Tamanho do banco de questões (o critério de fim por esgotamento). */
   totalRodadas: number;
   duracaoSegundos: number;
+
+  /**
+   * O setor com reparo declarado nesta noite (null = nenhum). É o que faz a
+   * questão do dia valer também como Perícia de reconstrução.
+   *
+   * Guarda o setor, não quem declarou: NPC nenhum organiza reparo, e um autor
+   * público seria atestado de que aquele habitante é real.
+   */
+  reparoSetorId: string | null;
 
   /** Base do cronômetro no cliente (questão, debate ou votação). */
   faseIniciadaEm: string | null;

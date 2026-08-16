@@ -15,9 +15,10 @@ import { SETORES } from './isolateus.data';
 function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
-  // A vila inteira num setor so: mantem todos ao alcance da Ameaca, para que
-  // estes testes exercitem o motor e nao a geografia (que tem specs proprias).
-  const setor = opts.setor ?? 'seguranca';
+  // A vila inteira na Comunicacao: e de la que se convoca a Quarentena, e
+  // estes testes exercitam o fluxo da reuniao, nao a geografia (que tem specs
+  // proprias em isolateus-mapa.spec).
+  const setor = opts.setor ?? 'comunicacao';
 
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];

@@ -67,6 +67,8 @@ function noite(opts: {
     setores: SETORES.map((s) => ({ id: s.id, nome: s.nome, intacto: true })),
     habitantes,
     rodada: 0,
+    questaoIndex: 0,
+    reparoSetorId: null,
     totalRodadas: QUESTOES.length,
     duracaoSegundos: 60,
     faseIniciadaEm: new Date().toISOString(),
@@ -200,19 +202,35 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.status).toBe('DESLOCAMENTO');
   });
 
-  it('a jogada da Ameaça fecha a noite e abre a questão', async () => {
+  it('sabotagem fecha a noite SEM questão: ela não é contestada', async () => {
     const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR', alvoId: 'energia' });
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+
+    // O setor cai na hora; o que a vila pode fazer é marchar até lá e reconstruir.
+    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.questaoPublica).toBeNull();
+    expect(partida.setores.find((s) => s.id === 'seguranca')!.intacto).toBe(false);
+    expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
+    // Nenhuma questão consumida: o banco só é gasto por disputa.
+    expect(partida.questaoIndex).toBe(0);
+  });
+
+  it('abdução fecha a noite ABRINDO a questão de defesa', async () => {
+    const { service, partida } = noite({ reais: 4 });
+    await todosConfirmam(service, 4);
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
 
     expect(partida.status).toBe('QUESTAO_ATIVA');
-    expect(partida.alerta?.tipo).toBe('SABOTAGEM');
+    expect(partida.alerta?.tipo).toBe('ABDUCAO');
     expect(partida.questaoPublica?.enunciado).toBe('Q0');
+    // Ninguém foi levado ainda — a turma ainda pode repelir.
+    expect(partida.habitantes.find((h) => h.id === 'h2')!.vivo).toBe(true);
   });
 
   it('a Ameaça não joga duas vezes na mesma noite', async () => {
     const { service } = noite({ reais: 4 });
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR', alvoId: 'energia' });
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
     await expect(
       service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' }),
     ).rejects.toMatchObject({ response: { code: 'JOGADA_FEITA' } });
@@ -226,9 +244,11 @@ describe('Isolateus — o amanhecer', () => {
 
     await service.resolverPorTempo('prof', 'p1');
 
-    // Um alerta que dissesse "a Ameaça não agiu" denunciaria quem sumiu do jogo.
-    expect(partida.status).toBe('QUESTAO_ATIVA');
-    expect(partida.alerta?.texto).toContain('movimento estranho');
+    // Sem jogada e sem reparo, nao ha o que perguntar: o dia abre direto no card.
+    // E o texto e o mesmo de uma noite calma — dizer "a Ameaca nao agiu"
+    // denunciaria quem sumiu do jogo.
+    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.resumoRodada?.texto).toContain('sem incidentes');
   });
 
   it('os NPCs também andam — e só no fechamento da noite', async () => {
@@ -241,7 +261,7 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.habitantes.filter((h) => h.setorId !== antes.get(h.id))).toEqual(
       [],
     ); // ninguém se mexeu ainda: os NPCs só andam no fechamento
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR', alvoId: 'energia' });
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
 
     const npcs = partida.habitantes.filter((h) => h.id.startsWith('n'));
     const mexeram = npcs.filter((h) => h.setorId !== antes.get(h.id));
@@ -254,7 +274,7 @@ describe('Isolateus — o amanhecer', () => {
 
   it('a nova noite reabre a janela e zera as confirmações', async () => {
     const { service, partida, segredo } = noite({ reais: 4 });
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR', alvoId: 'energia' });
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
     partida.status = 'RESULTADO_RODADA';
 
     await service.proxima('prof', 'p1');

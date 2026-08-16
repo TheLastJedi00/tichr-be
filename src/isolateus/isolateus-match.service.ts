@@ -75,6 +75,8 @@ export class IsolateusMatchService {
         })),
         habitantes: [],
         rodada: -1,
+        questaoIndex: 0,
+        reparoSetorId: null,
         totalRodadas: jogo.questoes.length,
         duracaoSegundos: jogo.duracaoSegundos ?? 60,
         faseIniciadaEm: null,
