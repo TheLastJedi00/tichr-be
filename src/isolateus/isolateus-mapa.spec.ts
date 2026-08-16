@@ -237,7 +237,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
       status: 'RESULTADO_RODADA',
     });
     await expect(
-      service.convocarQuarentena('p1', { alunoId: 'a2' }),
+      service.convocarQuarentena('p1', 'a2'),
     ).rejects.toMatchObject({ response: { code: 'FORA_DA_COMUNICACAO' } });
   });
 
@@ -246,7 +246,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
       posicoes: { h2: 'comunicacao' },
       status: 'RESULTADO_RODADA',
     });
-    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    await service.convocarQuarentena('p1', 'a2');
     expect(partida.status).toBe('QUARENTENA_DEBATE');
   });
 
@@ -257,24 +257,28 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
       ruinas: ['comunicacao'],
     });
     await expect(
-      service.convocarQuarentena('p1', { alunoId: 'a2' }),
+      service.convocarQuarentena('p1', 'a2'),
     ).rejects.toMatchObject({ response: { code: 'COMUNICACAO_EM_RUINAS' } });
 
     // Reconstruído, o rádio volta a funcionar.
     partida.setores.find((s) => s.id === 'comunicacao')!.intacto = true;
-    await service.convocarQuarentena('p1', { alunoId: 'a2' });
+    await service.convocarQuarentena('p1', 'a2');
     expect(partida.status).toBe('QUARENTENA_DEBATE');
   });
 
-  it('o professor convoca pelo telão sem restrição de setor', async () => {
-    // Válvula pedagógica: ele precisa poder forçar o debate quando a aula exige.
-    const { service, partida } = mapa({
+  it('o professor não convoca: a Quarentena é da vila', async () => {
+    // A "válvula pedagógica" do telão saiu. Ela furava a regra que faz da
+    // Comunicação o alvo mais valioso do mapa — o professor podia convocar de
+    // qualquer lugar, inclusive com o rádio em ruínas. O ritmo da aula ele
+    // continua governando por "Adiantar noite".
+    const { service } = mapa({
       posicoes: { h2: 'energia' },
       status: 'RESULTADO_RODADA',
       ruinas: ['comunicacao'],
     });
-    await service.convocarQuarentena('p1', { professorId: 'prof' });
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    await expect(
+      service.convocarQuarentena('p1', 'prof'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('quem saiu da vila não convoca, nem estando na Comunicação', async () => {
@@ -284,7 +288,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
     });
     partida.habitantes.find((h) => h.id === 'h2')!.vivo = false;
     await expect(
-      service.convocarQuarentena('p1', { alunoId: 'a2' }),
+      service.convocarQuarentena('p1', 'a2'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

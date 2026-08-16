@@ -267,7 +267,43 @@ export class IsolateusGameService {
     if (this.noiteEstaFechada(partida, segredo)) {
       return this.fecharNoite(partida, segredo);
     }
+    await this.encurtarPelaCarencia(partida, segredo);
     return partida;
+  }
+
+  /**
+   * A vila inteira já decidiu e só falta a jogada da Ameaça: o resto da janela
+   * vira a **carência** (`CARENCIA_AMEACA_MS`).
+   *
+   * O encurtamento é feito **rebaseando `faseIniciadaEm`** em vez de criar um
+   * segundo prazo: todos os relógios (telão e celulares) já contam a partir
+   * desse campo, e `resolverPorTempo` revalida contra ele. Um campo só, uma
+   * verdade só.
+   *
+   * O que ele **não** faz é dizer que falta a Ameaça: o relógio encurta para
+   * todo mundo ao mesmo tempo, sem nomear ninguém. Apontar o habitante que falta
+   * seria entregar o alienígena por eliminação, já que cada aldeão sabe que
+   * confirmou.
+   */
+  private async encurtarPelaCarencia(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<void> {
+    if (partida.status !== 'DESLOCAMENTO' || segredo.acaoRodada) return;
+    if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm) return;
+
+    const fim =
+      Date.parse(partida.faseIniciadaEm) + ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
+    const novoFim = Date.now() + ISOLATEUS.CARENCIA_AMEACA_MS;
+    // Só encurta: uma segunda confirmação (ou um relógio torto) não pode
+    // devolver tempo a quem já está na carência.
+    if (novoFim >= fim) return;
+
+    const base = new Date(
+      novoFim - ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
+    ).toISOString();
+    partida.faseIniciadaEm = base;
+    await this.matches.commitPartida(partida.id, { faseIniciadaEm: base });
   }
 
   /**
@@ -279,10 +315,23 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): boolean {
+    return this.vilaConfirmou(partida, segredo) && !!segredo.acaoRodada;
+  }
+
+  /**
+   * Todos os habitantes reais na vila fecharam a posição da noite.
+   *
+   * A Ameaça conta aqui **pelo deslocamento dela**, como qualquer um: se ela só
+   * entrasse na conta depois de atacar, o contador público pararia em `N-1`
+   * exatamente nas noites em que ela ainda não agiu — e a vila leria o nome do
+   * alienígena no número.
+   */
+  private vilaConfirmou(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): boolean {
     const reais = this.reaisNaVila(partida, segredo);
-    const todosConfirmaram =
-      (segredo.confirmacoesNoite ?? []).length >= reais.length;
-    return todosConfirmaram && !!segredo.acaoRodada;
+    return (segredo.confirmacoesNoite ?? []).length >= reais.length;
   }
 
   /**
@@ -809,16 +858,31 @@ export class IsolateusGameService {
   // ===== A Resolução =====
 
   /**
-   * O projetor fecha a fase cronometrada quando o relógio zera. Não há timer no
-   * servidor (padrão Qlick/Wor): o cliente conta e o servidor **revalida o prazo**
-   * antes de agir, com margem de 2s — um cliente adiantado não corta a fase antes.
+   * O prazo vencido de uma fase cronometrada. Não há timer no servidor (padrão
+   * Qlick/Wor): o cliente conta e o servidor **revalida o prazo** antes de agir,
+   * com margem de 2s — um cliente adiantado não corta a fase antes.
+   *
+   * **Qualquer cliente da partida cobra o vencimento** — o telão ou qualquer
+   * celular. Enquanto só o projetor podia, a partida inteira dependia de uma
+   * única requisição de uma única aba dar certo: bastava um erro de rede, uma
+   * aba dormindo ou um relógio adiantado (que faz o cliente disparar cedo e
+   * receber "ainda não") para a fase congelar até alguém recarregar a página.
+   *
+   * Continua idempotente: quem chega depois da virada encontra outro `status` e
+   * volta sem efeito, então N clientes cobrando o mesmo prazo produzem UMA
+   * transição.
    */
   async resolverPorTempo(
-    professorId: string,
     partidaId: string,
+    quem: { professorId?: string; alunoId?: string },
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
-    if (partida.professorId !== professorId) {
+    if (quem.professorId && partida.professorId !== quem.professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (quem.alunoId && !segredo.habitanteDe(quem.alunoId)) {
+      // Abduzidos e presos continuam valendo: eles seguem na aula, com a mesma
+      // tela cronometrada. Quem não é da partida é que não mexe no relógio dela.
       throw new NotFoundException('Partida nao encontrada.');
     }
     if (!partida.faseIniciadaEm) return partida;
@@ -843,7 +907,7 @@ export class IsolateusGameService {
     }
     if (partida.status === 'RESULTADO_RODADA') {
       // A janela de decisão zerou sem Quarentena: a noite cai sozinha.
-      return this.proxima(professorId, partidaId);
+      return this.avancarNoite(partida, segredo);
     }
     if (partida.status === 'QUESTAO_ATIVA') {
       return this.resolverRodada(partida, segredo);
@@ -1035,13 +1099,8 @@ export class IsolateusGameService {
   }
 
   /**
-   * A noite seguinte. Dispara sozinha quando a janela de decisão zera (é o
-   * projetor que conta), ou na hora, se o professor adiantar pelo telão.
-   *
-   * Fim de partida: **as questões acabaram** (o banco é o orçamento pedagógico)
-   * ou **o teto de noites foi batido**. O teto existe porque as questões
-   * deixaram de contar as noites — sem ele, uma Ameaça que só sabota e uma vila
-   * que não reage girariam para sempre.
+   * A noite seguinte, pedida pelo telão ("Adiantar noite"). O avanço automático
+   * ao fim da janela de decisão passa direto por `avancarNoite`.
    */
   async proxima(
     professorId: string,
@@ -1054,7 +1113,23 @@ export class IsolateusGameService {
     if (partida.status !== 'RESULTADO_RODADA') {
       throw new BadRequestException('Aguarde a resolução da rodada.');
     }
+    return this.avancarNoite(partida, segredo);
+  }
 
+  /**
+   * O anoitecer propriamente dito. Dispara sozinho quando a janela de decisão
+   * zera (qualquer tela da partida cobra o prazo), ou na hora, se o professor
+   * adiantar pelo telão.
+   *
+   * Fim de partida: **as questões acabaram** (o banco é o orçamento pedagógico)
+   * ou **o teto de noites foi batido**. O teto existe porque as questões
+   * deixaram de contar as noites — sem ele, uma Ameaça que só sabota e uma vila
+   * que não reage girariam para sempre.
+   */
+  private async avancarNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
     const proxima = partida.rodada + 1;
     const semQuestoes = partida.questaoIndex >= partida.totalRodadas;
     if (semQuestoes || proxima >= ISOLATEUS.TETO_NOITES) {
@@ -1089,11 +1164,54 @@ export class IsolateusGameService {
     return partida;
   }
 
+  /**
+   * O professor encerra a investigação **no meio do jogo** — o sinal da aula
+   * bateu, a turma dispersou, o tempo acabou.
+   *
+   * O veredito sai pelo **mesmo critério do esgotamento das questões** (§8): o
+   * estado do mapa e da população no instante da interrupção. Inventar um
+   * "empate" aqui seria pior — a partida tem um placar real acumulado, e os
+   * alunos merecem o XP do que já jogaram. O diário registra que a investigação
+   * foi interrompida, para o card final não parecer um fim natural.
+   *
+   * No LOBBY não há o que encerrar: sem Despertar não existem papéis, mapa nem
+   * pontuação para julgar.
+   */
+  async encerrarPeloProfessor(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (partida.status === 'ENCERRADO') return partida;
+    if (partida.status === 'LOBBY') {
+      throw new BadRequestException({
+        code: 'INVESTIGACAO_NAO_INICIADA',
+        message: 'A investigação ainda não começou.',
+      });
+    }
+
+    this.registrar(
+      partida,
+      'FIM',
+      'O professor encerrou a investigação. O veredito sai pelo estado da vila neste momento.',
+    );
+    return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+  }
+
   // ===== A Quarentena =====
 
   /**
-   * Convoca a Reunião de Investigação. Pode partir de **qualquer habitante real
-   * vivo** (o botão vermelho entre as rodadas) ou do professor, pelo telão.
+   * Convoca a Reunião de Investigação — **a vila convoca, e só a vila**: um
+   * habitante real vivo, no Setor de Comunicação, com o rádio de pé.
+   *
+   * O telão tinha uma convocação própria, sem restrição de setor ("válvula
+   * pedagógica"). Ela saiu: o professor furando a regra esvazia justamente o que
+   * torna a Comunicação o alvo mais valioso do mapa — e o botão aparecia mesmo
+   * quando o rádio estava em ruínas. O controle de ritmo do professor continua
+   * sendo "Adiantar noite".
    *
    * É **uma por rodada**: a opção volta sempre que a noite passa, mas a vila não
    * pode encadear convocações dentro da mesma rodada — prender todo mundo por
@@ -1102,36 +1220,31 @@ export class IsolateusGameService {
    */
   async convocarQuarentena(
     partidaId: string,
-    quem: { alunoId?: string; professorId?: string },
+    alunoId: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
 
-    if (quem.professorId && partida.professorId !== quem.professorId) {
-      throw new NotFoundException('Partida nao encontrada.');
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Você não está mais na vila.');
     }
-    if (quem.alunoId) {
-      const habitante = this.habitanteDoAluno(partida, segredo, quem.alunoId);
-      if (!habitante.vivo || habitante.preso) {
-        throw new ForbiddenException('Você não está mais na vila.');
-      }
-      // O rádio da vila fica na Comunicação: é de lá, e só de lá, que se
-      // convoca a reunião. Derrubar esse setor cala a vila até ela reconstruí-lo
-      // — e é isso que faz da Comunicação o alvo mais valioso do mapa.
-      if (habitante.setorId !== SETOR_COMUNICACAO) {
-        throw new ForbiddenException({
-          code: 'FORA_DA_COMUNICACAO',
-          message:
-            'Só quem está no Setor de Comunicação pode convocar a Quarentena.',
-        });
-      }
-      const radio = partida.setores.find((s) => s.id === SETOR_COMUNICACAO);
-      if (!radio?.intacto) {
-        throw new ForbiddenException({
-          code: 'COMUNICACAO_EM_RUINAS',
-          message:
-            'O Setor de Comunicação está em ruínas. Reconstrua o rádio para convocar a Quarentena.',
-        });
-      }
+    // O rádio da vila fica na Comunicação: é de lá, e só de lá, que se convoca a
+    // reunião. Derrubar esse setor cala a vila até ela reconstruí-lo — e é isso
+    // que faz da Comunicação o alvo mais valioso do mapa.
+    if (habitante.setorId !== SETOR_COMUNICACAO) {
+      throw new ForbiddenException({
+        code: 'FORA_DA_COMUNICACAO',
+        message:
+          'Só quem está no Setor de Comunicação pode convocar a Quarentena.',
+      });
+    }
+    const radio = partida.setores.find((s) => s.id === SETOR_COMUNICACAO);
+    if (!radio?.intacto) {
+      throw new ForbiddenException({
+        code: 'COMUNICACAO_EM_RUINAS',
+        message:
+          'O Setor de Comunicação está em ruínas. Reconstrua o rádio para convocar a Quarentena.',
+      });
     }
     if (partida.status !== 'RESULTADO_RODADA') {
       throw new BadRequestException(
