@@ -1177,8 +1177,9 @@ cliente mostraria um card antes de o mapa refletir o fato.
 As questões deixaram de contar as noites: elas só são consumidas quando há **disputa**
 (abdução a repelir ou reparo a fazer). Uma noite de pura sabotagem não gasta pergunta.
 A partida encerra por: **banco de questões esgotado**, **Esperança em 0**, **Ameaça
-trancada na Quarentena** ou **teto de `TETO_NOITES` noites** — este último é válvula
-contra partida infinita, e por isso fica bem acima do orçamento pedagógico.
+trancada na Quarentena**, **teto de `TETO_NOITES` noites** — este último é válvula
+contra partida infinita, e por isso fica bem acima do orçamento pedagógico — ou
+**encerramento pelo professor** (`/encerrar`), para quando o sinal da aula bate antes.
 
 ### Estados
 
@@ -1205,10 +1206,21 @@ abdução ou reparo; senão o dia vai direto ao card.
   **Só no `LOBBY`.** (Não há mais vetar/renomear: ninguém digita nome.)
 - `POST /isolateus/matches/:id/iniciar` — **o Despertar**: sorteia os codinomes, espalha a
   vila pelos 6 setores e sorteia a Ameaça.
-- `POST /isolateus/matches/:id/tempo` — o telão fecha a fase cronometrada (**não há timer no
-  servidor**; o servidor revalida o prazo com margem de 2s). É também o que faz o **avanço
+- `POST /isolateus/matches/:id/tempo` — cobra a fase cronometrada vencida (**não há timer no
+  servidor**; ele revalida o prazo com margem de 2s). É também o que faz o **avanço
   automático**: zerada a janela de decisão, a noite cai sem o professor clicar em nada.
-- `POST /isolateus/matches/:id/proxima` · `POST /isolateus/matches/:id/quarentena`
+  **O telão não é mais o único a cobrar** — ver *O relógio é de todos*, abaixo.
+- `POST /isolateus/matches/:id/proxima` — "Adiantar noite" (atalho de ritmo, não obrigação).
+- `POST /isolateus/matches/:id/encerrar` — encerra a investigação **no meio do jogo** (o sinal
+  da aula bateu). O veredito sai pelo **mesmo critério do esgotamento** (§8): o estado do mapa e
+  da população naquele instante — inventar um "empate" descartaria um placar real, e o XP já
+  conquistado é creditado. O Diário registra a interrupção antes do card do veredito, para o fim
+  forçado não passar por fim natural. Idempotente se já `ENCERRADO`; recusa no `LOBBY`
+  (`INVESTIGACAO_NAO_INICIADA` — sem Despertar não há papéis, mapa nem pontuação para julgar).
+
+> **Não existe mais** `POST /isolateus/matches/:id/quarentena`. A convocação do telão não
+> respeitava setor nem rádio de pé e furava a regra que faz da Comunicação o alvo mais valioso do
+> mapa — a Quarentena é **da vila**.
 
 ### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick/Wor)
 - `GET /aluno/isolateus` — a investigação ativa da turma (janela de 12h).
@@ -1227,7 +1239,42 @@ abdução ou reparo; senão o dia vai direto ao card.
 - `POST /aluno/isolateus/:id/resposta` — a questão. **Abduzidos e presos continuam pontuando.**
 - `POST /aluno/isolateus/:id/rumor` · `/sinal` · `/quarentena` · `/debate` ·
   `/pular-debate` · `/suspeito` — `/quarentena` exige estar **vivo, no Setor de
-  Comunicação e com ele de pé**; o professor segue isento pelo telão.
+  Comunicação e com ele de pé**. **Não há mais exceção para o professor.**
+- `POST /aluno/isolateus/:id/tempo` — o celular também cobra o prazo vencido da fase. Mesma
+  revalidação da rota do telão; exige apenas **ser da partida** (abduzidos e presos incluídos —
+  eles seguem na aula, com a mesma tela cronometrada).
+
+### O relógio é de todos, não só do telão
+
+Não há timer no servidor (padrão Qlick/Wor): o cliente conta, o servidor **revalida**. Enquanto a
+cobrança era exclusiva do projetor, o avanço da partida inteira dependia de **um cliente** acertar
+**uma** requisição — e o telão disparava uma vez por fase, gravando o controle antes da resposta e
+engolindo o erro. Relógio da máquina adiantado (o servidor responde "ainda não" e o disparo se
+perde), queda de rede ou aba dormindo **congelavam a fase**, com o cronômetro em `0s`, até alguém
+recarregar a página.
+
+Hoje **qualquer cliente da partida** cobra o vencimento, e o cliente **insiste** até a fase virar.
+`resolverPorTempo` continua sendo o único juiz do prazo e é **idempotente**: quem chega depois da
+virada encontra outro `status` e volta sem efeito, então N clientes cobrando o mesmo vencimento
+produzem **uma** transição.
+
+### A carência da Ameaça (o fast-forward que não denuncia ninguém)
+
+A noite fecha cedo quando **todos os reais** confirmaram **e** a Ameaça já jogou — fechar sem ela
+anularia o turno do infiltrado. Só que o deslocamento dela **conta como confirmação** (tem de
+contar: se ela só entrasse na conta depois de atacar, `movimentosRecebidos` pararia em `N-1`
+justamente nas noites em que ela ainda não agiu, e a vila leria o nome do alienígena no número).
+O efeito colateral era a tela dizer "todos decidiram" e o relógio continuar correndo à toa.
+
+A saída é `CARENCIA_AMEACA_MS`: com a vila inteira decidida e a jogada dela pendente, o
+`faseIniciadaEm` é **rebaseado** para deixar 8s. O relógio encurta para **todo mundo ao mesmo
+tempo**, sem nomear ninguém, e a Ameaça mantém um turno real — se ela agir dentro da carência, a
+noite cai na hora. Um campo só, uma verdade só: os cronômetros de todas as telas já contam a partir
+dele e `resolverPorTempo` revalida contra ele, sem regra nova.
+
+> Detalhe que o cliente precisa saber: `faseIniciadaEm` **nem sempre significa "começou agora"**.
+> Quem estima o desvio entre o relógio local e o do servidor tem de usar o **mínimo** das amostras,
+> não a última — a carência reescreve o campo para o passado de propósito.
 
 ### Regras (constantes em `ISOLATEUS`, ajustáveis)
 
@@ -1236,7 +1283,9 @@ Mínimo de **4** investigadores reais. **Névoa de Guerra:** abaixo de 10 reais,
 saem de **`NOMES_CIDADES` (99 cidades)**, num sorteio único para reais e NPCs — bancos
 separados fariam da origem do nome uma pista.
 
-**Movimento:** janela de **20s**, um salto por noite. Os **NPCs também andam**
+**Movimento:** janela de **60s** (eram 20s: cobriam o clique, não a decisão — o aluno lê o próprio
+setor, abre o mapa, localiza as ruínas, e a Ameaça ainda escolhe a jogada dentro da mesma janela),
+um salto por noite, com **carência de 8s** quando só falta a Ameaça. Os **NPCs também andam**
 (`CHANCE_MOVER_NPC`), decididos só no fechamento: NPC parado seria identificado em uma
 noite, e NPC se mexendo fora de hora denunciaria que não é um colega decidindo.
 
@@ -1247,7 +1296,8 @@ vitória da Ameaça.
 **Apuração:** votam os reais na vila + os NPCs (aleatório). No empate vale o **Instinto Humano** —
 ganha a alternativa mais votada pelos **reais**; persistindo, a de menor índice (determinístico).
 
-**Quarentena:** **uma por rodada**, convocada de dentro da Comunicação (ou pelo professor).
+**Quarentena:** **uma por rodada**, convocada **só pela vila** — de dentro da Comunicação, com o
+rádio de pé (o atalho do telão saiu; ver Endpoints).
 Debate **90s** → votação **60s**, os dois com avanço rápido. Prendeu a Ameaça → Vila vence;
 prendeu inocente → −20 e **a identidade do preso permanece em segredo**.
 
