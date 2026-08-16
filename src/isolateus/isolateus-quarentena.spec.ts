@@ -12,18 +12,22 @@ import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { SETORES } from './isolateus.data';
 
 /** Vila em `RESULTADO_RODADA`, pronta para convocar a Quarentena. Alien = a1. */
-function cenario(opts: { reais?: number; npcs?: number } = {}) {
+function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
+  // A vila inteira na Comunicacao: e de la que se convoca a Quarentena, e
+  // estes testes exercitam o fluxo da reuniao, nao a geografia (que tem specs
+  // proprias em isolateus-mapa.spec).
+  const setor = opts.setor ?? 'comunicacao';
 
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];
   for (let i = 1; i <= nReais; i++) {
-    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `h${i}`, alunoId: `a${i}` });
   }
   for (let i = 1; i <= nNpcs; i++) {
-    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `n${i}` });
   }
 

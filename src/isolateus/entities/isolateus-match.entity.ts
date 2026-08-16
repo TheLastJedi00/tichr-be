@@ -8,6 +8,11 @@ export const ISOLATEUS = {
   DANO_ABDUCAO: 10,
   /** A vila trancou um inocente na Quarentena ("dano severo"). */
   DANO_INOCENTE: 20,
+  /**
+   * Reconstruir um setor devolve exatamente o que a sabotagem dele tirou. A
+   * barra de Esperança continua sendo espelho fiel do estado do mapa.
+   */
+  CURA_REPARO: 15,
 
   /** Pontos por acerto + bônus máximo de rapidez (espelha o Qlick). */
   PONTOS_ACERTO: 1000,
@@ -21,16 +26,57 @@ export const ISOLATEUS = {
   LIMIAR_NEVOA: 10,
   /** Total de setores vitais. */
   TOTAL_SETORES: 6,
+  /** Teto do Diário da Vila (mesma disciplina dos 40 rumores). */
+  MAX_ACONTECIMENTOS: 60,
+
+  /**
+   * Teto de noites da partida. **Válvula de segurança, não orçamento.**
+   *
+   * As questões deixaram de contar as noites: elas só são consumidas quando há
+   * abdução ou reparo. Uma Ameaça que só sabota e uma vila que nunca reage
+   * fariam a partida girar para sempre — o teto fecha essa porta.
+   *
+   * Começou em 15 e subiu para 25 depois da validação em navegador: com 15, uma
+   * partida encerrou tendo usado **4 das 10 questões**. O teto estava cortando a
+   * aula antes do banco pedagógico acabar, que é justamente o critério de fim
+   * que deveria mandar. Com 25, ele volta a ser o que a spec diz que é: o que
+   * impede a partida infinita, e nada além disso.
+   */
+  TETO_NOITES: 25,
 
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,
   LIMITE_VOTO_MS: 60_000,
+  /** A noite: janela para se deslocar um setor (ou confirmar que fica). */
+  LIMITE_DESLOCAMENTO_MS: 20_000,
+  /**
+   * O dia: janela em que a vila lê o resultado e pode convocar a Quarentena
+   * antes de a noite cair sozinha. Sem ela, o avanço automático tornaria a
+   * Quarentena inconvocável.
+   */
+  JANELA_DECISAO_MS: 15_000,
+
+  /**
+   * Chance de um NPC trocar de setor a cada noite.
+   *
+   * NPC parado seria identificado em uma única noite — e, por eliminação, a vila
+   * saberia quem é real, estreitando a caça ao infiltrado sem deduzir nada. O
+   * valor aproxima a taxa de movimentação humana observável.
+   */
+  CHANCE_MOVER_NPC: 0.45,
   /** Margem de segurança ao revalidar o prazo disparado pelo projetor. */
   MARGEM_TEMPO_MS: 2_000,
 } as const;
 
 export type StatusIsolateus =
   | 'LOBBY'
+  /**
+   * A noite. Todos se deslocam (ou ficam) e a Ameaça escolhe sua jogada — tudo
+   * dentro da mesma janela. Substitui o antigo `TURNO_AMEACA` como fase de
+   * abertura da rodada: com o turno separado, a Ameaça controlava sozinha quando
+   * o dia começava, e demorar a agir era um *tell* dela.
+   */
+  | 'DESLOCAMENTO'
   | 'TURNO_AMEACA'
   | 'QUESTAO_ATIVA'
   | 'RESULTADO_RODADA'
@@ -48,6 +94,13 @@ export interface Habitante {
   nome: string;
   vivo: boolean;
   preso: boolean;
+  /**
+   * O setor que o habitante ocupa agora. **Público de propósito**: sem posição
+   * pública não há mapa. O recorte "só vejo quem está no meu setor" é regra de
+   * UI — posição não revela papel nem resposta, e recortá-la no servidor custaria
+   * uma rodada de REST por movimento sem proteger segredo nenhum.
+   */
+  setorId: string;
 }
 
 /** Um dos 6 setores vitais. */
@@ -97,6 +150,41 @@ export interface VereditoQuarentena {
   texto: string;
 }
 
+/**
+ * Uma entrada do Diário da Vila — o histórico que a turma pode reler.
+ *
+ * Cada evento aparece primeiro como modal em todas as telas e depois fica no
+ * card scrollable. O que **não** entra aqui é tão importante quanto o que entra:
+ * deslocamento não gera evento, porque a lista de quem foi para onde entregaria
+ * o mapa inteiro e anularia a informação parcial em que o jogo se apoia.
+ */
+export interface Acontecimento {
+  id: string;
+  tipo: TipoAcontecimento;
+  texto: string;
+  /** A noite em que aconteceu (para agrupar no diário). */
+  noite: number;
+  em: string;
+}
+
+export type TipoAcontecimento =
+  | 'NOITE'
+  | 'SABOTAGEM'
+  | 'ABDUCAO'
+  /**
+   * Cobre **dois** casos com o mesmo texto: a defesa bem-sucedida e o tiro às
+   * cegas que caiu num setor vazio. Separá-los diria à vila se a Ameaça agiu de
+   * perto ou de longe — exatamente o que a ambiguidade da abdução protege.
+   */
+  | 'REPELIDA'
+  | 'ESPERA'
+  | 'REPARO'
+  | 'RESTAURADO'
+  | 'REPARO_FALHOU'
+  | 'QUARENTENA'
+  | 'VEREDITO'
+  | 'FIM';
+
 /** O veredito final, com o motivo técnico explícito (§8). */
 export interface Veredito {
   lado: 'VILA' | 'AMEACA';
@@ -134,9 +222,31 @@ export class IsolateusMatchEntity {
   setores: Setor[];
   habitantes: Habitante[];
 
-  rodada: number; // -1 no lobby, 0-based depois
+  /** A noite corrente. -1 no lobby, 0-based depois. Conta o ciclo, não a questão. */
+  rodada: number;
+
+  /**
+   * Ponteiro no banco de questões.
+   *
+   * Separado de `rodada` de propósito: as questões deixaram de ser consumidas
+   * por noite e passaram a sê-lo **por disputa** — só há questão quando a Ameaça
+   * abduz ou a vila declara um reparo. Uma noite de sabotagem sem reação não
+   * gasta questão nenhuma.
+   */
+  questaoIndex: number;
+
+  /** Tamanho do banco de questões (o critério de fim por esgotamento). */
   totalRodadas: number;
   duracaoSegundos: number;
+
+  /**
+   * O setor com reparo declarado nesta noite (null = nenhum). É o que faz a
+   * questão do dia valer também como Perícia de reconstrução.
+   *
+   * Guarda o setor, não quem declarou: NPC nenhum organiza reparo, e um autor
+   * público seria atestado de que aquele habitante é real.
+   */
+  reparoSetorId: string | null;
 
   /** Base do cronômetro no cliente (questão, debate ou votação). */
   faseIniciadaEm: string | null;
@@ -146,6 +256,14 @@ export class IsolateusMatchEntity {
   corretaIndex: number | null;
 
   alerta: AlertaRodada | null;
+
+  /**
+   * O Diário da Vila. Aparado nas últimas 60 entradas — o documento é lido por
+   * `onSnapshot` a cada mudança, e um histórico ilimitado inflaria toda leitura
+   * da partida.
+   */
+  acontecimentos: Acontecimento[];
+
   rumores: Rumor[];
   debate: MensagemDebate[];
   resumoRodada: ResumoRodada | null;
@@ -163,10 +281,24 @@ export class IsolateusMatchEntity {
   pulosRecebidos: number;
 
   /**
-   * Pseudônimos do lobby. **Apagado ao iniciar**: mantê-lo permitiria casar os
-   * nomes com a lista de habitantes e deduzir quem é NPC.
+   * Quantos habitantes reais já fecharam a jogada da noite. **Contagem apenas**:
+   * a lista seria uma lista de reais, e entregaria a Névoa de Guerra.
    */
-  inscritos: Array<{ alunoId: string; nome: string }>;
+  movimentosRecebidos: number;
+
+  /**
+   * Quem está no lobby. Carrega **só o `alunoId`** — o codinome de cidade é
+   * sorteado no Despertar, não aqui.
+   *
+   * Antes esta lista trazia o pseudônimo digitado, e o telão o exibia enquanto a
+   * sala enchia: a turma decorava os nomes reais e, quando os NPCs entravam,
+   * sabia por eliminação exatamente quem era virtual. Sem nome no lobby, não há
+   * o que decorar.
+   *
+   * **Apagado ao iniciar** de qualquer forma: a própria lista de `alunoId`
+   * casaria com os vínculos e denunciaria o tamanho real da vila.
+   */
+  inscritos: Array<{ alunoId: string }>;
 
   veredito: Veredito | null;
   rankingFinal: PlacarItem[];

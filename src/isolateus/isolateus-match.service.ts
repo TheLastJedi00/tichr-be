@@ -18,7 +18,7 @@ import { VinculoHabitante } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { ISOLATEUS_LOCKED } from './isolateus-jogo.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
-import { SETORES, sortearNomesNpc } from './isolateus.data';
+import { SETOR_IDS, SETORES, sortearCodinomes } from './isolateus.data';
 
 /**
  * Ciclo de vida da partida até o início: criação, lobby (pseudônimos), veto de
@@ -66,15 +66,24 @@ export class IsolateusMatchService {
         status: 'LOBBY',
         criadaEm: new Date().toISOString(),
         esperanca: ISOLATEUS.ESPERANCA_INICIAL,
-        setores: SETORES.map((s) => ({ ...s, intacto: true })),
+        // Sem `vizinhos`: a malha é imutável e vive no banco estático. Copiá-la
+        // no documento seria pagar leitura por um dado que nunca muda.
+        setores: SETORES.map((s) => ({
+          id: s.id,
+          nome: s.nome,
+          intacto: true,
+        })),
         habitantes: [],
         rodada: -1,
+        questaoIndex: 0,
+        reparoSetorId: null,
         totalRodadas: jogo.questoes.length,
         duracaoSegundos: jogo.duracaoSegundos ?? 60,
         faseIniciadaEm: null,
         questaoPublica: null,
         corretaIndex: null,
         alerta: null,
+        acontecimentos: [],
         rumores: [],
         debate: [],
         resumoRodada: null,
@@ -82,6 +91,7 @@ export class IsolateusMatchService {
         vereditoQuarentena: null,
         votosRecebidos: 0,
         pulosRecebidos: 0,
+        movimentosRecebidos: 0,
         inscritos: [],
         veredito: null,
         rankingFinal: [],
@@ -91,6 +101,7 @@ export class IsolateusMatchService {
         vinculos: [],
         acaoRodada: null,
         pulosDebate: [],
+        confirmacoesNoite: [],
         pontos: {},
       },
     );
@@ -152,14 +163,14 @@ export class IsolateusMatchService {
   }
 
   /**
-   * O Voto de Silêncio: o aluno entra com um pseudônimo, não com o nome real.
-   * Idempotente (reentrar troca o pseudônimo enquanto o lobby estiver aberto).
+   * O Registro. O aluno só declara presença — o codinome dele é sorteado no
+   * Despertar. Idempotente: reentrar (recarregar a página, cair a rede) não
+   * duplica o inscrito.
    */
   async entrar(
     alunoId: string,
     turmaId: string,
     partidaId: string,
-    pseudonimo: string,
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obter(partidaId);
     if (partida.turmaId && partida.turmaId !== turmaId) {
@@ -169,75 +180,23 @@ export class IsolateusMatchService {
       throw new BadRequestException('A investigação já começou.');
     }
 
-    const nome = this.validarPseudonimo(partida, alunoId, pseudonimo);
-    const inscritos = partida.inscritos.filter((i) => i.alunoId !== alunoId);
-    inscritos.push({ alunoId, nome });
+    if (partida.inscritos.some((i) => i.alunoId === alunoId)) {
+      return partida; // já estava na vila
+    }
+    const inscritos = [...partida.inscritos, { alunoId }];
     partida.inscritos = inscritos;
     await this.matches.commitPartida(partidaId, { inscritos });
     return partida;
   }
 
-  /** Normaliza o pseudônimo e recusa nome curto ou já adotado por outro. */
-  private validarPseudonimo(
-    partida: IsolateusMatchEntity,
-    alunoId: string,
-    pseudonimo: string,
-  ): string {
-    const nome = pseudonimo.trim().slice(0, 24);
-    if (nome.length < 2) {
-      throw new BadRequestException('Escolha um nome de personagem válido.');
-    }
-    const colidiu = partida.inscritos.some(
-      (i) =>
-        i.alunoId !== alunoId &&
-        i.nome.trim().toLowerCase() === nome.toLowerCase(),
-    );
-    if (colidiu) {
-      throw new BadRequestException({
-        code: 'NOME_EM_USO',
-        message: 'Outro habitante já adotou esse nome. Escolha outro.',
-      });
-    }
-    return nome;
-  }
-
   /**
-   * O Comando Central corrige o pseudônimo de um aluno (apelido impróprio,
-   * confuso ou duplicado) sem expulsá-lo do lobby, como o veto faz.
+   * O Comando Central remove um habitante do lobby (entrou na partida errada,
+   * saiu da sala). O aluno volta para a tela de entrada e pode reentrar.
    *
-   * Só no LOBBY: ao iniciar, `inscritos` é apagado de propósito — o vínculo
-   * aluno↔pseudônimo denunciaria quem é NPC (§11.3). Depois do Despertar, o
-   * professor nem sabe mais quem é quem, e é assim que tem que ser.
+   * Só no LOBBY: ao iniciar, `inscritos` é apagado de propósito, e depois do
+   * Despertar o professor não sabe mais quem é quem — é assim que tem que ser.
    */
-  async renomearInscrito(
-    professorId: string,
-    partidaId: string,
-    alunoId: string,
-    pseudonimo: string,
-  ): Promise<IsolateusMatchEntity> {
-    const partida = await this.obterDoProfessor(professorId, partidaId);
-    if (partida.status !== 'LOBBY') {
-      throw new BadRequestException('A investigação já começou.');
-    }
-    if (!partida.inscritos.some((i) => i.alunoId === alunoId)) {
-      throw new NotFoundException('Esse habitante não está no lobby.');
-    }
-
-    const nome = this.validarPseudonimo(partida, alunoId, pseudonimo);
-    const inscritos = partida.inscritos.map((i) =>
-      i.alunoId === alunoId ? { ...i, nome } : i,
-    );
-    partida.inscritos = inscritos;
-    await this.matches.commitPartida(partidaId, { inscritos });
-    return partida;
-  }
-
-  /**
-   * A auditoria do Comando Central: o professor veta um pseudônimo e o aluno
-   * volta para a tela de registro. Aprovar é implícito (entrar já vale) — um
-   * fluxo de aprovação um-a-um travaria a sala.
-   */
-  async vetarNome(
+  async removerInscrito(
     professorId: string,
     partidaId: string,
     alunoId: string,
@@ -277,22 +236,35 @@ export class IsolateusMatchService {
     // virtuais, para que a Ameaça tenha onde se camuflar (§2).
     const qtdNpcs =
       reais.length < ISOLATEUS.LIMIAR_NEVOA ? reais.length - 1 : 0;
-    const nomesNpc = sortearNomesNpc(
-      qtdNpcs,
-      reais.map((r) => r.nome),
-    );
+
+    // Um único sorteio para a vila inteira. Reais e NPCs tiram do mesmo saco, na
+    // mesma hora: se os codinomes viessem de bancos diferentes (ou em ordens
+    // diferentes), a origem do nome viraria pista de quem é virtual.
+    const codinomes = sortearCodinomes(reais.length + qtdNpcs);
 
     const habitantes: Habitante[] = [];
     const vinculos: VinculoHabitante[] = [];
 
-    for (const inscrito of reais) {
+    reais.forEach((inscrito, i) => {
       const id = randomUUID();
-      habitantes.push({ id, nome: inscrito.nome, vivo: true, preso: false });
+      habitantes.push({
+        id,
+        nome: codinomes[i],
+        vivo: true,
+        preso: false,
+        setorId: '',
+      });
       vinculos.push({ habitanteId: id, alunoId: inscrito.alunoId });
-    }
-    for (const nome of nomesNpc) {
+    });
+    for (let i = 0; i < qtdNpcs; i++) {
       const id = randomUUID();
-      habitantes.push({ id, nome, vivo: true, preso: false });
+      habitantes.push({
+        id,
+        nome: codinomes[reais.length + i],
+        vivo: true,
+        preso: false,
+        setorId: '',
+      });
       vinculos.push({ habitanteId: id }); // sem alunoId = NPC
     }
 
@@ -302,10 +274,13 @@ export class IsolateusMatchService {
     const alienAlunoId = embaralhar(reais)[0].alunoId;
 
     const dados: Partial<IsolateusMatchEntity> = {
-      status: 'TURNO_AMEACA',
-      habitantes: embaralhar(habitantes),
+      status: 'DESLOCAMENTO',
+      habitantes: this.distribuirPeloMapa(embaralhar(habitantes)),
       rodada: 0,
-      faseIniciadaEm: null,
+      // A primeira noite já nasce cronometrada: a janela de deslocamento
+      // precisa de base de relógio desde o Despertar.
+      faseIniciadaEm: new Date().toISOString(),
+      movimentosRecebidos: 0,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
     };
     Object.assign(partida, dados);
@@ -316,5 +291,20 @@ export class IsolateusMatchService {
       pontos: {},
     });
     return partida;
+  }
+
+  /**
+   * Espalha a vila pelos 6 setores em round-robin sobre a lista **já
+   * embaralhada**: com 7 habitantes, um setor fica com 2 e cinco com 1.
+   *
+   * A distribuição é cega quanto a real × NPC de propósito. Se ela olhasse, a
+   * proporção de habitantes reais por setor viraria pista — e um aluno que
+   * contasse quantos há no setor dele já saberia algo sobre a Névoa de Guerra.
+   */
+  private distribuirPeloMapa(habitantes: Habitante[]): Habitante[] {
+    return habitantes.map((h, i) => ({
+      ...h,
+      setorId: SETOR_IDS[i % SETOR_IDS.length],
+    }));
   }
 }

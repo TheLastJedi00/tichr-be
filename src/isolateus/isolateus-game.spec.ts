@@ -24,18 +24,21 @@ const QUESTOES = Array.from({ length: 3 }, (_, i) => ({
  * Monta uma vila: `reais` habitantes reais (o 1º é o Alien) + `npcs` virtuais.
  * O repositório é em memória e separa camada pública de cofre, como o real.
  */
-function cenario(opts: { reais?: number; npcs?: number; rodada?: number } = {}) {
+function cenario(opts: { reais?: number; npcs?: number; rodada?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
+  // A vila inteira num setor so: mantem todos ao alcance da Ameaca, para que
+  // estes testes exercitem o motor e nao a geografia (que tem specs proprias).
+  const setor = opts.setor ?? 'seguranca';
 
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];
   for (let i = 1; i <= nReais; i++) {
-    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `h${i}`, alunoId: `a${i}` });
   }
   for (let i = 1; i <= nNpcs; i++) {
-    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false });
+    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false, setorId: setor });
     vinculos.push({ habitanteId: `n${i}` });
   }
 
@@ -51,6 +54,8 @@ function cenario(opts: { reais?: number; npcs?: number; rodada?: number } = {}) 
     setores: SETORES.map((s) => ({ ...s, intacto: true })),
     habitantes,
     rodada: opts.rodada ?? 0,
+    questaoIndex: 0,
+    reparoSetorId: null,
     totalRodadas: QUESTOES.length,
     duracaoSegundos: 60,
     faseIniciadaEm: new Date().toISOString(),
@@ -74,7 +79,7 @@ function cenario(opts: { reais?: number; npcs?: number; rodada?: number } = {}) 
     partidaId: 'p1',
     alienAlunoId: 'a1', // o primeiro real é sempre a Ameaça nos testes
     vinculos,
-    acaoRodada: { tipo: 'SABOTAR', alvoId: 'medico' },
+    acaoRodada: { tipo: 'ABDUZIR', alvoId: 'h3' },
     pontos: {},
   });
 
@@ -123,36 +128,120 @@ async function todosRespondem(
 }
 
 describe('Isolateus — o Ciclo de Invasão', () => {
-  it('a vila acerta: a defesa resiste, nada é danificado', async () => {
+  it('a turma acerta: a abdução é repelida e ninguém é levado', async () => {
     const { service, partida } = cenario({ reais: 4 });
     await todosRespondem(service, 4, 1); // 'b' = correta
 
     expect(partida.status).toBe('RESULTADO_RODADA');
     expect(partida.resumoRodada?.defendida).toBe(true);
+    expect(partida.resumoRodada?.texto).toContain('repelida');
+    expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(true);
     expect(partida.esperanca).toBe(100);
-    expect(partida.setoresIntactos).toBe(6);
     expect(partida.corretaIndex).toBe(1); // a correta só aparece agora
   });
 
-  it('a vila erra: o setor sabotado cai e a Esperança decai', async () => {
+  it('a turma erra: a vítima é levada e a Esperança decai 10', async () => {
     const { service, partida, segredo } = cenario({ reais: 4 });
     await todosRespondem(service, 4, 3); // todos na alternativa errada
 
     expect(partida.resumoRodada?.defendida).toBe(false);
-    expect(partida.setores.find((s) => s.id === 'medico')!.intacto).toBe(false);
-    expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
-    // Sabotagem validada: o Alien pontua como se tivesse acertado a questão.
+    expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(false);
+    expect(partida.resumoRodada?.texto).toContain('foi abduzido');
+    expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_ABDUCAO);
+    // A Ameaça pontua pelo erro da turma — nunca pela sabotagem, que é automática.
     expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);
   });
 
-  it('a vila erra e a Ameaça abduz: o morador some e a Esperança decai 10', async () => {
-    const { service, partida, segredo } = cenario({ reais: 4 });
-    segredo.acaoRodada = { tipo: 'ABDUZIR', alvoId: 'h3' };
-    await todosRespondem(service, 4, 0);
+  it('abdução às cegas em setor vazio dá o MESMO texto de repelida', async () => {
+    // Se o texto fosse outro, a vila saberia que a Ameaça atirou de longe e
+    // errou — e, por eliminação, onde ela NÃO está.
 
-    expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(false);
-    expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_ABDUCAO);
-    expect(partida.setoresIntactos).toBe(6);
+    // (a) defesa bem-sucedida: a turma acerta e a abdução é repelida.
+    const repelida = cenario({ reais: 4 });
+    await todosRespondem(repelida.service, 4, 1);
+
+    // (b) tiro às cegas num setor sem ninguém, com a turma errando.
+    const errou = cenario({ reais: 4 });
+    errou.partida.habitantes.forEach((h) => (h.setorId = 'seguranca'));
+    errou.segredo.acaoRodada = { tipo: 'ABDUZIR', setorId: 'abastecimento' };
+    await todosRespondem(errou.service, 4, 3);
+
+    expect(errou.partida.resumoRodada!.texto).toBe(
+      repelida.partida.resumoRodada!.texto,
+    );
+    // Ninguém foi levado nos dois casos — e a Esperança não caiu.
+    expect(errou.partida.habitantes.every((h) => h.vivo)).toBe(true);
+    expect(errou.partida.esperanca).toBe(100);
+  });
+
+  it('abdução às cegas sorteia a vítima entre quem está no setor apostado', async () => {
+    const { service, partida, segredo } = cenario({ reais: 4 });
+    partida.habitantes.forEach((h) => (h.setorId = 'seguranca'));
+    partida.habitantes.find((h) => h.id === 'h4')!.setorId = 'abastecimento';
+    segredo.acaoRodada = { tipo: 'ABDUZIR', setorId: 'abastecimento' };
+
+    await todosRespondem(service, 4, 3); // a turma erra
+
+    // Só havia um habitante lá: é ele quem some.
+    expect(partida.habitantes.find((h) => h.id === 'h4')!.vivo).toBe(false);
+    expect(partida.resumoRodada?.texto).toContain('Abastecimento');
+  });
+
+  it('a reconstrução: acertar reergue o setor e devolve a Esperança', async () => {
+    const { service, partida, segredo } = cenario({ reais: 4 });
+    segredo.acaoRodada = null; // noite só de reparo
+    partida.setores.find((s) => s.id === 'energia')!.intacto = false;
+    partida.esperanca = 100 - ISOLATEUS.DANO_SABOTAGEM;
+    partida.reparoSetorId = 'energia';
+
+    await todosRespondem(service, 4, 1);
+
+    expect(partida.setores.find((s) => s.id === 'energia')!.intacto).toBe(true);
+    expect(partida.esperanca).toBe(100); // devolve exatamente o que a sabotagem tirou
+    expect(partida.resumoRodada?.texto).toContain('reconstruído');
+    expect(partida.reparoSetorId).toBeNull();
+  });
+
+  it('a reconstrução: errar deixa o setor em ruínas e pontua a Ameaça', async () => {
+    const { service, partida, segredo } = cenario({ reais: 4 });
+    segredo.acaoRodada = null;
+    partida.setores.find((s) => s.id === 'energia')!.intacto = false;
+    partida.esperanca = 85;
+    partida.reparoSetorId = 'energia';
+
+    await todosRespondem(service, 4, 3);
+
+    expect(partida.setores.find((s) => s.id === 'energia')!.intacto).toBe(false);
+    expect(partida.esperanca).toBe(85); // fracassar nao custa Esperanca extra
+    expect(partida.resumoRodada?.texto).toContain('fracassou');
+    expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);
+  });
+
+  it('abdução e reparo na mesma noite: UMA questão resolve os dois', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.setores.find((s) => s.id === 'energia')!.intacto = false;
+    partida.esperanca = 100 - ISOLATEUS.DANO_SABOTAGEM;
+    partida.reparoSetorId = 'energia';
+
+    await todosRespondem(service, 4, 1);
+
+    // Um acerto so: a vitima e salva E o setor volta de pe.
+    expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(true);
+    expect(partida.setores.find((s) => s.id === 'energia')!.intacto).toBe(true);
+    expect(partida.esperanca).toBe(100);
+    // E uma so questao foi consumida.
+    expect(partida.questaoIndex).toBe(1);
+  });
+
+  it('a Esperança restaurada nunca passa de 100', async () => {
+    const { service, partida, segredo } = cenario({ reais: 4 });
+    segredo.acaoRodada = null;
+    partida.setores.find((s) => s.id === 'energia')!.intacto = false;
+    partida.esperanca = 95;
+    partida.reparoSetorId = 'energia';
+
+    await todosRespondem(service, 4, 1);
+    expect(partida.esperanca).toBe(ISOLATEUS.ESPERANCA_INICIAL);
   });
 
   it('quem acerta pontua com bônus de rapidez; quem erra não pontua', async () => {
@@ -243,8 +332,11 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
   async function encerrarPorEsgotamento(
     ajustar: (p: IsolateusMatchEntity) => void,
   ) {
-    const c = cenario({ reais: 4, rodada: QUESTOES.length - 1 });
+    const c = cenario({ reais: 4 });
     c.partida.status = 'RESULTADO_RODADA';
+    // O fim por esgotamento agora olha o BANCO DE QUESTOES, nao a contagem de
+    // noites: as questoes so sao consumidas quando ha disputa.
+    c.partida.questaoIndex = QUESTOES.length;
     ajustar(c.partida);
     await c.service.proxima('prof', 'p1');
     return c;
@@ -295,8 +387,8 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
 
   it('Esperança zerada encerra na hora com vitória da Ameaça', async () => {
     const { service, partida } = cenario({ reais: 4 });
-    partida.esperanca = ISOLATEUS.DANO_SABOTAGEM; // um erro basta para zerar
-    await todosRespondem(service, 4, 3); // a vila erra
+    partida.esperanca = ISOLATEUS.DANO_ABDUCAO; // uma abducao basta para zerar
+    await todosRespondem(service, 4, 3); // a turma erra e a vitima e levada
 
     expect(partida.esperanca).toBe(0);
     expect(partida.status).toBe('ENCERRADO');
@@ -305,11 +397,9 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
   });
 
   it('no encerramento o placar é publicado e o XP creditado com motivo ISOLATEUS', async () => {
-    const { service, partida, segredo, creditar } = cenario({
-      reais: 4,
-      rodada: QUESTOES.length - 1,
-    });
+    const { service, partida, segredo, creditar } = cenario({ reais: 4 });
     partida.status = 'RESULTADO_RODADA';
+    partida.questaoIndex = QUESTOES.length; // banco esgotado
     segredo.pontos = { a2: 1000 };
     await service.proxima('prof', 'p1'); // esgota → Vila vence (tudo intacto)
 
