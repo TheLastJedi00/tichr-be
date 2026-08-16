@@ -7,6 +7,7 @@ import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { IsolateusMatchService } from './isolateus-match.service';
+import { NOMES_CIDADES } from './isolateus.data';
 
 /** Repositório em memória: guarda a camada pública e o cofre separados. */
 function repoFake() {
@@ -69,75 +70,68 @@ function make(opts: { questoes?: number } = {}) {
 /** Entra com N alunos no lobby. */
 async function povoar(service: IsolateusMatchService, id: string, n: number) {
   for (let i = 1; i <= n; i++) {
-    await service.entrar(`a${i}`, 't1', id, `Habitante ${i}`);
+    await service.entrar(`a${i}`, 't1', id);
   }
 }
 
 describe('Isolateus — lobby e Despertar', () => {
-  it('recusa pseudônimo já adotado por outro habitante', async () => {
-    const { service } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await service.entrar('a1', 't1', p.id, 'Corvo');
-    await expect(
-      service.entrar('a2', 't1', p.id, ' corvo '),
-    ).rejects.toMatchObject({ response: { code: 'NOME_EM_USO' } });
-  });
-
-  it('reentrar troca o próprio pseudônimo sem duplicar o inscrito', async () => {
-    const { service, partidas } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await service.entrar('a1', 't1', p.id, 'Corvo');
-    await service.entrar('a1', 't1', p.id, 'Ferreiro');
-    expect(partidas.get(p.id)!.inscritos).toEqual([
-      { alunoId: 'a1', nome: 'Ferreiro' },
-    ]);
-  });
-
-  it('o veto do professor devolve o aluno para a tela de registro', async () => {
+  it('o lobby guarda só o alunoId — nome nenhum antes do Despertar', async () => {
     const { service, partidas } = make();
     const p = await service.criar('prof', 'j1', 't1');
     await povoar(service, p.id, 2);
-    await service.vetarNome('prof', p.id, 'a1');
+    // Se houvesse nome aqui, o telão o exibiria e a turma separaria reais de NPCs.
+    expect(partidas.get(p.id)!.inscritos).toEqual([
+      { alunoId: 'a1' },
+      { alunoId: 'a2' },
+    ]);
+  });
+
+  it('reentrar é idempotente e não duplica o inscrito', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await service.entrar('a1', 't1', p.id);
+    await service.entrar('a1', 't1', p.id);
+    expect(partidas.get(p.id)!.inscritos).toEqual([{ alunoId: 'a1' }]);
+  });
+
+  it('o professor remove um habitante do lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 2);
+    await service.removerInscrito('prof', p.id, 'a1');
     expect(partidas.get(p.id)!.inscritos.map((i) => i.alunoId)).toEqual(['a2']);
   });
 
-  it('o professor troca o apelido do aluno sem tirá-lo do lobby', async () => {
-    const { service, partidas } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await povoar(service, p.id, 2);
-    await service.renomearInscrito('prof', p.id, 'a1', '  Corvo  ');
-    expect(partidas.get(p.id)!.inscritos).toEqual([
-      { alunoId: 'a1', nome: 'Corvo' }, // aparado, e o aluno continua inscrito
-      { alunoId: 'a2', nome: 'Habitante 2' },
-    ]);
-  });
-
-  it('renomear recusa nome já adotado por outro habitante', async () => {
-    const { service } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await povoar(service, p.id, 2);
-    await expect(
-      service.renomearInscrito('prof', p.id, 'a1', 'habitante 2'),
-    ).rejects.toMatchObject({ response: { code: 'NOME_EM_USO' } });
-  });
-
-  it('renomear é de quem é dono da partida, e só no lobby', async () => {
+  it('remover é de quem é dono da partida, e só no lobby', async () => {
     const { service } = make();
     const p = await service.criar('prof', 'j1', 't1');
     await povoar(service, p.id, 4);
 
     await expect(
-      service.renomearInscrito('outro-prof', p.id, 'a1', 'Corvo'),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    await expect(
-      service.renomearInscrito('prof', p.id, 'fantasma', 'Corvo'),
+      service.removerInscrito('outro-prof', p.id, 'a1'),
     ).rejects.toBeInstanceOf(NotFoundException);
 
-    // Depois do Despertar o vínculo aluno↔pseudônimo é apagado: não há o que renomear.
+    // Depois do Despertar o vínculo aluno↔habitante sai da camada pública.
     await service.iniciar('prof', p.id);
     await expect(
-      service.renomearInscrito('prof', p.id, 'a1', 'Corvo'),
+      service.removerInscrito('prof', p.id, 'a1'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('o Despertar sorteia um codinome de cidade para cada habitante', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+
+    const { habitantes } = partidas.get(p.id)!;
+    // 4 reais + (4-1) NPCs da Névoa de Guerra.
+    expect(habitantes).toHaveLength(7);
+    for (const h of habitantes) {
+      expect(NOMES_CIDADES).toContain(h.nome);
+    }
+    // Nome repetido tornaria o voto da Quarentena ambíguo.
+    expect(new Set(habitantes.map((h) => h.nome)).size).toBe(7);
   });
 
   it('não inicia com menos de 4 investigadores reais', async () => {

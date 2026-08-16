@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CriarPartidaIsolateusDto } from './dto/responder-isolateus.dto';
-import { RenomearIsolateusDto } from './dto/renomear-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
 import { IsolateusMatchService } from './isolateus-match.service';
 
@@ -27,25 +26,14 @@ export class IsolateusMatchController {
     return this.matches.obterDoProfessor(professorId, id);
   }
 
-  /** A auditoria dos pseudônimos: veta um nome e devolve o aluno ao registro. */
-  @Post('matches/:id/vetar/:alunoId')
-  vetar(
+  /** Remove um habitante do lobby (entrou na partida errada). Só no LOBBY. */
+  @Post('matches/:id/remover/:alunoId')
+  remover(
     @ProfessorId() professorId: string,
     @Param('id') id: string,
     @Param('alunoId') alunoId: string,
   ) {
-    return this.matches.vetarNome(professorId, id, alunoId);
-  }
-
-  /** Corrige o pseudônimo de um habitante sem tirá-lo do lobby (só no LOBBY). */
-  @Post('matches/:id/renomear/:alunoId')
-  renomear(
-    @ProfessorId() professorId: string,
-    @Param('id') id: string,
-    @Param('alunoId') alunoId: string,
-    @Body() dto: RenomearIsolateusDto,
-  ) {
-    return this.matches.renomearInscrito(professorId, id, alunoId, dto.pseudonimo);
+    return this.matches.removerInscrito(professorId, id, alunoId);
   }
 
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */

@@ -163,10 +163,18 @@ export class IsolateusMatchEntity {
   pulosRecebidos: number;
 
   /**
-   * Pseudônimos do lobby. **Apagado ao iniciar**: mantê-lo permitiria casar os
-   * nomes com a lista de habitantes e deduzir quem é NPC.
+   * Quem está no lobby. Carrega **só o `alunoId`** — o codinome de cidade é
+   * sorteado no Despertar, não aqui.
+   *
+   * Antes esta lista trazia o pseudônimo digitado, e o telão o exibia enquanto a
+   * sala enchia: a turma decorava os nomes reais e, quando os NPCs entravam,
+   * sabia por eliminação exatamente quem era virtual. Sem nome no lobby, não há
+   * o que decorar.
+   *
+   * **Apagado ao iniciar** de qualquer forma: a própria lista de `alunoId`
+   * casaria com os vínculos e denunciaria o tamanho real da vila.
    */
-  inscritos: Array<{ alunoId: string; nome: string }>;
+  inscritos: Array<{ alunoId: string }>;
 
   veredito: Veredito | null;
   rankingFinal: PlacarItem[];

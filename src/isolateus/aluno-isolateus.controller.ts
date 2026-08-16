@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
-import { EntrarIsolateusDto } from './dto/entrar-isolateus.dto';
 import {
   ForjarRumorDto,
   MensagemDto,
@@ -27,19 +26,13 @@ export class AlunoIsolateusController {
     return this.matches.partidaDaTurma(aluno.turmaId);
   }
 
-  /** O Registro: entra na vila sob um pseudônimo. */
+  /** O Registro: declara presença. O codinome vem no Despertar. */
   @Post(':id/entrar')
   entrar(
     @CurrentStudent() aluno: { alunoId: string; turmaId: string },
     @Param('id') id: string,
-    @Body() dto: EntrarIsolateusDto,
   ) {
-    return this.matches.entrar(
-      aluno.alunoId,
-      aluno.turmaId,
-      id,
-      dto.pseudonimo,
-    );
+    return this.matches.entrar(aluno.alunoId, aluno.turmaId, id);
   }
 
   /**
