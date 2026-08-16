@@ -1,43 +1,96 @@
+import { embaralhar } from '../common/shuffle.util';
+
 /**
- * Bancos estáticos do Tichr Isolateus: os 6 setores da vila, os pseudônimos dos
- * Habitantes Virtuais (NPCs) e as frases genéricas que alimentam o Chat de
- * Rumores e o debate da Quarentena.
+ * Bancos estáticos do Tichr Isolateus: os 6 setores da vila, os codinomes de
+ * cidade distribuídos aos habitantes e as frases genéricas que alimentam o Chat
+ * de Rumores e o debate da Quarentena.
  *
  * As frases são estáticas de propósito: chamar a IA a cada rodada multiplicaria
  * custo e latência e furaria o rate limit de 1×/dia. A IA fica exclusiva da
  * geração das questões (o conteúdo pedagógico, que é o que vale XP).
  */
 
-/** Os 6 setores vitais da vila (§8: o total de 6 é a base do critério de vitória). */
-export const SETORES: Array<{ id: string; nome: string }> = [
-  { id: 'seguranca', nome: 'Setor de Segurança' },
-  { id: 'comercio', nome: 'Setor de Comércio' },
-  { id: 'medico', nome: 'Setor Médico' },
-  { id: 'energia', nome: 'Setor de Energia' },
-  { id: 'comunicacao', nome: 'Setor de Comunicação' },
-  { id: 'abastecimento', nome: 'Setor de Abastecimento' },
+/**
+ * Os 6 setores vitais da vila e as estradas que os ligam (§8: o total de 6 é a
+ * base do critério de vitória).
+ *
+ * A malha mora aqui, e não no documento da partida: ela é imutável, e trafegá-la
+ * a cada snapshot seria pagar leitura por um dado que nunca muda.
+ *
+ * Topologia (Protótipo 1 do Figma):
+ *
+ *   Segurança ── Energia ── Comunicação ── Abastecimento
+ *       │                        │
+ *    Comércio ──────────────── Saúde
+ *
+ * Comunicação é o coração (3 saídas) e é de lá que se convoca a Quarentena.
+ * Abastecimento é beco sem saída (1 saída): quem entra fica sem rota alternativa.
+ */
+export const SETORES: Array<{ id: string; nome: string; vizinhos: string[] }> = [
+  { id: 'seguranca', nome: 'Setor de Segurança', vizinhos: ['energia', 'comercio'] },
+  { id: 'comercio', nome: 'Setor de Comércio', vizinhos: ['seguranca', 'saude'] },
+  { id: 'saude', nome: 'Setor de Saúde', vizinhos: ['comercio', 'comunicacao'] },
+  { id: 'energia', nome: 'Setor de Energia', vizinhos: ['seguranca', 'comunicacao'] },
+  {
+    id: 'comunicacao',
+    nome: 'Setor de Comunicação',
+    vizinhos: ['energia', 'saude', 'abastecimento'],
+  },
+  { id: 'abastecimento', nome: 'Setor de Abastecimento', vizinhos: ['comunicacao'] },
 ];
 
-/** Pseudônimos dos Habitantes Virtuais — a Névoa de Guerra que camufla a Ameaça. */
-export const NOMES_NPC: string[] = [
-  'Corvo Pálido',
-  'Velha Ingrid',
-  'Ferreiro Kolt',
-  'Menina do Farol',
-  'Caçador Ruvik',
-  'Irmã Neve',
-  'Lenhador Bran',
-  'Vigia Torvald',
-  'Curandeira Ysolde',
-  'Pescador Halvar',
-  'Andarilho Sem Nome',
-  'Guarda Astrid',
-  'Sineiro Egil',
-  'Tecelã Runa',
-  'Ermitão da Encosta',
-  'Órfão da Neve',
-  'Barqueiro Sten',
-  'Boticária Freya',
+/** O setor de onde a Quarentena pode ser convocada (§6). */
+export const SETOR_COMUNICACAO = 'comunicacao';
+
+/** Os ids dos setores, na ordem canônica do mapa. */
+export const SETOR_IDS: string[] = SETORES.map((s) => s.id);
+
+/** `true` se dá para ir de `origem` a `destino` num salto. */
+export function saoVizinhos(origem: string, destino: string): boolean {
+  return !!SETORES.find((s) => s.id === origem)?.vizinhos.includes(destino);
+}
+
+/** Os vizinhos de um setor (vazio se o id não existe). */
+export function vizinhosDe(setorId: string): string[] {
+  return SETORES.find((s) => s.id === setorId)?.vizinhos ?? [];
+}
+
+/**
+ * Os codinomes da vila: 99 cidades conhecidas do mundo.
+ *
+ * O aluno não escolhe mais o próprio nome — o Comando Central distribui um
+ * codinome a **cada** habitante, real ou virtual. É o que mantém a Névoa de
+ * Guerra intacta: se o aluno digitasse, a turma reconheceria o estilo de quem
+ * escreveu e separaria os reais dos NPCs sem deduzir nada.
+ */
+export const NOMES_CIDADES: string[] = [
+  // Ásia Oriental
+  'Tóquio', 'Quioto', 'Osaka', 'Seul', 'Pequim', 'Xangai',
+  'Hong Kong', 'Taipé', 'Bangkok', 'Hanói', 'Jacarta',
+  // Sul e Sudeste Asiático
+  'Manila', 'Singapura', 'Kuala Lumpur', 'Nova Délhi', 'Mumbai', 'Calcutá',
+  'Colombo', 'Katmandu', 'Dacca', 'Karachi', 'Cabul',
+  // Oriente Médio
+  'Teerã', 'Bagdá', 'Damasco', 'Beirute', 'Jerusalém', 'Amã',
+  'Dubai', 'Doha', 'Riade', 'Istambul', 'Ancara',
+  // Sul da Europa
+  'Atenas', 'Roma', 'Milão', 'Veneza', 'Nápoles', 'Madri',
+  'Barcelona', 'Lisboa', 'Porto', 'Paris', 'Marselha',
+  // Europa Central e Ocidental
+  'Bruxelas', 'Amsterdã', 'Berlim', 'Munique', 'Hamburgo', 'Viena',
+  'Zurique', 'Genebra', 'Praga', 'Budapeste', 'Varsóvia',
+  // Leste Europeu e Bálcãs
+  'Cracóvia', 'Bucareste', 'Sófia', 'Belgrado', 'Kiev', 'Moscou',
+  'São Petersburgo', 'Helsinque', 'Estocolmo', 'Oslo', 'Copenhague',
+  // Norte, Ilhas Britânicas e Norte da África
+  'Reykjavík', 'Dublin', 'Londres', 'Edimburgo', 'Cairo', 'Alexandria',
+  'Casablanca', 'Marrakech', 'Túnis', 'Argel', 'Trípoli',
+  // África subsaariana e Oceania
+  'Lagos', 'Acra', 'Nairóbi', 'Adis Abeba', 'Dacar', 'Joanesburgo',
+  'Cidade do Cabo', 'Sydney', 'Melbourne', 'Auckland', 'Wellington',
+  // Américas
+  'Nova York', 'Chicago', 'Los Angeles', 'São Francisco', 'Toronto', 'Vancouver',
+  'Cidade do México', 'Havana', 'Bogotá', 'Lima', 'Buenos Aires',
 ];
 
 /** Ruído de fundo do Chat de Rumores durante a defesa de um setor. */
@@ -72,15 +125,19 @@ export const FRASES_DEBATE_NPC: string[] = [
   'Alguém aqui sabia a resposta e escondeu.',
 ];
 
-/** Sorteia `n` nomes de NPC sem repetir (e sem colidir com os nomes já usados). */
-export function sortearNomesNpc(n: number, usados: string[]): string[] {
-  const tomados = new Set(usados.map((u) => u.trim().toLowerCase()));
-  const livres = NOMES_NPC.filter((nome) => !tomados.has(nome.toLowerCase()));
-  const escolhidos: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const nome = livres[i % livres.length];
-    // Se a vila for maior que o banco, sufixa para manter o nome único.
-    escolhidos.push(i < livres.length ? nome : `${nome} (o Jovem)`);
+/**
+ * Sorteia `n` codinomes distintos para a vila.
+ *
+ * Falha alto se a vila passar do banco em vez de repetir ou sufixar nome: a
+ * votação da Quarentena é feita **por nome na tela**, e dois habitantes
+ * homônimos tornariam o voto ambíguo — melhor quebrar na criação da partida,
+ * onde o professor vê o erro, do que no meio da apuração.
+ */
+export function sortearCodinomes(n: number): string[] {
+  if (n > NOMES_CIDADES.length) {
+    throw new Error(
+      `A vila não comporta ${n} habitantes: o banco tem ${NOMES_CIDADES.length} codinomes.`,
+    );
   }
-  return escolhidos;
+  return embaralhar(NOMES_CIDADES).slice(0, n);
 }
