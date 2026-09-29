@@ -223,9 +223,10 @@ export class WorGameService {
   }
 
   /**
-   * Risco Heroico / Invasão: um membro tenta a palavra inteira. Acerto → Cura
-   * Massiva (ou Usurpação se Horda) + encerra a onda. Erro → Dano Crítico no
-   * PRÓPRIO castelo; a ação conta para a rodada.
+   * Risco Heroico / Invasão: um membro tenta a palavra inteira. Acerto → o
+   * efeito escolhido por ele no envio (Recuperar HP ou Catapulta num rival;
+   * Usurpação se Horda) + encerra a onda. Erro → Dano Crítico no PRÓPRIO
+   * castelo; a ação conta para a rodada e o efeito escolhido é ignorado.
    */
   async arriscar(
     alunoId: string,
@@ -240,7 +241,7 @@ export class WorGameService {
     this.assertNaoJogou(match, alunoId);
     // Antes de conferir a palavra: um envio malformado não pode queimar a
     // tentativa — nem revelar se o palpite estava certo.
-    this.alvoDaCatapulta(team, teams, opcoes);
+    const catapultaEm = this.alvoDaCatapulta(team, teams, opcoes);
 
     const { palavra } = await this.palavraDaOnda(match);
     const acertou =
@@ -260,6 +261,22 @@ export class WorGameService {
           lider
             ? `A Horda de ${aluno} acertou a palavra e ROUBOU o castelo da ${lider.nome}!`
             : `A Horda de ${aluno} acertou a palavra e reergueu o próprio castelo!`,
+        );
+      } else if (catapultaEm) {
+        // O dano que vira ponto é o que de fato saiu do castelo (um alvo com
+        // 200 de HP só perde 200).
+        const antes = catapultaEm.hp;
+        const caiu = catapultaEm.aplicarDano(WOR.DANO_CATAPULTA);
+        const dano = antes - catapultaEm.hp;
+        patches[catapultaEm.id] = {
+          hp: catapultaEm.hp,
+          isHorde: catapultaEm.isHorde,
+        };
+        team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
+        card = this.montarCard(
+          match,
+          'CATAPULTA',
+          `${aluno} acertou a palavra e disparou a Catapulta! O castelo da ${catapultaEm.nome} sofreu ${dano} de dano${caiu ? ' e caiu' : ''}!`,
         );
       } else {
         team.curar(WOR.CURA_MASSIVA);
