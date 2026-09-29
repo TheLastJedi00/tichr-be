@@ -4,6 +4,11 @@ export const ISOLATEUS = {
   ESPERANCA_INICIAL: 100,
   /** Um setor danificado (a vila errou a defesa). 6 setores × 15 = 90. */
   DANO_SABOTAGEM: 15,
+  /**
+   * Cada Contágio drena a Esperança — sem card, sem Diário. Proposto na spec
+   * 024: abaixo da sabotagem (15) e do inocente preso (20).
+   */
+  DANO_CONTAGIO: 10,
   /** Um morador abduzido na calada da noite. */
   DANO_ABDUCAO: 10,
   /** A vila trancou um inocente na Quarentena ("dano severo"). */

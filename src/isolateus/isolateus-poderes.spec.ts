@@ -319,3 +319,87 @@ describe('Isolateus — Controle Mental', () => {
     expect(ctx.partida.status).toBe('RESULTADO_RODADA');
   });
 });
+
+describe('Isolateus — Contágio', () => {
+  /** Uma Ameaça só (a1), contágio escolhido, noite pronta para fechar. */
+  function comContagio(opts: Parameters<typeof vilaComAmeacas>[0] = {}) {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'], reais: 5, npcs: 2, ...opts });
+    ctx.segredo.contagioPendente = true;
+    return ctx;
+  }
+  async function fecharNoite(ctx: ReturnType<typeof comContagio>) {
+    for (const a of ['a2', 'a3', 'a4', 'a5']) {
+      await ctx.service.confirmarPosicao(a, 'p1');
+    }
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+  }
+
+  it('ao amanhecer, um aldeão REAL vira Ameaça — nunca um NPC', async () => {
+    const ctx = comContagio();
+    await fecharNoite(ctx);
+
+    const novas = ctx.segredo.ameacasIds().filter((a) => a !== 'a1');
+    expect(novas).toHaveLength(1);
+    expect(['a2', 'a3', 'a4', 'a5']).toContain(novas[0]);
+    expect(ctx.segredo.contagioPendente).toBe(false);
+    // O contagiado descobre pelo painel (polling) — e vê a aliada.
+    const painel = await ctx.service.painel(novas[0], 'p1');
+    expect(painel.papel).toBe('AMEACA');
+    expect(painel.aliados).toEqual(['Real 1']);
+  });
+
+  it('a Esperança cai 10, sem card e sem Diário, e nada público denuncia o contágio', async () => {
+    const ctx = comContagio();
+    await fecharNoite(ctx);
+
+    expect(ctx.partida.esperanca).toBe(100 - ISOLATEUS.DANO_CONTAGIO);
+    // O único evento da noite calma é o de sempre.
+    expect(ctx.partida.acontecimentos.map((a) => a.tipo)).toEqual(['ESPERA']);
+    expect(JSON.stringify(ctx.partida)).not.toMatch(/cont[aá]gi|ameacas/i);
+  });
+
+  it('com sabotagem na mesma noite, os danos chegam juntos', async () => {
+    const ctx = comContagio({ posicoes: { h1: 'energia' } });
+    for (const a of ['a2', 'a3', 'a4', 'a5']) {
+      await ctx.service.confirmarPosicao(a, 'p1');
+    }
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    expect(ctx.partida.esperanca).toBe(
+      100 - ISOLATEUS.DANO_SABOTAGEM - ISOLATEUS.DANO_CONTAGIO,
+    );
+  });
+
+  it('Esperança zerada pelo contágio entrega a partida à Ameaça', async () => {
+    const ctx = comContagio();
+    ctx.partida.esperanca = ISOLATEUS.DANO_CONTAGIO;
+    await fecharNoite(ctx);
+    expect(ctx.partida.status).toBe('ENCERRADO');
+    expect(ctx.partida.veredito?.lado).toBe('AMEACA');
+  });
+
+  it('original presa antes do amanhecer: o contágio não acontece', async () => {
+    const ctx = comContagio();
+    // Presa no dia anterior, com a noite ainda por fechar (pelo relógio).
+    ctx.partida.habitantes.find((h) => h.id === 'h1')!.preso = true;
+    await ctx.service.pularFase('prof', 'p1');
+    expect(ctx.segredo.ameacasIds()).toEqual(['a1']);
+    expect(ctx.segredo.contagioPendente).toBe(false);
+    expect(ctx.partida.esperanca).toBe(100);
+  });
+
+  it('na noite seguinte, a noite só fecha cedo com a jogada do contagiado também', async () => {
+    const ctx = comContagio();
+    await fecharNoite(ctx);
+    const contagiado = ctx.segredo.ameacasIds().find((a) => a !== 'a1')!;
+    await ctx.service.pularFase('prof', 'p1'); // janela de decisão → noite 2
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+
+    const aldeoes = ['a2', 'a3', 'a4', 'a5'].filter((a) => a !== contagiado);
+    for (const a of aldeoes) await ctx.service.confirmarPosicao(a, 'p1');
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    await ctx.service.confirmarPosicao(contagiado, 'p1');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    await ctx.service.acaoAmeaca(contagiado, 'p1', { tipo: 'AGUARDAR' });
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+  });
+});

@@ -472,19 +472,26 @@ export class IsolateusGameService {
     // A sabotagem NÃO é contestada: ela acerta e o setor cai na hora. O que a
     // vila pode fazer é reconstruir depois, marchando até lá (§5.2).
     const caidos = this.aplicarSabotagens(partida, segredo);
-    if (caidos.length) {
-      for (const setor of caidos) {
-        this.registrar(
-          partida,
-          'SABOTAGEM',
-          `O ${setor.nome} foi sabotado e está em ruínas.`,
-        );
-      }
-      await this.matches.commitPartida(partida.id, {
-        setores: partida.setores,
-        esperanca: partida.esperanca,
-        acontecimentos: partida.acontecimentos,
-      });
+    for (const setor of caidos) {
+      this.registrar(
+        partida,
+        'SABOTAGEM',
+        `O ${setor.nome} foi sabotado e está em ruínas.`,
+      );
+    }
+    // O Contágio escolhido se materializa aqui, junto dos demais danos da
+    // noite — sem card e sem Diário: a vila só vê a barra cair.
+    const contagio = this.aplicarContagio(partida, segredo);
+    if (caidos.length || contagio) {
+      await this.matches.commitPartida(
+        partida.id,
+        {
+          setores: partida.setores,
+          esperanca: partida.esperanca,
+          acontecimentos: partida.acontecimentos,
+        },
+        contagio ?? {},
+      );
       if (partida.esperanca <= 0) {
         return this.encerrar(partida, segredo, {
           lado: 'AMEACA',
@@ -507,6 +514,39 @@ export class IsolateusGameService {
       return this.abrirJanelaDeDecisao(partida, resumo);
     }
     return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
+  }
+
+  /**
+   * O Contágio escolhido pela Ameaça original: um aldeão real livre, sorteado,
+   * vira Ameaça, e a Esperança cai `DANO_CONTAGIO`. Devolve o que mudou no
+   * cofre, ou `null` se não havia contágio a aplicar.
+   *
+   * Se a original saiu da vila (presa) antes do amanhecer, o contágio morre com
+   * ela — só ela contagia.
+   */
+  private aplicarContagio(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Partial<IsolateusSegredoEntity> | null {
+    if (!segredo.contagioPendente) return null;
+    const originalLivre = this.ameacasLivres(partida, segredo).includes(
+      segredo.alienAlunoId,
+    );
+    const alvo = originalLivre
+      ? embaralhar(this.alvosDeContagio(partida, segredo))[0]
+      : undefined;
+    const mudancas: Partial<IsolateusSegredoEntity> = {
+      contagioPendente: false,
+    };
+    if (alvo) {
+      mudancas.ameacas = [...segredo.ameacasIds(), alvo];
+      partida.esperanca = Math.max(
+        0,
+        partida.esperanca - ISOLATEUS.DANO_CONTAGIO,
+      );
+    }
+    Object.assign(segredo, mudancas);
+    return mudancas;
   }
 
   /**
