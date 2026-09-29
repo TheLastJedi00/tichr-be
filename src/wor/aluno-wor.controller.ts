@@ -51,6 +51,9 @@ export class AlunoWorController {
     @Param('matchId') matchId: string,
     @Body() dto: ArriscarDto,
   ) {
-    return this.game.arriscar(alunoId, matchId, dto.palavra);
+    return this.game.arriscar(alunoId, matchId, dto.palavra, {
+      efeito: dto.efeito,
+      alvoEquipeId: dto.alvoEquipeId,
+    });
   }
 }

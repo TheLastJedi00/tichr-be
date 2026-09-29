@@ -21,6 +21,7 @@ import {
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { PalavraWor } from './entities/wor-jogo.entity';
 import { XpService } from '../turma/xp.service';
+import { EfeitoRisco } from './dto/arriscar.dto';
 
 /** Ação de voto do membro ao chutar a letra: atacar um rival ou comprar dica. */
 export type VotoAcao = 'ATACAR' | 'DICA';
@@ -230,12 +231,16 @@ export class WorGameService {
     alunoId: string,
     matchId: string,
     palpite: string,
+    opcoes: { efeito?: EfeitoRisco; alvoEquipeId?: string } = {},
   ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     this.assertEmAndamento(match);
     const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     this.assertTurno(match, team);
     this.assertNaoJogou(match, alunoId);
+    // Antes de conferir a palavra: um envio malformado não pode queimar a
+    // tentativa — nem revelar se o palpite estava certo.
+    this.alvoDaCatapulta(team, teams, opcoes);
 
     const { palavra } = await this.palavraDaOnda(match);
     const acertou =
@@ -301,6 +306,30 @@ export class WorGameService {
     // resolver agora (este era o último membro), ela não emite um segundo card
     // por cima; o reveal continua chegando pelo `resumoRodada`.
     return this.encerrarOuAcumular(matchId, team, acoesRodada, true);
+  }
+
+  /**
+   * Valida o efeito escolhido para o Risco Heroico. Devolve o castelo alvo da
+   * Catapulta, ou `null` quando o efeito é Recuperar HP (o padrão). A Horda não
+   * escolhe — acertar, para ela, é sempre a Usurpação —, então o que ela mandar
+   * é ignorado.
+   */
+  private alvoDaCatapulta(
+    team: WorTeamEntity,
+    teams: WorTeamEntity[],
+    opcoes: { efeito?: EfeitoRisco; alvoEquipeId?: string },
+  ): WorTeamEntity | null {
+    if (team.isHorde || opcoes.efeito !== 'CATAPULTA') return null;
+    const alvo = teams.find((t) => t.id === opcoes.alvoEquipeId);
+    if (!alvo || alvo.id === team.id) {
+      throw new BadRequestException('Escolha um castelo rival para a Catapulta.');
+    }
+    if (alvo.isHorde || alvo.hp <= 0) {
+      throw new BadRequestException(
+        'Esse castelo já caiu. Escolha um castelo de pé para a Catapulta.',
+      );
+    }
+    return alvo;
   }
 
   /** Se todos os membros já jogaram, resolve a rodada; senão, só acumula. */
