@@ -1522,6 +1522,9 @@ export class IsolateusGameService {
       alerta: null,
       rumores: [],
       resumoRodada: null,
+      // O veredito é do dia em que a Quarentena aconteceu: sem limpar aqui, o
+      // card do inocente preso reaparecia na janela das noites seguintes.
+      vereditoQuarentena: null,
       // A noite é cronometrada: a janela de deslocamento precisa de base.
       faseIniciadaEm: new Date().toISOString(),
       movimentosRecebidos: 0,

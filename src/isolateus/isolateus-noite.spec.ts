@@ -422,6 +422,23 @@ describe('Isolateus — o amanhecer', () => {
     expect(segredo.acaoRodada).toBeNull();
     expect(partida.faseIniciadaEm).not.toBeNull();
   });
+
+  it('o veredito da Quarentena não atravessa a noite', async () => {
+    // Regressão: o card "Vocês aprisionaram um INOCENTE" seguia na janela de
+    // decisão das noites seguintes, até a próxima convocação.
+    const { service, partida } = noite({ reais: 4 });
+    partida.status = 'RESULTADO_RODADA';
+    partida.vereditoQuarentena = {
+      presoNome: 'Real 3',
+      eraAmeaca: false,
+      texto: 'Vocês aprisionaram um INOCENTE.',
+    };
+
+    await service.pularFase('prof', 'p1');
+
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.vereditoQuarentena).toBeNull();
+  });
 });
 
 describe('Isolateus — o relógio é de todos, não só do telão', () => {
