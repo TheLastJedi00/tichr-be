@@ -327,6 +327,14 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.habitantes.find((h) => h.id === 'h2')!.vivo).toBe(true);
   });
 
+  it('a questão abre SEM Chat de Rumores: ruído automático saía sempre sob nome de NPC', async () => {
+    const { service, partida } = noite({ reais: 4, npcs: 3 });
+    await todosConfirmam(service, 4);
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    expect(partida.rumores).toEqual([]);
+  });
+
   it('a Ameaça não joga duas vezes na mesma noite', async () => {
     const { service } = noite({ reais: 4 });
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });

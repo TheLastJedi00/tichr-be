@@ -128,16 +128,18 @@ export interface Setor {
 }
 
 /**
- * Uma mensagem do Chat de Rumores. `FORJADO` é o rumor do Alienígena — publicado
- * sob o nome de um NPC, exatamente como qualquer outro: o tipo existe para o
- * histórico do servidor, e o cliente não deve usá-lo para destacar nada além do
- * `SINAL` (que a spec quer visivelmente marcado).
+ * Uma mensagem do feed da questão. Hoje só o `SINAL` — a dica anônima de quem
+ * foi abduzido ou preso.
+ *
+ * O Chat de Rumores (ruído de NPC e o rumor forjado da Ameaça) saiu: seus
+ * autores eram sempre NPCs, e o `tipo: 'FORJADO'` era público — a Névoa de
+ * Guerra vazava pela própria tela. `RUMOR` fica só para ler partidas antigas.
  */
 export interface Rumor {
   id: string;
   autorNome: string;
   texto: string;
-  tipo: 'RUMOR' | 'FORJADO' | 'SINAL';
+  tipo: 'SINAL' | 'RUMOR';
 }
 
 /** Uma fala do debate da Quarentena. */

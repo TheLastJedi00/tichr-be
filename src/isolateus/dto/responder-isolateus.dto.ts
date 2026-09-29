@@ -6,14 +6,7 @@ export class ResponderIsolateusDto {
   alternativaIndex: number;
 }
 
-/** O Alienígena forja um argumento defendendo uma solução falsa (§4). */
-export class ForjarRumorDto {
-  @IsString()
-  @MaxLength(240)
-  texto: string;
-}
-
-/** Mensagem curta: rumor no chat da rodada, sinal de rádio ou fala do debate. */
+/** Mensagem curta: sinal de rádio ou fala do debate. */
 export class MensagemDto {
   @IsString()
   @MaxLength(240)

@@ -14,7 +14,6 @@ import {
   Habitante,
   ISOLATEUS,
   IsolateusMatchEntity,
-  MensagemDebate,
   ResumoRodada,
   Rumor,
   Setor,
@@ -28,19 +27,11 @@ import {
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
-  FRASES_DEBATE_NPC,
-  FRASES_NPC,
   SETOR_COMUNICACAO,
   SETOR_IDS,
   saoVizinhos,
   vizinhosDe,
 } from './isolateus.data';
-
-/** Autor anônimo do feed quando a vila não tem NPCs para vestir o rumor. */
-const VOZ_ANONIMA = 'Voz na Névoa';
-
-/** Quantas frases de ruído entram no Chat de Rumores a cada rodada. */
-const RUIDO_POR_RODADA = 4;
 
 /** O que o aluno recebe sobre si mesmo — por REST, jamais pelo snapshot. */
 export interface PainelHabitante {
@@ -55,12 +46,10 @@ export interface PainelHabitante {
   setorId: string;
   /** Só para a Ameaça: a solução verdadeira do problema no ar (§4). */
   corretaIndex?: number;
-  /** Só para a Ameaça: nomes sob os quais ela pode forjar um rumor. */
-  disfarces?: string[];
 }
 
 /**
- * O motor da invasão: turno da Ameaça, defesa da vila, Chat de Rumores,
+ * O motor da invasão: turno da Ameaça, defesa da vila, Sinal Interceptado,
  * Quarentena e o veredito.
  *
  * Regra de ouro (§11.3): tudo que é oculto — quem é a Ameaça, quais habitantes
@@ -133,27 +122,7 @@ export class IsolateusGameService {
     }
 
     const questao = await this.questaoDaRodada(partida);
-    return {
-      ...base,
-      corretaIndex: questao?.corretaIndex,
-      disfarces: this.disfarces(partida, segredo),
-    };
-  }
-
-  /**
-   * Os nomes sob os quais a Ameaça pode transmitir sem se expor: os NPCs vivos.
-   * Numa vila grande (10+ reais) não há NPC (§2) — aí o rumor sai como uma voz
-   * anônima, em vez de o motor incriminar um habitante real inocente.
-   */
-  private disfarces(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): string[] {
-    const npcs = new Set(segredo.npcIds);
-    const nomes = partida.vivos
-      .filter((h) => npcs.has(h.id))
-      .map((h) => h.nome);
-    return nomes.length ? nomes : [VOZ_ANONIMA];
+    return { ...base, corretaIndex: questao?.corretaIndex };
   }
 
   // ===== O Diário da Vila =====
@@ -698,35 +667,12 @@ export class IsolateusGameService {
       },
       corretaIndex: null,
       alerta,
-      rumores: this.semearRuido(partida, segredo),
+      rumores: [], // só o Sinal Interceptado entra no feed da questão
       resumoRodada: null,
     };
     Object.assign(partida, dados);
     await this.matches.commitPartida(partida.id, dados);
     return partida;
-  }
-
-  /**
-   * A Guerra de Frequências começa com ruído: falas soltas de moradores
-   * desesperados. É o pano de fundo em que o rumor forjado da Ameaça e os Sinais
-   * dos abduzidos se misturam, para que nenhum deles se destaque sozinho.
-   *
-   * O ruído sai **só** no nome dos NPCs (ou anônimo). Pôr uma frase automática
-   * na boca de um habitante real seria o motor fabricando prova contra um aluno
-   * que não escreveu nada — e a dedução dos outros passaria a punir um inocente.
-   */
-  private semearRuido(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): Rumor[] {
-    const autores = embaralhar(this.disfarces(partida, segredo));
-    const frases = embaralhar(FRASES_NPC).slice(0, RUIDO_POR_RODADA);
-    return frases.map((texto, i) => ({
-      id: randomUUID(),
-      autorNome: autores[i % autores.length],
-      texto,
-      tipo: 'RUMOR' as const,
-    }));
   }
 
   // ===== A Defesa =====
@@ -821,39 +767,6 @@ export class IsolateusGameService {
   }
 
   // ===== A Guerra de Frequências =====
-
-  /**
-   * A Sabotagem de Frequência: a Ameaça conhece a solução verdadeira e transmite
-   * um argumento defendendo uma falsa, sob o nome de um NPC. Uma vez por rodada.
-   */
-  async forjarRumor(
-    alunoId: string,
-    partidaId: string,
-    texto: string,
-  ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
-    if (segredo.alienAlunoId !== alunoId) {
-      throw new ForbiddenException('Você é um Aldeão.');
-    }
-    if (partida.status !== 'QUESTAO_ATIVA') {
-      throw new BadRequestException('Não há transmissão em aberto.');
-    }
-    if (partida.rumores.some((r) => r.tipo === 'FORJADO')) {
-      throw new BadRequestException({
-        code: 'RUMOR_JA_ENVIADO',
-        message: 'Você já interceptou a comunicação nesta rodada.',
-      });
-    }
-
-    const disfarces = this.disfarces(partida, segredo);
-    const rumor: Rumor = {
-      id: randomUUID(),
-      autorNome: embaralhar(disfarces)[0],
-      texto: texto.trim().slice(0, 240),
-      tipo: 'FORJADO',
-    };
-    return this.publicarRumor(partida, rumor);
-  }
 
   /**
    * O Sinal Interceptado: quem foi abduzido ou preso hackeia a comunicação e
@@ -1347,7 +1260,7 @@ export class IsolateusGameService {
       status: comDebate ? 'QUARENTENA_DEBATE' : 'QUARENTENA_VOTO',
       quarentenaRodada: partida.rodada,
       faseIniciadaEm: new Date().toISOString(),
-      debate: comDebate ? this.semearDebate(partida, segredo) : [],
+      debate: [], // só os alunos falam: fala automática saía sob nome de NPC
       // A Quarentena nova nasce limpa: veredito, votos e pulos são por rodada.
       vereditoQuarentena: null,
       votosRecebidos: 0,
@@ -1362,20 +1275,6 @@ export class IsolateusGameService {
     segredo.pulosDebate = [];
     await this.matches.commitPartida(partidaId, dados, { pulosDebate: [] });
     return partida;
-  }
-
-  /** Os NPCs também trocam acusações — o mesmo cuidado do ruído se aplica. */
-  private semearDebate(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): MensagemDebate[] {
-    const autores = embaralhar(this.disfarces(partida, segredo));
-    const frases = embaralhar(FRASES_DEBATE_NPC).slice(0, RUIDO_POR_RODADA);
-    return frases.map((texto, i) => ({
-      id: randomUUID(),
-      autorNome: autores[i % autores.length],
-      texto,
-    }));
   }
 
   /** O Debate Tático: acusações e defesas por escrito, com o relógio correndo. */

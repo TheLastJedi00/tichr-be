@@ -93,38 +93,6 @@ export const NOMES_CIDADES: string[] = [
   'Cidade do México', 'Havana', 'Bogotá', 'Lima', 'Buenos Aires',
 ];
 
-/** Ruído de fundo do Chat de Rumores durante a defesa de um setor. */
-export const FRASES_NPC: string[] = [
-  'Ouvi passos no telhado ontem à noite. Ninguém acredita em mim.',
-  'As luzes voltaram a piscar sobre a floresta.',
-  'Precisamos decidir rápido, o frio não espera.',
-  'Alguém aqui não está sendo honesto.',
-  'Eu vi alguém saindo da vila depois do toque de recolher.',
-  'Não confio em quem fala demais.',
-  'Fiquem calmos. O pânico é o que eles querem.',
-  'Meu cão não para de latir para a mata.',
-  'Se errarmos de novo, não sobra vila para salvar.',
-  'Tem pegada estranha perto do rio congelado.',
-  'Prefiro ficar calado. Falar chama atenção.',
-  'Alguém mexeu nos meus mantimentos.',
-  'A resposta parece óbvia demais. Cuidado.',
-  'Eu durmo de olhos abertos desde terça.',
-  'Não fui eu. Juro pela minha família.',
-  'O silêncio lá fora está pior que o barulho.',
-];
-
-/** Frases curtas de acusação/defesa dos NPCs na Quarentena. */
-export const FRASES_DEBATE_NPC: string[] = [
-  'Ele mudou de ideia rápido demais na última votação.',
-  'Estou vendo gente concordar com qualquer coisa.',
-  'Não votem em mim. Eu defendi o setor.',
-  'Quem espalhou aquele rumor devia explicar.',
-  'Prefiro trancar alguém a perder mais uma noite.',
-  'Isso é uma armadilha. Vão errar de novo.',
-  'Eu confio em quem argumentou com lógica.',
-  'Alguém aqui sabia a resposta e escondeu.',
-];
-
 /**
  * Sorteia `n` codinomes distintos para a vila.
  *

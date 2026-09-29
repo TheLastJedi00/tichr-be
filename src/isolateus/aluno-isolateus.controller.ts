@@ -4,7 +4,6 @@ import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { MoverDto } from './dto/mover.dto';
 import {
-  ForjarRumorDto,
   MensagemDto,
   ResponderIsolateusDto,
   VotarSuspeitoDto,
@@ -95,16 +94,6 @@ export class AlunoIsolateusController {
     @Body() dto: ResponderIsolateusDto,
   ) {
     return this.game.responder(aluno.alunoId, id, dto.alternativaIndex);
-  }
-
-  /** A Sabotagem de Frequência: o rumor falso da Ameaça, sob o nome de um NPC. */
-  @Post(':id/rumor')
-  forjar(
-    @CurrentStudent() aluno: { alunoId: string },
-    @Param('id') id: string,
-    @Body() dto: ForjarRumorDto,
-  ) {
-    return this.game.forjarRumor(aluno.alunoId, id, dto.texto);
   }
 
   /** O Sinal Interceptado: a dica anônima de quem já foi levado. */

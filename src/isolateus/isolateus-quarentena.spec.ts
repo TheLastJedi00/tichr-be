@@ -121,7 +121,9 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.status).toBe('QUARENTENA_DEBATE');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
     expect(partida.faseIniciadaEm).not.toBeNull();
-    expect(partida.debate.length).toBeGreaterThan(0); // os NPCs já acusam
+    // Sem falas automáticas: elas saíam sempre sob nome de NPC e entregavam
+    // quem é virtual. O debate é só dos alunos.
+    expect(partida.debate).toEqual([]);
   });
 
   it('debate desligado no lobby: a Quarentena vai direto para a votação', async () => {
