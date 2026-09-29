@@ -44,8 +44,6 @@ export interface PainelHabitante {
    * público só recebe as posições no fechamento.
    */
   setorId: string;
-  /** Só para a Ameaça: a solução verdadeira do problema no ar (§4). */
-  corretaIndex?: number;
 }
 
 /**
@@ -110,19 +108,15 @@ export class IsolateusGameService {
     const { partida, segredo } = await this.carregar(partidaId);
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
 
-    const base: PainelHabitante = {
+    // O gabarito NÃO sai mais por aqui: com o poder condicionado ao acerto,
+    // entregá-lo à Ameaça daria um poder de graça em toda questão.
+    return {
       papel: segredo.ehAmeaca(alunoId) ? 'AMEACA' : 'ALDEAO',
       habitanteId: habitante.id,
       vivo: habitante.vivo,
       preso: habitante.preso,
       setorId: this.posicaoDe(segredo, habitante),
     };
-    if (base.papel !== 'AMEACA') {
-      return base;
-    }
-
-    const questao = await this.questaoDaRodada(partida);
-    return { ...base, corretaIndex: questao?.corretaIndex };
   }
 
   // ===== O Diário da Vila =====
@@ -981,7 +975,13 @@ export class IsolateusGameService {
       partida.id,
       partida.rodada,
     );
-    const votantes = this.reaisNaVila(partida, segredo);
+    // O voto de qualquer Ameaça não defende a vila: ela responde (e pontua)
+    // como todos, mas fica fora da apuração — votar errado não a ajuda mais, e
+    // votar certo não a prejudica. O avanço rápido (em `responder`) continua
+    // esperando por ela, senão o contador denunciaria quantas Ameaças há.
+    const votantes = this.reaisNaVila(partida, segredo).filter(
+      (v) => !segredo.ehAmeaca(v.alunoId),
+    );
     const total = questao.alternativas.length;
 
     const votosReais = new Array<number>(total).fill(0);
@@ -1038,14 +1038,18 @@ export class IsolateusGameService {
       },
     };
 
+    const poderes = this.concederPoderes(partida, segredo, respostas);
+
     Object.assign(partida, dados);
     segredo.pontos = pontos;
     segredo.acaoRodada = null;
     segredo.acoesRodada = [];
+    segredo.poderes = poderes;
     await this.matches.commitPartida(partida.id, dados, {
       pontos,
       acaoRodada: null,
       acoesRodada: [],
+      poderes,
     });
 
     // A vila caiu? A Esperança zerada encerra a partida na hora.
@@ -1057,6 +1061,30 @@ export class IsolateusGameService {
       });
     }
     return partida;
+  }
+
+  /**
+   * Toda Ameaça livre que ACERTOU a questão ganha um Poder Alienígena — acertou
+   * a vila ou não. Um por acerto, sem acúmulo: o novo substitui o que sobrou.
+   * Só o cofre sabe; nada muda no doc público.
+   */
+  private concederPoderes(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    respostas: Array<{ alunoId: string; correta: boolean }>,
+  ): Array<{ alunoId: string; ganhoNaRodada: number }> {
+    const acertaram = new Set(
+      this.ameacasLivres(partida, segredo).filter(
+        (a) => respostas.find((r) => r.alunoId === a)?.correta,
+      ),
+    );
+    return [
+      ...(segredo.poderes ?? []).filter((p) => !acertaram.has(p.alunoId)),
+      ...[...acertaram].map((alunoId) => ({
+        alunoId,
+        ganhoNaRodada: partida.rodada,
+      })),
+    ];
   }
 
   /**

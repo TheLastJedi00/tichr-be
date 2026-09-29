@@ -256,11 +256,12 @@ describe('Isolateus — o Ciclo de Invasão', () => {
   });
 
   it('Instinto Humano: empate entre reais resolve pela alternativa de menor índice', async () => {
-    // 2 reais na correta ('b' = 1) e 2 na errada ('d' = 3), sem NPCs: empate
+    // 2 aldeões na correta ('b' = 1) e 2 na errada ('d' = 3), sem NPCs: empate
     // perfeito. O desempate olha só para os reais (também empatados) e cai na de
-    // menor índice — determinístico, sem depender do acaso.
-    const { service, partida } = cenario({ reais: 4, npcs: 0 });
-    await todosRespondem(service, 4, 1, { a3: 3, a4: 3 });
+    // menor índice — determinístico, sem depender do acaso. A Ameaça (a1)
+    // responde, mas o voto dela fica fora da apuração.
+    const { service, partida } = cenario({ reais: 5, npcs: 0 });
+    await todosRespondem(service, 5, 1, { a4: 3, a5: 3 });
 
     expect(partida.status).toBe('RESULTADO_RODADA');
     expect(partida.resumoRodada?.defendida).toBe(true); // venceu a 'b'

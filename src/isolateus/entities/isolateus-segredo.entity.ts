@@ -97,6 +97,13 @@ export class IsolateusSegredoEntity {
    */
   posicoesNoite: Array<{ habitanteId: string; setorId: string }> = [];
 
+  /**
+   * Poderes Alienígenas ganhos e ainda não usados — um por Ameaça, sem acúmulo
+   * (o acerto novo substitui o que sobrou). `ganhoNaRodada` marca o prazo: vale
+   * até o fechamento da noite seguinte. Lista, pelo mesmo motivo do merge.
+   */
+  poderes?: Array<{ alunoId: string; ganhoNaRodada: number }>;
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 
