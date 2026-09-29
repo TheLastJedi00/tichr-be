@@ -3,6 +3,7 @@ import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { MoverDto } from './dto/mover.dto';
+import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
   MensagemDto,
   ResponderIsolateusDto,
@@ -84,6 +85,19 @@ export class AlunoIsolateusController {
     @Body() dto: AcaoAmeacaDto,
   ) {
     return this.game.acaoAmeaca(aluno.alunoId, id, dto);
+  }
+
+  /**
+   * O Poder Alienígena ganho no acerto (Controle Mental, Contágio ou Delírio
+   * Coletivo). Devolve o painel atualizado; o doc público não muda aqui.
+   */
+  @Post(':id/poder')
+  poder(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: UsarPoderDto,
+  ) {
+    return this.game.usarPoder(aluno.alunoId, id, dto);
   }
 
   /** A Defesa: o voto na solução do problema. */

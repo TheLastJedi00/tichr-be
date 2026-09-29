@@ -104,6 +104,22 @@ export class IsolateusSegredoEntity {
    */
   poderes?: Array<{ alunoId: string; ganhoNaRodada: number }>;
 
+  /**
+   * Controles Mentais ativos: na `rodada` indicada (a noite e o dia dela), as
+   * jogadas da Ameaça partem do setor do habitante controlado. Um por Ameaça.
+   */
+  controles?: Array<{
+    ameacaAlunoId: string;
+    habitanteId: string;
+    rodada: number;
+  }>;
+
+  /** Contágio escolhido, materializado no próximo fechamento da noite. */
+  contagioPendente?: boolean;
+
+  /** Delírio Coletivo escolhido, materializado no próximo fechamento da noite. */
+  delirioPendente?: boolean;
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 

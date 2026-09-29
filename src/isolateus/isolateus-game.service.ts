@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
 import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
+import { PoderAlienigena, UsarPoderDto } from './dto/usar-poder.dto';
 import {
   Acontecimento,
   AlertaRodada,
@@ -44,6 +45,16 @@ export interface PainelHabitante {
    * público só recebe as posições no fechamento.
    */
   setorId: string;
+
+  // ===== Só para a Ameaça =====
+  /** Codinomes das outras Ameaças livres (para não se abduzirem nem acusarem). */
+  aliados?: string[];
+  /** O poder ganho no acerto e o que ela pode escolher; `null` = sem poder. */
+  poder?: Record<PoderAlienigena, boolean> | null;
+  /** O habitante sob Controle Mental nesta rodada, se houver. */
+  controle?: { habitanteId: string; nome: string } | null;
+  /** Quem está AGORA no setor de onde ela age (o dela ou o do controlado). */
+  fileira?: { setorId: string; habitantes: Array<{ id: string; nome: string }> };
 }
 
 /**
@@ -110,13 +121,82 @@ export class IsolateusGameService {
 
     // O gabarito NÃO sai mais por aqui: com o poder condicionado ao acerto,
     // entregá-lo à Ameaça daria um poder de graça em toda questão.
-    return {
+    const base: PainelHabitante = {
       papel: segredo.ehAmeaca(alunoId) ? 'AMEACA' : 'ALDEAO',
       habitanteId: habitante.id,
       vivo: habitante.vivo,
       preso: habitante.preso,
       setorId: this.posicaoDe(segredo, habitante),
     };
+    if (base.papel !== 'AMEACA') return base;
+
+    // A visão da Ameaça. É também o ÚNICO canal do papel de quem foi
+    // contagiado: o celular faz polling daqui, e o doc público não muda.
+    const temPoder = segredo.poderes?.some((p) => p.alunoId === alunoId);
+    const origem = this.origemDaAmeaca(partida, segredo, alunoId);
+    return {
+      ...base,
+      aliados: segredo
+        .ameacasIds()
+        .filter((a) => a !== alunoId)
+        .map((a) => partida.habitantes.find((h) => h.id === segredo.habitanteDe(a)))
+        .filter((h): h is Habitante => !!h && h.vivo && !h.preso)
+        .map((h) => h.nome),
+      poder: temPoder
+        ? {
+            CONTROLE: true,
+            CONTAGIO:
+              alunoId === segredo.alienAlunoId &&
+              this.alvosDeContagio(partida, segredo).length > 0,
+            DELIRIO: true,
+          }
+        : null,
+      controle: origem.controlado
+        ? { habitanteId: origem.controlado.id, nome: origem.controlado.nome }
+        : null,
+      fileira: {
+        setorId: origem.setorId,
+        habitantes: partida.vivos
+          .filter(
+            (h) =>
+              h.id !== habitante.id &&
+              this.posicaoDe(segredo, h) === origem.setorId,
+          )
+          .map((h) => ({ id: h.id, nome: h.nome })),
+      },
+    };
+  }
+
+  /**
+   * De onde a Ameaça age agora: o próprio setor, ou — sob Controle Mental
+   * ativo nesta rodada — o setor do habitante controlado.
+   */
+  private origemDaAmeaca(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): { setorId: string; controlado: Habitante | null } {
+    const controle = segredo.controles?.find(
+      (c) => c.ameacaAlunoId === alunoId && c.rodada === partida.rodada,
+    );
+    const controlado = controle
+      ? (partida.vivos.find((h) => h.id === controle.habitanteId) ?? null)
+      : null;
+    if (controlado) {
+      return { setorId: this.posicaoDe(segredo, controlado), controlado };
+    }
+    const propria = this.habitanteDoAluno(partida, segredo, alunoId);
+    return { setorId: this.posicaoDe(segredo, propria), controlado: null };
+  }
+
+  /** Aldeões reais, na vila, que ainda podem ser contagiados. */
+  private alvosDeContagio(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): string[] {
+    return this.reaisNaVila(partida, segredo)
+      .map((v) => v.alunoId)
+      .filter((a) => !segredo.ehAmeaca(a));
   }
 
   // ===== O Diário da Vila =====
@@ -369,13 +449,25 @@ export class IsolateusGameService {
       if (h) h.setorId = setorId;
     }
     this.moverNpcs(partida, segredo);
+
+    // O prazo dos poderes: o ganho numa rodada vale até ESTE fechamento (o da
+    // noite seguinte). Controles de rodadas passadas também saem.
+    const cofre: Partial<IsolateusSegredoEntity> = {
+      confirmacoesNoite: [],
+      posicoesNoite: [],
+      poderes: (segredo.poderes ?? []).filter(
+        (p) => p.ganhoNaRodada >= partida.rodada,
+      ),
+      controles: (segredo.controles ?? []).filter(
+        (c) => c.rodada >= partida.rodada,
+      ),
+    };
+    Object.assign(segredo, cofre);
     await this.matches.commitPartida(
       partida.id,
       { habitantes: partida.habitantes },
-      { confirmacoesNoite: [], posicoesNoite: [] },
+      cofre,
     );
-    segredo.confirmacoesNoite = [];
-    segredo.posicoesNoite = [];
 
     // A sabotagem NÃO é contestada: ela acerta e o setor cai na hora. O que a
     // vila pode fazer é reconstruir depois, marchando até lá (§5.2).
@@ -544,6 +636,78 @@ export class IsolateusGameService {
     // A jogada da Ameaça também é uma confirmação da noite dela — e é ela que
     // pode ser a última peça a faltar para o amanhecer.
     return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  // ===== Os Poderes Alienígenas =====
+
+  /**
+   * A Ameaça gasta o poder ganho no acerto. **Nada** é escrito no doc público
+   * aqui: a escolha fica no cofre, e os efeitos que a vila pode ver (queda de
+   * Esperança do Contágio, nomes trocados do Delírio) só se materializam no
+   * fechamento da noite, junto de tudo o que muda nela — nunca no instante em
+   * que alguém toca no celular.
+   */
+  async usarPoder(
+    alunoId: string,
+    partidaId: string,
+    dto: UsarPoderDto,
+  ): Promise<PainelHabitante> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (!segredo.ehAmeaca(alunoId)) {
+      throw new ForbiddenException('Você é um Aldeão.');
+    }
+    const eu = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!eu.vivo || eu.preso) {
+      throw new ForbiddenException('Você não está mais na vila.');
+    }
+    if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
+      throw new BadRequestException('A investigação não está em andamento.');
+    }
+    const poderes = segredo.poderes ?? [];
+    if (!poderes.some((p) => p.alunoId === alunoId)) {
+      throw new BadRequestException({
+        code: 'SEM_PODER',
+        message: 'Você não tem um poder para usar agora.',
+      });
+    }
+
+    const mudancas: Partial<IsolateusSegredoEntity> = {};
+    if (dto.poder === 'CONTAGIO') {
+      if (alunoId !== segredo.alienAlunoId) {
+        throw new BadRequestException({
+          code: 'SO_ORIGINAL',
+          message: 'Só a Ameaça original pode contagiar.',
+        });
+      }
+      if (!this.alvosDeContagio(partida, segredo).length) {
+        throw new BadRequestException({
+          code: 'SEM_ALVO',
+          message: 'Não há quem contagiar.',
+        });
+      }
+      mudancas.contagioPendente = true;
+    } else if (dto.poder === 'DELIRIO') {
+      mudancas.delirioPendente = true;
+    } else {
+      const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
+      if (!alvo || alvo.id === eu.id || segredo.ehAmeaca(segredo.alunoDe(alvo.id))) {
+        throw new BadRequestException(
+          'Escolha um habitante na vila que não seja uma Ameaça.',
+        );
+      }
+      // Escolhido na noite, vale para ela; escolhido de dia, para a próxima.
+      const rodada =
+        partida.status === 'DESLOCAMENTO' ? partida.rodada : partida.rodada + 1;
+      mudancas.controles = [
+        ...(segredo.controles ?? []).filter((c) => c.ameacaAlunoId !== alunoId),
+        { ameacaAlunoId: alunoId, habitanteId: alvo.id, rodada },
+      ];
+    }
+    mudancas.poderes = poderes.filter((p) => p.alunoId !== alunoId);
+
+    Object.assign(segredo, mudancas);
+    await this.matches.commitPartida(partidaId, {}, mudancas);
+    return this.painel(alunoId, partidaId);
   }
 
   /**
