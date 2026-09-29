@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { PularFaseDto } from './dto/pular-fase.dto';
 import { CriarPartidaIsolateusDto } from './dto/responder-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
 import { IsolateusMatchService } from './isolateus-match.service';
@@ -52,7 +53,20 @@ export class IsolateusMatchController {
     return this.game.resolverPorTempo(id, { professorId });
   }
 
-  /** A próxima noite. */
+  /**
+   * O professor pula o tempo restante da fase cronometrada (noite, questão,
+   * janela de decisão, debate ou votação). Vale pela unanimidade.
+   */
+  @Post('matches/:id/pular-fase')
+  pularFase(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: PularFaseDto,
+  ) {
+    return this.game.pularFase(professorId, id, dto.status);
+  }
+
+  /** A próxima noite. Obsoleta: o telão usa `pular-fase`. */
   @Post('matches/:id/proxima')
   proxima(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.game.proxima(professorId, id);

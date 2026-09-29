@@ -17,6 +17,7 @@ import {
   ResumoRodada,
   Rumor,
   Setor,
+  StatusIsolateus,
   TipoAcontecimento,
 } from './entities/isolateus-match.entity';
 import {
@@ -887,21 +888,64 @@ export class IsolateusGameService {
     }
     if (!partida.faseIniciadaEm) return partida;
 
-    const limites: Partial<Record<typeof partida.status, number>> = {
-      DESLOCAMENTO: ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
-      RESULTADO_RODADA: ISOLATEUS.JANELA_DECISAO_MS,
-      QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
-      QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
-      QUARENTENA_VOTO: ISOLATEUS.LIMITE_VOTO_MS,
-    };
-    const limite = limites[partida.status];
+    const limite = this.limiteDaFase(partida);
     if (limite === undefined) return partida;
 
     const decorrido = Date.now() - Date.parse(partida.faseIniciadaEm);
     if (decorrido < limite - ISOLATEUS.MARGEM_TEMPO_MS) {
       return partida;
     }
+    return this.encerrarFase(partida, segredo);
+  }
 
+  /**
+   * O professor pula o tempo restante da fase cronometrada corrente. O clique
+   * dele vale pela unanimidade: a fase termina na hora, pela MESMA transição do
+   * prazo zerado — pular nunca pode divergir do fim natural do relógio.
+   *
+   * `statusExibido` é a fase que o telão mostrava no clique. Se a partida já
+   * virou (o relógio zerou ou o último aluno pulou no mesmo instante), o clique
+   * volta sem efeito: um pulo atrasado não pode derrubar DUAS fases.
+   */
+  async pularFase(
+    professorId: string,
+    partidaId: string,
+    statusExibido?: StatusIsolateus,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (statusExibido && statusExibido !== partida.status) {
+      return partida;
+    }
+    if (this.limiteDaFase(partida) === undefined) {
+      throw new BadRequestException('Não há cronômetro correndo nesta fase.');
+    }
+    return this.encerrarFase(partida, segredo);
+  }
+
+  /** Duração de cada fase cronometrada; `undefined` = fase sem relógio. */
+  private limiteDaFase(partida: IsolateusMatchEntity): number | undefined {
+    const limites: Partial<Record<StatusIsolateus, number>> = {
+      DESLOCAMENTO: ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
+      RESULTADO_RODADA: ISOLATEUS.JANELA_DECISAO_MS,
+      QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
+      QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
+      QUARENTENA_VOTO: ISOLATEUS.LIMITE_VOTO_MS,
+    };
+    return limites[partida.status];
+  }
+
+  /**
+   * O fim de uma fase cronometrada — o que acontece quando o relógio zera.
+   * Único ponto de transição para os dois gatilhos: o prazo vencido
+   * (`resolverPorTempo`) e o pulo do professor (`pularFase`).
+   */
+  private async encerrarFase(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
     if (partida.status === 'DESLOCAMENTO') {
       return this.fecharNoite(partida, segredo);
     }
@@ -1099,8 +1143,10 @@ export class IsolateusGameService {
   }
 
   /**
-   * A noite seguinte, pedida pelo telão ("Adiantar noite"). O avanço automático
-   * ao fim da janela de decisão passa direto por `avancarNoite`.
+   * A noite seguinte, pedida pelo telão ("Adiantar noite").
+   *
+   * @deprecated O telão usa `pularFase` (que cobre esta e todas as outras fases
+   * cronometradas). Mantida para clientes em cache.
    */
   async proxima(
     professorId: string,
