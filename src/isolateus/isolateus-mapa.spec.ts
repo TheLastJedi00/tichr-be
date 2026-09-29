@@ -148,6 +148,16 @@ describe('Isolateus — a Ameaça age onde está', () => {
     ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
   });
 
+  it('abdução presencial enxerga quem chegou ao setor nesta noite (posição do cofre)', async () => {
+    const { service } = mapa({
+      posicoes: { h1: 'energia', h2: 'comunicacao' },
+    });
+    await service.mover('a2', 'p1', 'energia');
+    await expect(
+      service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' }),
+    ).resolves.toBeDefined();
+  });
+
   it('abdução presencial aceita alvo do próprio setor', async () => {
     const { service, segredo } = mapa({
       posicoes: { h1: 'energia', h2: 'energia' },
@@ -193,6 +203,16 @@ describe('Isolateus — a Reconstrução', () => {
     expect(partida.reparoSetorId).toBe('energia');
   });
 
+  it('quem ENTROU na ruína nesta noite organiza o reparo (posição do cofre)', async () => {
+    const { service, partida } = mapa({
+      posicoes: { h2: 'comunicacao' },
+      ruinas: ['energia'],
+    });
+    await service.mover('a2', 'p1', 'energia');
+    await service.declararReparo('a2', 'p1');
+    expect(partida.reparoSetorId).toBe('energia');
+  });
+
   it('não se repara um setor de pé', async () => {
     const { service } = mapa({ posicoes: { h2: 'energia' } });
     await expect(service.declararReparo('a2', 'p1')).rejects.toMatchObject({
@@ -223,7 +243,9 @@ describe('Isolateus — a Reconstrução', () => {
     // O público guarda o setor e mais nada: nenhum campo liga o reparo a um
     // habitante, e o alunoId nem aparece.
     expect(partida.reparoSetorId).toBe('energia');
-    expect(JSON.stringify(partida)).not.toContain('a2');
+    // Com as aspas: sem elas, a busca casa com qualquer UUID do Diário que
+    // contenha "a2" e o teste falha ao acaso (mesmo idioma da Quarentena).
+    expect(JSON.stringify(partida)).not.toContain('"a2"');
     const campos = JSON.stringify(partida).match(/"[a-zA-Z]+":/g) ?? [];
     expect(campos).not.toContain('"reparoAutor":');
     expect(campos).not.toContain('"reparoHabitanteId":');

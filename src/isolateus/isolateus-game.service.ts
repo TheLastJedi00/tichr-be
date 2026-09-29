@@ -11,6 +11,7 @@ import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import {
   Acontecimento,
   AlertaRodada,
+  Habitante,
   ISOLATEUS,
   IsolateusMatchEntity,
   MensagemDebate,
@@ -47,6 +48,11 @@ export interface PainelHabitante {
   habitanteId: string;
   vivo: boolean;
   preso: boolean;
+  /**
+   * Onde ELE está agora. Durante a noite, é o destino guardado no cofre — o doc
+   * público só recebe as posições no fechamento.
+   */
+  setorId: string;
   /** Só para a Ameaça: a solução verdadeira do problema no ar (§4). */
   corretaIndex?: number;
   /** Só para a Ameaça: nomes sob os quais ela pode forjar um rumor. */
@@ -120,6 +126,7 @@ export class IsolateusGameService {
       habitanteId: habitante.id,
       vivo: habitante.vivo,
       preso: habitante.preso,
+      setorId: this.posicaoDe(segredo, habitante),
     };
     if (base.papel !== 'AMEACA') {
       return base;
@@ -199,21 +206,42 @@ export class IsolateusGameService {
     const { partida, segredo } = await this.carregar(partidaId);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
-    if (habitante.setorId === setorId) {
-      return this.confirmarPosicao(alunoId, partidaId);
-    }
-    if (!saoVizinhos(habitante.setorId, setorId)) {
+    // A origem é onde a noite começou (a posição pública): trocar de ideia
+    // vale, encadear dois passos não.
+    const origem = habitante.setorId;
+    if (setorId !== origem && !saoVizinhos(origem, setorId)) {
       throw new BadRequestException({
         code: 'SEM_ESTRADA',
         message: 'Não há estrada daqui para lá. Você anda um setor por noite.',
       });
     }
 
-    habitante.setorId = setorId;
-    await this.matches.commitPartida(partidaId, {
-      habitantes: partida.habitantes,
-    });
+    // O destino fica no cofre até o fechamento da noite; voltar à origem
+    // desfaz o deslocamento.
+    const posicoes = (segredo.posicoesNoite ?? []).filter(
+      (p) => p.habitanteId !== habitante.id,
+    );
+    if (setorId !== origem) {
+      posicoes.push({ habitanteId: habitante.id, setorId });
+    }
+    segredo.posicoesNoite = posicoes;
+    await this.matches.commitPartida(partidaId, {}, { posicoesNoite: posicoes });
     return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /**
+   * Onde o habitante está AGORA: durante a noite, o destino guardado no cofre
+   * (se ele andou); fora dela, a posição pública. Toda validação que depende de
+   * lugar passa por aqui — nunca por `habitante.setorId` direto.
+   */
+  private posicaoDe(
+    segredo: IsolateusSegredoEntity,
+    habitante: Habitante,
+  ): string {
+    return (
+      segredo.posicoesNoite?.find((p) => p.habitanteId === habitante.id)
+        ?.setorId ?? habitante.setorId
+    );
   }
 
   /** "Eu fico." Fecha a jogada da noite sem sair do lugar. */
@@ -346,13 +374,20 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
+    // Reais e NPCs aparecem nas posições novas no MESMO commit: nenhum
+    // movimento fica visível antes do outro.
+    for (const { habitanteId, setorId } of segredo.posicoesNoite ?? []) {
+      const h = partida.habitantes.find((x) => x.id === habitanteId);
+      if (h) h.setorId = setorId;
+    }
     this.moverNpcs(partida, segredo);
     await this.matches.commitPartida(
       partida.id,
       { habitantes: partida.habitantes },
-      { confirmacoesNoite: [] },
+      { confirmacoesNoite: [], posicoesNoite: [] },
     );
     segredo.confirmacoesNoite = [];
+    segredo.posicoesNoite = [];
 
     // A sabotagem NÃO é contestada: ela acerta e o setor cai na hora. O que a
     // vila pode fazer é reconstruir depois, marchando até lá (§5.2).
@@ -525,10 +560,11 @@ export class IsolateusGameService {
     }
 
     const ameaca = this.habitanteDoAluno(partida, segredo, alunoId);
+    const aqui = this.posicaoDe(segredo, ameaca);
 
     if (dto.tipo === 'SABOTAR') {
       // O alvoId do cliente é ignorado: sabota-se onde se está.
-      const setor = partida.setores.find((s) => s.id === ameaca.setorId);
+      const setor = partida.setores.find((s) => s.id === aqui);
       if (!setor?.intacto) {
         throw new BadRequestException({
           code: 'SETOR_EM_RUINAS',
@@ -540,7 +576,7 @@ export class IsolateusGameService {
 
     // Abdução às cegas: ela aposta num setor, sem saber quem está lá.
     if (dto.setorId) {
-      if (dto.setorId === ameaca.setorId) {
+      if (dto.setorId === aqui) {
         throw new BadRequestException({
           code: 'SETOR_VISIVEL',
           message: 'Você enxerga este setor — escolha a vítima pelo nome.',
@@ -554,7 +590,7 @@ export class IsolateusGameService {
 
     // Abdução presencial: só quem está ao alcance dela.
     const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
-    if (!alvo || alvo.setorId !== ameaca.setorId) {
+    if (!alvo || this.posicaoDe(segredo, alvo) !== aqui) {
       throw new BadRequestException({
         code: 'FORA_DE_ALCANCE',
         message: 'Este habitante não está no seu setor.',
@@ -604,7 +640,8 @@ export class IsolateusGameService {
     const { partida, segredo } = await this.carregar(partidaId);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
-    const setor = partida.setores.find((s) => s.id === habitante.setorId);
+    const aqui = this.posicaoDe(segredo, habitante);
+    const setor = partida.setores.find((s) => s.id === aqui);
     if (!setor) {
       throw new BadRequestException('Setor desconhecido.');
     }

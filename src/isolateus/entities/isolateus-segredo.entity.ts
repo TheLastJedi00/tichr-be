@@ -66,6 +66,19 @@ export class IsolateusSegredoEntity {
    */
   confirmacoesNoite: string[];
 
+  /**
+   * Para onde cada habitante real se deslocou NESTA noite (só quem andou).
+   *
+   * Mora no cofre porque publicar o movimento na hora entregava a Névoa de
+   * Guerra: os NPCs só andam no fechamento da noite, então quem se mexia no
+   * meio da janela era, por eliminação, real. O doc público só recebe as
+   * posições em `fecharNoite`, todas de uma vez.
+   *
+   * Lista, e não mapa, de propósito: o cofre é gravado com `merge`, e um mapa
+   * vazio não apaga as chaves antigas — a lista é substituída inteira.
+   */
+  posicoesNoite: Array<{ habitanteId: string; setorId: string }> = [];
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 
