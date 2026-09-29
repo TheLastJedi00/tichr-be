@@ -111,7 +111,7 @@ export class IsolateusGameService {
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
 
     const base: PainelHabitante = {
-      papel: segredo.alienAlunoId === alunoId ? 'AMEACA' : 'ALDEAO',
+      papel: segredo.ehAmeaca(alunoId) ? 'AMEACA' : 'ALDEAO',
       habitanteId: habitante.id,
       vivo: habitante.vivo,
       preso: habitante.preso,
@@ -287,7 +287,7 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<void> {
-    if (partida.status !== 'DESLOCAMENTO' || segredo.acaoRodada) return;
+    if (partida.status !== 'DESLOCAMENTO' || this.ameacasJogaram(partida, segredo)) return;
     if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm) return;
 
     const fim =
@@ -305,15 +305,40 @@ export class IsolateusGameService {
   }
 
   /**
-   * A noite só fecha cedo quando **todos** os reais confirmaram **e** a Ameaça
-   * já jogou. Fechar sem a jogada dela transformaria a pressa da vila numa forma
-   * de anular o turno do infiltrado.
+   * A noite só fecha cedo quando **todos** os reais confirmaram **e** todas as
+   * Ameaças livres já jogaram. Fechar sem a jogada de uma delas transformaria a
+   * pressa da vila numa forma de anular o turno do infiltrado.
    */
   private noiteEstaFechada(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): boolean {
-    return this.vilaConfirmou(partida, segredo) && !!segredo.acaoRodada;
+    return (
+      this.vilaConfirmou(partida, segredo) &&
+      this.ameacasJogaram(partida, segredo)
+    );
+  }
+
+  /** As Ameaças que ainda estão na vila (nem presas, nem fora). */
+  private ameacasLivres(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): string[] {
+    return segredo.ameacasIds().filter((alunoId) => {
+      const h = partida.habitantes.find(
+        (x) => x.id === segredo.habitanteDe(alunoId),
+      );
+      return !!h && h.vivo && !h.preso;
+    });
+  }
+
+  /** Toda Ameaça livre já fechou a jogada desta noite. */
+  private ameacasJogaram(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): boolean {
+    const jogaram = new Set(segredo.acoesDaNoite().map((j) => j.alunoId));
+    return this.ameacasLivres(partida, segredo).every((a) => jogaram.has(a));
   }
 
   /**
@@ -360,16 +385,19 @@ export class IsolateusGameService {
 
     // A sabotagem NÃO é contestada: ela acerta e o setor cai na hora. O que a
     // vila pode fazer é reconstruir depois, marchando até lá (§5.2).
-    const caiu = this.aplicarSabotagem(partida, segredo);
-    if (caiu) {
+    const caidos = this.aplicarSabotagens(partida, segredo);
+    if (caidos.length) {
+      for (const setor of caidos) {
+        this.registrar(
+          partida,
+          'SABOTAGEM',
+          `O ${setor.nome} foi sabotado e está em ruínas.`,
+        );
+      }
       await this.matches.commitPartida(partida.id, {
         setores: partida.setores,
         esperanca: partida.esperanca,
-        acontecimentos: this.registrar(
-          partida,
-          'SABOTAGEM',
-          `O ${caiu.nome} foi sabotado e está em ruínas.`,
-        ),
+        acontecimentos: partida.acontecimentos,
       });
       if (partida.esperanca <= 0) {
         return this.encerrar(partida, segredo, {
@@ -383,47 +411,54 @@ export class IsolateusGameService {
     // A questão do dia só existe se houver disputa: uma abdução a repelir ou um
     // reparo a fazer. Noite de pura sabotagem passa sem pergunta — e deixa a
     // ruína no mapa cobrando reação.
-    const temAbducao = segredo.acaoRodada?.tipo === 'ABDUZIR';
+    const temAbducao = segredo
+      .acoesDaNoite()
+      .some((j) => j.acao.tipo === 'ABDUZIR');
     if (!temAbducao && !partida.reparoSetorId) {
-      const resumo = this.resumoSemDisputa(partida, caiu);
-    // A sabotagem ja registrou o proprio evento; so a noite calma falta.
-    if (!caiu) this.registrar(partida, 'ESPERA', resumo.texto);
-    return this.abrirJanelaDeDecisao(partida, resumo);
+      const resumo = this.resumoSemDisputa(partida, caidos);
+      // A sabotagem já registrou o próprio evento; só a noite calma falta.
+      if (!caidos.length) this.registrar(partida, 'ESPERA', resumo.texto);
+      return this.abrirJanelaDeDecisao(partida, resumo);
     }
     return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
   }
 
   /**
-   * Materializa a sabotagem. Devolve o setor derrubado, ou `null` se a Ameaça
-   * não sabotou nesta noite.
+   * Materializa as sabotagens da noite (uma por Ameaça que sabotou). Devolve os
+   * setores derrubados — vazio se ninguém sabotou.
    */
-  private aplicarSabotagem(
+  private aplicarSabotagens(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
-  ): Setor | null {
-    if (segredo.acaoRodada?.tipo !== 'SABOTAR') return null;
-    const alvo = segredo.acaoRodada.setorId;
-    const setor = partida.setores.find((s) => s.id === alvo);
-    if (!setor?.intacto) return null;
-
-    setor.intacto = false;
-    partida.esperanca = Math.max(
-      0,
-      partida.esperanca - ISOLATEUS.DANO_SABOTAGEM,
-    );
-    return setor;
+  ): Setor[] {
+    const caidos: Setor[] = [];
+    for (const { acao } of segredo.acoesDaNoite()) {
+      if (acao.tipo !== 'SABOTAR') continue;
+      const setor = partida.setores.find((s) => s.id === acao.setorId);
+      if (!setor?.intacto) continue; // duas no mesmo setor: cai uma vez só
+      setor.intacto = false;
+      partida.esperanca = Math.max(
+        0,
+        partida.esperanca - ISOLATEUS.DANO_SABOTAGEM,
+      );
+      caidos.push(setor);
+    }
+    return caidos;
   }
 
   /** O card do dia quando não houve questão nenhuma. */
   private resumoSemDisputa(
     partida: IsolateusMatchEntity,
-    caiu: Setor | null,
+    caidos: Setor[],
   ): ResumoRodada {
-    if (caiu) {
+    if (caidos.length) {
+      const nomes = caidos.map((s) => s.nome).join(' e o ');
+      const verbo =
+        caidos.length > 1 ? 'foram sabotados e estão' : 'foi sabotado e está';
       return {
         seq: partida.rodada,
         defendida: false,
-        texto: `O ${caiu.nome} foi sabotado e está em ruínas. Alguém precisa ir até lá reconstruir.`,
+        texto: `O ${nomes} ${verbo} em ruínas. Alguém precisa ir até lá reconstruir.`,
       };
     }
     // Nem sabotagem, nem abdução, nem reparo. O texto é o mesmo que a vila veria
@@ -440,7 +475,7 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): AlertaRodada {
-    if (segredo.acaoRodada?.tipo === 'ABDUZIR') {
+    if (segredo.acoesDaNoite().some((j) => j.acao.tipo === 'ABDUZIR')) {
       // Um só texto para presencial e às cegas: textos distintos contariam à
       // vila se a Ameaça agiu de perto ou de longe.
       return {
@@ -488,13 +523,14 @@ export class IsolateusGameService {
     dto: AcaoAmeacaDto,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
-    if (segredo.alienAlunoId !== alunoId) {
+    if (!segredo.ehAmeaca(alunoId)) {
       throw new ForbiddenException('Você é um Aldeão.');
     }
     if (partida.status !== 'DESLOCAMENTO') {
       throw new BadRequestException('A noite não está aberta.');
     }
-    if (segredo.acaoRodada) {
+    const jogadas = segredo.acoesDaNoite();
+    if (jogadas.some((j) => j.alunoId === alunoId)) {
       throw new BadRequestException({
         code: 'JOGADA_FEITA',
         message: 'Você já fez sua jogada esta noite.',
@@ -502,8 +538,14 @@ export class IsolateusGameService {
     }
 
     const acao = this.montarJogada(partida, segredo, alunoId, dto);
-    segredo.acaoRodada = acao;
-    await this.matches.commitPartida(partidaId, {}, { acaoRodada: acao });
+    const acoesRodada = [...jogadas, { alunoId, acao }];
+    segredo.acoesRodada = acoesRodada;
+    segredo.acaoRodada = null;
+    await this.matches.commitPartida(
+      partidaId,
+      {},
+      { acoesRodada, acaoRodada: null },
+    );
 
     // A jogada da Ameaça também é uma confirmação da noite dela — e é ela que
     // pode ser a última peça a faltar para o amanhecer.
@@ -568,6 +610,12 @@ export class IsolateusGameService {
     if (alvo.id === ameaca.id) {
       throw new BadRequestException('A Ameaça não pode abduzir a si mesma.');
     }
+    if (segredo.ehAmeaca(segredo.alunoDe(alvo.id))) {
+      throw new BadRequestException({
+        code: 'ALIADO',
+        message: 'Este habitante é uma Ameaça como você.',
+      });
+    }
     return { tipo: 'ABDUZIR', alvoId: alvo.id };
   }
 
@@ -588,7 +636,7 @@ export class IsolateusGameService {
       reparoSetorId: null,
     };
     Object.assign(partida, dados);
-    await this.matches.commitPartida(partida.id, dados, { acaoRodada: null });
+    await this.matches.commitPartida(partida.id, dados, { acaoRodada: null, acoesRodada: [] });
     partida.reparoSetorId = null;
     return partida;
   }
@@ -962,10 +1010,11 @@ export class IsolateusGameService {
 
     const pontos = { ...(segredo.pontos ?? {}) };
     if (!acertou) {
-      // A Ameaça pontua pelo erro da turma — o único momento em que a vila
-      // disputou com ela e perdeu. A sabotagem, sendo automática, não pontua.
-      pontos[segredo.alienAlunoId] =
-        (pontos[segredo.alienAlunoId] ?? 0) + ISOLATEUS.PONTOS_ACERTO;
+      // Cada Ameaça livre pontua pelo erro da turma — o único momento em que a
+      // vila disputou com ela e perdeu. A sabotagem, automática, não pontua.
+      for (const a of this.ameacasLivres(partida, segredo)) {
+        pontos[a] = (pontos[a] ?? 0) + ISOLATEUS.PONTOS_ACERTO;
+      }
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
@@ -992,9 +1041,11 @@ export class IsolateusGameService {
     Object.assign(partida, dados);
     segredo.pontos = pontos;
     segredo.acaoRodada = null;
+    segredo.acoesRodada = [];
     await this.matches.commitPartida(partida.id, dados, {
       pontos,
       acaoRodada: null,
+      acoesRodada: [],
     });
 
     // A vila caiu? A Esperança zerada encerra a partida na hora.
@@ -1021,35 +1072,51 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
     acertou: boolean,
   ): string | null {
-    const acao = segredo.acaoRodada;
-    if (acao?.tipo !== 'ABDUZIR') return null;
+    const abducoes = segredo
+      .acoesDaNoite()
+      .map((j) => j.acao)
+      .filter((acao) => acao.tipo === 'ABDUZIR');
+    if (!abducoes.length) return null;
 
     const REPELIDA = 'A tentativa de abdução foi repelida. Ninguém foi levado.';
     const repelir = () => {
       this.registrar(partida, 'REPELIDA', REPELIDA);
       return REPELIDA;
     };
+    // Um acerto só repele todas as abduções da noite — e um card só.
     if (acertou) return repelir();
 
-    const alvo = acao.alvoId
-      ? partida.vivos.find((h) => h.id === acao.alvoId)
-      : embaralhar(partida.vivos.filter((h) => h.setorId === acao.setorId))[0];
+    const textos: string[] = [];
+    for (const acao of abducoes) {
+      // A sorte às cegas nunca cai numa Ameaça: elas não se abduzem.
+      const alvo = acao.alvoId
+        ? partida.vivos.find((h) => h.id === acao.alvoId)
+        : embaralhar(
+            partida.vivos.filter(
+              (h) =>
+                h.setorId === acao.setorId &&
+                !segredo.ehAmeaca(segredo.alunoDe(h.id)),
+            ),
+          )[0];
+      // Tiro às cegas num setor vazio (ou alvo que saiu da vila antes, ou já
+      // levado pela outra Ameaça): ninguém sai.
+      if (!alvo) continue;
 
-    // Tiro às cegas num setor vazio (ou alvo que saiu da vila antes). A vila
-    // recebe EXATAMENTE o mesmo evento da abdução repelida — texto e tipo: se
-    // diferissem, ela saberia que a Ameaça atirou de longe e errou, e por
-    // eliminação onde ela não estava.
-    if (!alvo) return repelir();
+      alvo.vivo = false;
+      partida.esperanca = Math.max(
+        0,
+        partida.esperanca - ISOLATEUS.DANO_ABDUCAO,
+      );
+      const setor = partida.setores.find((s) => s.id === alvo.setorId);
+      const texto = `${alvo.nome} foi abduzido no ${setor?.nome ?? 'setor'}.`;
+      this.registrar(partida, 'ABDUCAO', texto);
+      textos.push(texto);
+    }
 
-    alvo.vivo = false;
-    partida.esperanca = Math.max(
-      0,
-      partida.esperanca - ISOLATEUS.DANO_ABDUCAO,
-    );
-    const setor = partida.setores.find((s) => s.id === alvo.setorId);
-    const texto = `${alvo.nome} foi abduzido no ${setor?.nome ?? 'setor'}.`;
-    this.registrar(partida, 'ABDUCAO', texto);
-    return texto;
+    // Ninguém foi levado: a vila recebe EXATAMENTE o mesmo evento da abdução
+    // repelida — texto e tipo. Se diferissem, ela saberia que a Ameaça atirou de
+    // longe e errou, e por eliminação onde ela não estava.
+    return textos.length ? textos.join(' ') : repelir();
   }
 
   /** A Perícia do reparo. `null` se ninguém declarou reparo nesta noite. */
@@ -1156,6 +1223,7 @@ export class IsolateusGameService {
     await this.matches.commitPartida(partida.id, dados, {
       confirmacoesNoite: [],
       acaoRodada: null,
+      acoesRodada: [],
     });
     return partida;
   }
@@ -1423,7 +1491,23 @@ export class IsolateusGameService {
 
     const preso = candidatos[this.apurar(votosTotais, votosReais)];
     preso.preso = true;
-    const eraAmeaca = segredo.alunoDe(preso.id) === segredo.alienAlunoId;
+    const eraAmeaca = segredo.ehAmeaca(segredo.alunoDe(preso.id));
+
+    // Trancou uma Ameaça, mas o Contágio deixou outra solta: a partida segue.
+    // O veredito não diz quantas restam — só que a invasão não acabou.
+    if (eraAmeaca && this.ameacasLivres(partida, segredo).length) {
+      const texto = `Vocês trancaram uma AMEAÇA! ${preso.nome} era um infiltrado. Mas a invasão não acabou…`;
+      const dados: Partial<IsolateusMatchEntity> = {
+        status: 'RESULTADO_RODADA',
+        habitantes: partida.habitantes,
+        faseIniciadaEm: new Date().toISOString(),
+        vereditoQuarentena: { presoNome: preso.nome, eraAmeaca: true, texto },
+        acontecimentos: this.registrar(partida, 'VEREDITO', texto),
+      };
+      Object.assign(partida, dados);
+      await this.matches.commitPartida(partida.id, dados);
+      return partida;
+    }
 
     if (eraAmeaca) {
       const dados: Partial<IsolateusMatchEntity> = {
@@ -1546,7 +1630,7 @@ export class IsolateusGameService {
 
     for (const vinculo of segredo.vinculos) {
       if (!vinculo.alunoId) continue; // NPC não pontua
-      const ehAlien = vinculo.alunoId === segredo.alienAlunoId;
+      const ehAlien = segredo.ehAmeaca(vinculo.alunoId);
       if (ehAlien === alienVenceu) {
         pontos[vinculo.alunoId] =
           (pontos[vinculo.alunoId] ?? 0) + ISOLATEUS.BONUS_VITORIA;

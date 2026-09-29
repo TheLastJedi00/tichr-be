@@ -40,14 +40,32 @@ export class IsolateusSegredoEntity {
   id: string; // = partidaId
   partidaId: string;
 
-  /** O aluno sorteado como Ameaça (sempre um habitante real). */
+  /**
+   * A Ameaça ORIGINAL — a sorteada no Despertar (sempre um habitante real). É a
+   * única que pode contagiar e a única que o rodízio da turma conta.
+   */
   alienAlunoId: string;
+
+  /**
+   * Todas as Ameaças da partida (alunoIds), a original inclusa. Cresce com o
+   * Contágio. Ausente em partidas anteriores ao poder: leia por `ameacasIds()`.
+   */
+  ameacas?: string[];
 
   /** habitanteId → alunoId. Sem `alunoId`, o habitante é um NPC. */
   vinculos: VinculoHabitante[];
 
-  /** A ação escolhida pelo Alien nesta rodada (limpa ao resolvê-la). */
-  acaoRodada: AcaoAmeaca | null;
+  /**
+   * @deprecated Campo único da época de uma Ameaça só. Só é lido (por
+   * `acoesDaNoite`) em partidas antigas; o motor grava `acoesRodada`.
+   */
+  acaoRodada?: AcaoAmeaca | null;
+
+  /**
+   * A jogada de cada Ameaça nesta noite (limpa ao resolvê-la). Lista, e não
+   * mapa: o cofre é gravado com `merge`, e um mapa vazio não apaga chaves.
+   */
+  acoesRodada?: Array<{ alunoId: string; acao: AcaoAmeaca }>;
 
   /**
    * Alunos que pularam o Debate da Quarentena corrente (limpa a cada convocação).
@@ -84,6 +102,23 @@ export class IsolateusSegredoEntity {
 
   constructor(partial: Partial<IsolateusSegredoEntity> = {}) {
     Object.assign(this, partial);
+  }
+
+  /** Os alunos que são Ameaça (original + contagiadas). */
+  ameacasIds(): string[] {
+    return this.ameacas?.length ? this.ameacas : [this.alienAlunoId];
+  }
+
+  ehAmeaca(alunoId: string | undefined): boolean {
+    return !!alunoId && this.ameacasIds().includes(alunoId);
+  }
+
+  /** As jogadas da noite, lendo também o campo único das partidas antigas. */
+  acoesDaNoite(): Array<{ alunoId: string; acao: AcaoAmeaca }> {
+    if (this.acoesRodada) return this.acoesRodada;
+    return this.acaoRodada
+      ? [{ alunoId: this.alienAlunoId, acao: this.acaoRodada }]
+      : [];
   }
 
   /** O habitante que representa este aluno na vila. */

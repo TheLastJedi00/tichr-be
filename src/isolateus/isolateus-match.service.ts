@@ -99,7 +99,8 @@ export class IsolateusMatchService {
       {
         alienAlunoId: '',
         vinculos: [],
-        acaoRodada: null,
+        ameacas: [],
+        acoesRodada: [],
         pulosDebate: [],
         confirmacoesNoite: [],
         pontos: {},
@@ -295,7 +296,13 @@ export class IsolateusMatchService {
     await this.matches.commitPartida(
       partidaId,
       dados,
-      { alienAlunoId, vinculos, acaoRodada: null, pontos: {} },
+      {
+        alienAlunoId,
+        ameacas: [alienAlunoId],
+        vinculos,
+        acoesRodada: [],
+        pontos: {},
+      },
       // Conta no sorteio, não no fim: a partida encerrada no meio também valeu
       // — o aluno já viveu o papel.
       turmaId ? { turmaId, alunoId: alienAlunoId } : undefined,
