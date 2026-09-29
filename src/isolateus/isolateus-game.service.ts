@@ -1304,11 +1304,13 @@ export class IsolateusGameService {
       });
     }
 
+    // Sem debate (escolha do lobby), a reunião começa pela urna.
+    const comDebate = partida.debateHabilitado !== false;
     const dados: Partial<IsolateusMatchEntity> = {
-      status: 'QUARENTENA_DEBATE',
+      status: comDebate ? 'QUARENTENA_DEBATE' : 'QUARENTENA_VOTO',
       quarentenaRodada: partida.rodada,
       faseIniciadaEm: new Date().toISOString(),
-      debate: this.semearDebate(partida, segredo),
+      debate: comDebate ? this.semearDebate(partida, segredo) : [],
       // A Quarentena nova nasce limpa: veredito, votos e pulos são por rodada.
       vereditoQuarentena: null,
       votosRecebidos: 0,

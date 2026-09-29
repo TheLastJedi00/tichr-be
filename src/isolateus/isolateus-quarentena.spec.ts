@@ -124,6 +124,21 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.debate.length).toBeGreaterThan(0); // os NPCs já acusam
   });
 
+  it('debate desligado no lobby: a Quarentena vai direto para a votação', async () => {
+    const { service, partida } = cenario({ reais: 3, npcs: 2 });
+    partida.debateHabilitado = false;
+    partida.votosRecebidos = 3; // resto de uma Quarentena anterior
+    await service.convocarQuarentena('p1', 'a2');
+
+    expect(partida.status).toBe('QUARENTENA_VOTO');
+    expect(partida.quarentenaRodada).toBe(partida.rodada);
+    expect(partida.faseIniciadaEm).not.toBeNull();
+    expect(partida.debate).toEqual([]); // nem as falas dos NPCs
+    expect(partida.votosRecebidos).toBe(0);
+    expect(partida.vereditoQuarentena).toBeNull();
+    expect(partida.acontecimentos.at(-1)?.tipo).toBe('QUARENTENA');
+  });
+
   it('é uma por rodada — a vila não encadeia convocações na mesma rodada', async () => {
     const { service, partida } = cenario();
     await service.convocarQuarentena('p1', 'a2');
