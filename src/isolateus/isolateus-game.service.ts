@@ -1472,7 +1472,10 @@ export class IsolateusGameService {
       status: 'RESULTADO_RODADA',
       habitantes: partida.habitantes,
       esperanca: partida.esperanca,
-      faseIniciadaEm: null,
+      // A janela de decisão reabre COM relógio: é nela que a turma lê o
+      // veredito, e zerada ela faz a noite cair sozinha. Com base nula, o
+      // prazo nunca vencia e a partida só andava por "Adiantar noite".
+      faseIniciadaEm: new Date().toISOString(),
       vereditoQuarentena: {
         presoNome: preso.nome,
         eraAmeaca: false,
