@@ -219,6 +219,7 @@ export class IsolateusMatchService {
   async iniciar(
     professorId: string,
     partidaId: string,
+    opcoes: { debateHabilitado?: boolean } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     if (partida.status !== 'LOBBY') {
@@ -281,6 +282,9 @@ export class IsolateusMatchService {
       // precisa de base de relógio desde o Despertar.
       faseIniciadaEm: new Date().toISOString(),
       movimentosRecebidos: 0,
+      // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
+      // partida mudaria o jogo que a turma começou.
+      debateHabilitado: opcoes.debateHabilitado ?? true,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
     };
     Object.assign(partida, dados);

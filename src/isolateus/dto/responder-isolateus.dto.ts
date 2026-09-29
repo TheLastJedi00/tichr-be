@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class ResponderIsolateusDto {
   @IsInt()
@@ -32,4 +32,12 @@ export class CriarPartidaIsolateusDto {
   @IsOptional()
   @IsString()
   turmaId?: string;
+}
+
+/** Opções escolhidas no lobby, fixadas no Despertar. */
+export class IniciarPartidaIsolateusDto {
+  /** Debate Tático antes da votação da Quarentena. Ausente = ligado. */
+  @IsOptional()
+  @IsBoolean()
+  debateHabilitado?: boolean;
 }

@@ -118,6 +118,27 @@ describe('Isolateus — lobby e Despertar', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('o debate vem ligado por padrão (a partida nasce como sempre foi)', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(true);
+  });
+
+  it('o professor desliga o debate no lobby: a escolha é gravada no Despertar', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id, { debateHabilitado: false });
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+  });
+
+  it('partida antiga, sem o campo, é lida com o debate ligado', () => {
+    const antiga = new IsolateusMatchEntity({ id: 'velha' });
+    expect(antiga.debateHabilitado).toBe(true);
+  });
+
   it('o Despertar sorteia um codinome de cidade para cada habitante', async () => {
     const { service, partidas } = make();
     const p = await service.criar('prof', 'j1', 't1');

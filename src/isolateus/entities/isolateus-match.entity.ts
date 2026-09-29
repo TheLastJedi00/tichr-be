@@ -291,6 +291,12 @@ export class IsolateusMatchEntity {
    * na mesma — prender em série até acertar trivializaria a dedução.
    */
   quarentenaRodada: number | null;
+  /**
+   * O Debate Tático antes da votação, escolhido pelo professor no lobby e fixo
+   * depois do Despertar. Desligado, a Quarentena vai direto ao voto. Partidas
+   * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
+   */
+  debateHabilitado = true;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;
