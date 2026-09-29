@@ -131,7 +131,9 @@ export function vilaComAmeacas(
       Object.assign(segredo, seg);
     }),
     registrarResposta: jest.fn(async (_id, rodada: number, r) => {
-      if (respostas.some((x) => x.rodada === rodada && x.alunoId === r.alunoId)) {
+      if (
+        respostas.some((x) => x.rodada === rodada && x.alunoId === r.alunoId)
+      ) {
         return false;
       }
       respostas.push({ rodada, ...r });
@@ -167,4 +169,3 @@ export function vilaComAmeacas(
     setorDe,
   };
 }
-

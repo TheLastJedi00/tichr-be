@@ -206,6 +206,8 @@ export type TipoAcontecimento =
   | 'RESTAURADO'
   | 'REPARO_FALHOU'
   | 'QUARENTENA'
+  /** O Delírio Coletivo: todos trocaram de codinome (sem autor). */
+  | 'DELIRIO'
   | 'VEREDITO'
   | 'FIM';
 

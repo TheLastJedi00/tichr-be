@@ -45,7 +45,11 @@ function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
       const t = teams.find((x) => x.id === id);
       return t ? new WorTeamEntity({ ...t }) : null;
     },
-    atualizarTeam: async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+    atualizarTeam: async (
+      _m: string,
+      id: string,
+      d: Partial<WorTeamEntity>,
+    ) => {
       const t = teams.find((x) => x.id === id);
       if (t) Object.assign(t, d);
     },

@@ -452,7 +452,7 @@ export class IsolateusGameService {
 
     // O prazo dos poderes: o ganho numa rodada vale até ESTE fechamento (o da
     // noite seguinte). Controles de rodadas passadas também saem.
-    const cofre: Partial<IsolateusSegredoEntity> = {
+    Object.assign(segredo, {
       confirmacoesNoite: [],
       posicoesNoite: [],
       poderes: (segredo.poderes ?? []).filter(
@@ -461,12 +461,30 @@ export class IsolateusGameService {
       controles: (segredo.controles ?? []).filter(
         (c) => c.rodada >= partida.rodada,
       ),
-    };
-    Object.assign(segredo, cofre);
+    });
+    // O Delírio Coletivo troca nomes e ids no MESMO commit em que as posições
+    // novas aparecem: nome e lugar mudam juntos, e casar "quem era quem" pela
+    // posição fica mais difícil.
+    const delirou = this.aplicarDelirio(partida, segredo);
     await this.matches.commitPartida(
       partida.id,
-      { habitantes: partida.habitantes },
-      cofre,
+      {
+        habitantes: partida.habitantes,
+        ...(delirou ? { acontecimentos: partida.acontecimentos } : {}),
+      },
+      {
+        confirmacoesNoite: segredo.confirmacoesNoite,
+        posicoesNoite: segredo.posicoesNoite,
+        poderes: segredo.poderes,
+        controles: segredo.controles,
+        ...(delirou
+          ? {
+              delirioPendente: false,
+              vinculos: segredo.vinculos,
+              acoesRodada: segredo.acoesRodada,
+            }
+          : {}),
+      },
     );
 
     // A sabotagem NÃO é contestada: ela acerta e o setor cai na hora. O que a
@@ -514,6 +532,59 @@ export class IsolateusGameService {
       return this.abrirJanelaDeDecisao(partida, resumo);
     }
     return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
+  }
+
+  /**
+   * O Delírio Coletivo: a vila inteira troca de codinome entre si, numa
+   * permutação sem ponto fixo (ninguém fica com o próprio nome) — e os
+   * `habitanteId` são regerados, senão bastaria seguir o id pelo DevTools para
+   * desfazer a troca. Tudo que aponta para um habitante no cofre é remapeado.
+   *
+   * Trocar só o nome da Ameaça seria uma confissão (só ela pode mudar de nome);
+   * trocando todos, o Diário anuncia o delírio sem dizer quem o causou.
+   * Devolve `false` se não havia delírio a aplicar.
+   */
+  private aplicarDelirio(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): boolean {
+    if (!segredo.delirioPendente) return false;
+    segredo.delirioPendente = false;
+    const todos = partida.habitantes;
+    if (todos.length < 2) return false;
+
+    // Rotacionar uma ordem embaralhada é uma permutação sem ponto fixo.
+    const ordem = embaralhar(todos.map((_, i) => i));
+    const nomes = todos.map((h) => h.nome);
+    const novoId = new Map<string, string>();
+    ordem.forEach((i, k) => {
+      const doProximo = ordem[(k + 1) % ordem.length];
+      novoId.set(todos[i].id, randomUUID());
+      todos[i].nome = nomes[doProximo];
+    });
+    const trocar = (id: string) => novoId.get(id) ?? id;
+    for (const h of todos) h.id = trocar(h.id);
+
+    segredo.vinculos = segredo.vinculos.map((v) => ({
+      ...v,
+      habitanteId: trocar(v.habitanteId),
+    }));
+    segredo.controles = (segredo.controles ?? []).map((c) => ({
+      ...c,
+      habitanteId: trocar(c.habitanteId),
+    }));
+    segredo.acoesRodada = segredo.acoesDaNoite().map((j) => ({
+      ...j,
+      acao: j.acao.alvoId ? { ...j.acao, alvoId: trocar(j.acao.alvoId) } : j.acao,
+    }));
+    segredo.acaoRodada = null;
+
+    this.registrar(
+      partida,
+      'DELIRIO',
+      'Um delírio coletivo tomou a vila: ninguém mais atende pelo mesmo nome.',
+    );
+    return true;
   }
 
   /**

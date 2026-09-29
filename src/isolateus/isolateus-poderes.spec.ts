@@ -162,7 +162,10 @@ describe('Isolateus — usar um poder', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     }
     // NPC vale: o controle não distingue real de virtual.
-    await ctx.service.usarPoder('a1', 'p1', { poder: 'CONTROLE', alvoId: 'n1' });
+    await ctx.service.usarPoder('a1', 'p1', {
+      poder: 'CONTROLE',
+      alvoId: 'n1',
+    });
     expect(ctx.segredo.controles).toEqual([
       { ameacaAlunoId: 'a1', habitanteId: 'n1', rodada: 1 },
     ]);
@@ -170,7 +173,10 @@ describe('Isolateus — usar um poder', () => {
 
   it('Controle escolhido durante a noite vale para ESTA noite', async () => {
     const ctx = comPoder({ status: 'DESLOCAMENTO' });
-    await ctx.service.usarPoder('a1', 'p1', { poder: 'CONTROLE', alvoId: 'h3' });
+    await ctx.service.usarPoder('a1', 'p1', {
+      poder: 'CONTROLE',
+      alvoId: 'h3',
+    });
     expect(ctx.segredo.controles?.[0].rodada).toBe(0);
   });
 
@@ -178,7 +184,8 @@ describe('Isolateus — usar um poder', () => {
     const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO', reais: 5 });
     ctx.partida.rodada = 1;
     ctx.segredo.poderes = [{ alunoId: 'a1', ganhoNaRodada: 0 }];
-    for (const a of ['a3', 'a4', 'a5']) await ctx.service.confirmarPosicao(a, 'p1');
+    for (const a of ['a3', 'a4', 'a5'])
+      await ctx.service.confirmarPosicao(a, 'p1');
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
 
@@ -260,7 +267,12 @@ describe('Isolateus — Controle Mental', () => {
   });
 
   it('abdução presencial alcança quem está com o controlado — e nunca ele', async () => {
-    const ctx = controlando({ h1: 'energia', h3: 'saude', h4: 'saude', h5: 'energia' });
+    const ctx = controlando({
+      h1: 'energia',
+      h3: 'saude',
+      h4: 'saude',
+      h5: 'energia',
+    });
     await expect(
       ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h5' }),
     ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
@@ -276,7 +288,10 @@ describe('Isolateus — Controle Mental', () => {
     await expect(
       ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'saude' }),
     ).rejects.toMatchObject({ response: { code: 'SETOR_VISIVEL' } });
-    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'energia' });
+    await ctx.service.acaoAmeaca('a1', 'p1', {
+      tipo: 'ABDUZIR',
+      setorId: 'energia',
+    });
     expect(ctx.segredo.acoesDaNoite()[0].acao.setorId).toBe('energia');
   });
 
@@ -401,5 +416,107 @@ describe('Isolateus — Contágio', () => {
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
     await ctx.service.acaoAmeaca(contagiado, 'p1', { tipo: 'AGUARDAR' });
     expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+  });
+});
+
+describe('Isolateus — Delírio Coletivo', () => {
+  function comDelirio() {
+    const ctx = vilaComAmeacas({
+      ameacas: ['a1'],
+      reais: 4,
+      npcs: 3,
+      posicoes: {
+        h1: 'energia',
+        h2: 'saude',
+        h3: 'comercio',
+        n1: 'abastecimento',
+      },
+    });
+    ctx.segredo.delirioPendente = true;
+    return ctx;
+  }
+  /** Quem cada pessoa é, pelo vínculo (NPC pelo índice de criação). */
+  function retrato(ctx: ReturnType<typeof comDelirio>) {
+    return ctx.segredo.vinculos.map((v, i) => {
+      const h = ctx.partida.habitantes.find((x) => x.id === v.habitanteId)!;
+      return {
+        quem: v.alunoId ?? `npc${i}`,
+        id: h.id,
+        nome: h.nome,
+        setorId: h.setorId,
+      };
+    });
+  }
+  async function fecharNoite(ctx: ReturnType<typeof comDelirio>) {
+    for (const a of ['a2', 'a3', 'a4'])
+      await ctx.service.confirmarPosicao(a, 'p1');
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+  }
+
+  it('todos trocam de nome entre si — ninguém fica com o próprio', async () => {
+    const ctx = comDelirio();
+    const antes = retrato(ctx);
+    await fecharNoite(ctx);
+    const depois = retrato(ctx);
+
+    for (const d of depois) {
+      const a = antes.find((x) => x.quem === d.quem)!;
+      expect(d.nome).not.toBe(a.nome);
+    }
+    expect(depois.map((d) => d.nome).sort()).toEqual(
+      antes.map((a) => a.nome).sort(),
+    );
+    expect(ctx.segredo.delirioPendente).toBe(false);
+  });
+
+  it('os ids também são regerados: seguir o id pelo DevTools não desfaz a troca', async () => {
+    const ctx = comDelirio();
+    const antes = new Set(ctx.partida.habitantes.map((h) => h.id));
+    await fecharNoite(ctx);
+    for (const h of ctx.partida.habitantes) expect(antes.has(h.id)).toBe(false);
+  });
+
+  it('cada um continua onde estava, e o cofre segue apontando para a pessoa certa', async () => {
+    const ctx = comDelirio();
+    const antes = retrato(ctx);
+    await fecharNoite(ctx);
+    // Só os reais: os NPCs andam ao acaso no próprio fechamento da noite.
+    for (const d of retrato(ctx).filter((x) => !x.quem.startsWith('npc'))) {
+      expect(d.setorId).toBe(antes.find((a) => a.quem === d.quem)!.setorId);
+    }
+    // O aluno vê o próprio id e nome novos pelo painel.
+    const painel = await ctx.service.painel('a3', 'p1');
+    expect(painel.habitanteId).toBe(ctx.segredo.habitanteDe('a3'));
+    expect(painel.setorId).toBe('comercio');
+  });
+
+  it('a jogada da noite e o controle apontam para o id novo da vítima', async () => {
+    const ctx = comDelirio();
+    ctx.segredo.controles = [
+      { ameacaAlunoId: 'a1', habitanteId: 'h4', rodada: 1 },
+    ];
+    for (const a of ['a2', 'a3', 'a4'])
+      await ctx.service.confirmarPosicao(a, 'p1');
+    ctx.partida.habitantes.find((h) => h.id === 'h3')!.setorId = 'energia';
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' });
+
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.segredo.acoesDaNoite()[0].acao.alvoId).toBe(
+      ctx.segredo.habitanteDe('a3'),
+    );
+    expect(ctx.segredo.controles?.[0].habitanteId).toBe(
+      ctx.segredo.habitanteDe('a4'),
+    );
+  });
+
+  it('o Diário anuncia o delírio sem dizer quem o causou', async () => {
+    const ctx = comDelirio();
+    await fecharNoite(ctx);
+    const evento = ctx.partida.acontecimentos.find(
+      (a) => a.tipo === 'DELIRIO',
+    )!;
+    expect(evento.texto).toContain('delírio coletivo');
+    for (const h of ctx.partida.habitantes)
+      expect(evento.texto).not.toContain(h.nome);
   });
 });
