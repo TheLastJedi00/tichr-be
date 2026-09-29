@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ISOLATEUS } from './entities/isolateus-match.entity';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /** Cada aluno responde a alternativa dada (a correta é a 1). */
@@ -230,5 +231,91 @@ describe('Isolateus — o painel da Ameaça', () => {
       'h3',
       'h4',
     ]);
+  });
+});
+
+describe('Isolateus — Controle Mental', () => {
+  /** a1 controla o h3 nesta noite (rodada 0). */
+  function controlando(posicoes: Record<string, string>, controlado = 'h3') {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'], npcs: 1, posicoes });
+    ctx.segredo.controles = [
+      { ameacaAlunoId: 'a1', habitanteId: controlado, rodada: 0 },
+    ];
+    return ctx;
+  }
+
+  it('a sabotagem cai no setor do CONTROLADO, não no dela', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude' });
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    expect(ctx.segredo.acoesDaNoite()[0].acao).toEqual({
+      tipo: 'SABOTAR',
+      setorId: 'saude',
+    });
+  });
+
+  it('funciona com NPC controlado', async () => {
+    const ctx = controlando({ h1: 'energia', n1: 'comercio' }, 'n1');
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    expect(ctx.segredo.acoesDaNoite()[0].acao.setorId).toBe('comercio');
+  });
+
+  it('abdução presencial alcança quem está com o controlado — e nunca ele', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude', h4: 'saude', h5: 'energia' });
+    await expect(
+      ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h5' }),
+    ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
+    await expect(
+      ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h4' });
+    expect(ctx.segredo.acoesDaNoite()[0].acao.alvoId).toBe('h4');
+  });
+
+  it('às cegas, o setor "visível" passa a ser o do controlado', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude' });
+    await expect(
+      ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'saude' }),
+    ).rejects.toMatchObject({ response: { code: 'SETOR_VISIVEL' } });
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'energia' });
+    expect(ctx.segredo.acoesDaNoite()[0].acao.setorId).toBe('energia');
+  });
+
+  it('o controle de outra rodada não vale: ela age do próprio setor', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude' });
+    ctx.segredo.controles![0].rodada = 1; // é para a próxima noite
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    expect(ctx.segredo.acoesDaNoite()[0].acao.setorId).toBe('energia');
+  });
+
+  it('o controlado não fica sabendo: o painel dele não muda', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude' });
+    const painel = await ctx.service.painel('a3', 'p1');
+    expect(painel).toEqual({
+      papel: 'ALDEAO',
+      habitanteId: 'h3',
+      vivo: true,
+      preso: false,
+      setorId: 'saude',
+    });
+  });
+
+  it('o painel da Ameaça mostra o controlado e a fileira do setor dele', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude', h4: 'saude' });
+    const painel = await ctx.service.painel('a1', 'p1');
+    expect(painel.controle).toEqual({ habitanteId: 'h3', nome: 'Real 3' });
+    expect(painel.fileira?.setorId).toBe('saude');
+    expect(painel.fileira?.habitantes.map((h) => h.id)).toEqual(['h3', 'h4']);
+  });
+
+  it('preso na Quarentena do dia de controle, o controlado conta como inocente', async () => {
+    const ctx = controlando({ h1: 'energia', h3: 'saude' });
+    ctx.partida.status = 'QUARENTENA_VOTO';
+    ctx.partida.quarentenaRodada = 0;
+    for (const a of ['a1', 'a2', 'a3', 'a4', 'a5']) {
+      await ctx.service.votarSuspeito(a, 'p1', 'h3');
+    }
+    expect(ctx.partida.vereditoQuarentena?.eraAmeaca).toBe(false);
+    expect(ctx.partida.esperanca).toBe(100 - ISOLATEUS.DANO_INOCENTE);
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
   });
 });

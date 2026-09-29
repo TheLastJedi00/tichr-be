@@ -729,7 +729,13 @@ export class IsolateusGameService {
     }
 
     const ameaca = this.habitanteDoAluno(partida, segredo, alunoId);
-    const aqui = this.posicaoDe(segredo, ameaca);
+    // Sob Controle Mental, a jogada parte do setor do controlado: ela sabota,
+    // enxerga e abduz de lá — e o próprio setor vira o álibi.
+    const { setorId: aqui, controlado } = this.origemDaAmeaca(
+      partida,
+      segredo,
+      alunoId,
+    );
 
     if (dto.tipo === 'SABOTAR') {
       // O alvoId do cliente é ignorado: sabota-se onde se está.
@@ -767,6 +773,11 @@ export class IsolateusGameService {
     }
     if (alvo.id === ameaca.id) {
       throw new BadRequestException('A Ameaça não pode abduzir a si mesma.');
+    }
+    if (alvo.id === controlado?.id) {
+      throw new BadRequestException(
+        'Você age através deste habitante — ele não pode ser a vítima.',
+      );
     }
     if (segredo.ehAmeaca(segredo.alunoDe(alvo.id))) {
       throw new BadRequestException({
