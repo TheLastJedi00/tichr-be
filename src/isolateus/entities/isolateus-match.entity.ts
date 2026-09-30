@@ -4,6 +4,11 @@ export const ISOLATEUS = {
   ESPERANCA_INICIAL: 100,
   /** Um setor danificado (a vila errou a defesa). 6 setores × 15 = 90. */
   DANO_SABOTAGEM: 15,
+  /**
+   * Cada Contágio drena a Esperança — sem card, sem Diário. Proposto na spec
+   * 024: abaixo da sabotagem (15) e do inocente preso (20).
+   */
+  DANO_CONTAGIO: 10,
   /** Um morador abduzido na calada da noite. */
   DANO_ABDUCAO: 10,
   /** A vila trancou um inocente na Quarentena ("dano severo"). */
@@ -128,16 +133,18 @@ export interface Setor {
 }
 
 /**
- * Uma mensagem do Chat de Rumores. `FORJADO` é o rumor do Alienígena — publicado
- * sob o nome de um NPC, exatamente como qualquer outro: o tipo existe para o
- * histórico do servidor, e o cliente não deve usá-lo para destacar nada além do
- * `SINAL` (que a spec quer visivelmente marcado).
+ * Uma mensagem do feed da questão. Hoje só o `SINAL` — a dica anônima de quem
+ * foi abduzido ou preso.
+ *
+ * O Chat de Rumores (ruído de NPC e o rumor forjado da Ameaça) saiu: seus
+ * autores eram sempre NPCs, e o `tipo: 'FORJADO'` era público — a Névoa de
+ * Guerra vazava pela própria tela. `RUMOR` fica só para ler partidas antigas.
  */
 export interface Rumor {
   id: string;
   autorNome: string;
   texto: string;
-  tipo: 'RUMOR' | 'FORJADO' | 'SINAL';
+  tipo: 'SINAL' | 'RUMOR';
 }
 
 /** Uma fala do debate da Quarentena. */
@@ -199,6 +206,8 @@ export type TipoAcontecimento =
   | 'RESTAURADO'
   | 'REPARO_FALHOU'
   | 'QUARENTENA'
+  /** O Delírio Coletivo: todos trocaram de codinome (sem autor). */
+  | 'DELIRIO'
   | 'VEREDITO'
   | 'FIM';
 
@@ -291,6 +300,12 @@ export class IsolateusMatchEntity {
    * na mesma — prender em série até acertar trivializaria a dedução.
    */
   quarentenaRodada: number | null;
+  /**
+   * O Debate Tático antes da votação, escolhido pelo professor no lobby e fixo
+   * depois do Despertar. Desligado, a Quarentena vai direto ao voto. Partidas
+   * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
+   */
+  debateHabilitado = true;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;

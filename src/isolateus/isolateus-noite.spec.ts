@@ -129,10 +129,54 @@ function noite(opts: {
 }
 
 describe('Isolateus — a noite: deslocamento pelo mapa', () => {
-  it('anda um setor pela estrada', async () => {
+  it('anda um setor pela estrada — e só o próprio aluno sabe, até a noite fechar', async () => {
     const { service, setorDe } = noite({ posicoes: { h2: 'comunicacao' } });
     await service.mover('a2', 'p1', 'abastecimento');
+    // O doc público não muda no meio da noite: mover na hora entregava quem
+    // é real (os NPCs só andam no fechamento).
+    expect(setorDe('h2')).toBe('comunicacao');
+    expect((await service.painel('a2', 'p1')).setorId).toBe('abastecimento');
+  });
+
+  it('a posição da noite mora no cofre e é publicada de uma vez no fechamento', async () => {
+    const { service, partida, segredo, setorDe } = noite({
+      reais: 4,
+      posicoes: { h2: 'comunicacao', h3: 'energia' },
+    });
+    await service.mover('a2', 'p1', 'abastecimento');
+    await service.mover('a3', 'p1', 'seguranca');
+    expect(segredo.posicoesNoite).toEqual([
+      { habitanteId: 'h2', setorId: 'abastecimento' },
+      { habitanteId: 'h3', setorId: 'seguranca' },
+    ]);
+    expect(JSON.stringify(partida)).not.toContain('posicoesNoite');
+
+    await service.confirmarPosicao('a4', 'p1');
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' }); // fecha a noite
     expect(setorDe('h2')).toBe('abastecimento');
+    expect(setorDe('h3')).toBe('seguranca');
+    expect(segredo.posicoesNoite).toEqual([]);
+  });
+
+  it('um passo por noite, contado de onde a noite começou (não encadeia)', async () => {
+    const { service, setorDe } = noite({ posicoes: { h2: 'comunicacao' } });
+    await service.mover('a2', 'p1', 'energia');
+    // Segurança é vizinha da Energia, mas não da Comunicação, de onde ele saiu.
+    await expect(
+      service.mover('a2', 'p1', 'seguranca'),
+    ).rejects.toMatchObject({ response: { code: 'SEM_ESTRADA' } });
+    // Trocar de ideia para outro vizinho da origem é permitido.
+    await service.mover('a2', 'p1', 'saude');
+    expect((await service.painel('a2', 'p1')).setorId).toBe('saude');
+    expect(setorDe('h2')).toBe('comunicacao');
+  });
+
+  it('voltar ao setor de origem desfaz o deslocamento', async () => {
+    const { service, segredo } = noite({ posicoes: { h2: 'comunicacao' } });
+    await service.mover('a2', 'p1', 'energia');
+    await service.mover('a2', 'p1', 'comunicacao');
+    expect(segredo.posicoesNoite).toEqual([]);
+    expect((await service.painel('a2', 'p1')).setorId).toBe('comunicacao');
   });
 
   it('recusa salto para setor sem estrada direta', async () => {
@@ -283,6 +327,14 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.habitantes.find((h) => h.id === 'h2')!.vivo).toBe(true);
   });
 
+  it('a questão abre SEM Chat de Rumores: ruído automático saía sempre sob nome de NPC', async () => {
+    const { service, partida } = noite({ reais: 4, npcs: 3 });
+    await todosConfirmam(service, 4);
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    expect(partida.rumores).toEqual([]);
+  });
+
   it('a Ameaça não joga duas vezes na mesma noite', async () => {
     const { service } = noite({ reais: 4 });
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
@@ -352,7 +404,8 @@ describe('Isolateus — o amanhecer', () => {
     });
     await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'energia' });
     await service.mover('a1', 'p1', 'abastecimento');
-    expect(setorDe('h1')).toBe('abastecimento');
+    expect(setorDe('h1')).toBe('comunicacao'); // público só no fechamento
+    expect((await service.painel('a1', 'p1')).setorId).toBe('abastecimento');
   });
 
   it('a nova noite reabre a janela e zera as confirmações', async () => {
@@ -368,6 +421,23 @@ describe('Isolateus — o amanhecer', () => {
     expect(segredo.confirmacoesNoite).toEqual([]);
     expect(segredo.acaoRodada).toBeNull();
     expect(partida.faseIniciadaEm).not.toBeNull();
+  });
+
+  it('o veredito da Quarentena não atravessa a noite', async () => {
+    // Regressão: o card "Vocês aprisionaram um INOCENTE" seguia na janela de
+    // decisão das noites seguintes, até a próxima convocação.
+    const { service, partida } = noite({ reais: 4 });
+    partida.status = 'RESULTADO_RODADA';
+    partida.vereditoQuarentena = {
+      presoNome: 'Real 3',
+      eraAmeaca: false,
+      texto: 'Vocês aprisionaram um INOCENTE.',
+    };
+
+    await service.pularFase('prof', 'p1');
+
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.vereditoQuarentena).toBeNull();
   });
 });
 

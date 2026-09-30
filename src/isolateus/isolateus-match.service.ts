@@ -99,7 +99,8 @@ export class IsolateusMatchService {
       {
         alienAlunoId: '',
         vinculos: [],
-        acaoRodada: null,
+        ameacas: [],
+        acoesRodada: [],
         pulosDebate: [],
         confirmacoesNoite: [],
         pontos: {},
@@ -219,6 +220,7 @@ export class IsolateusMatchService {
   async iniciar(
     professorId: string,
     partidaId: string,
+    opcoes: { debateHabilitado?: boolean } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     if (partida.status !== 'LOBBY') {
@@ -271,7 +273,11 @@ export class IsolateusMatchService {
     // A Ameaça é sempre um habitante real (§2: "todos os NPCs são pacificamente
     // Aldeões"). A ordem dos habitantes também é embaralhada, para que a posição
     // na lista não revele quem entrou no lobby.
-    const alienAlunoId = embaralhar(reais)[0].alunoId;
+    const turmaId = partida.turmaId;
+    const alienAlunoId = await this.sortearAmeaca(
+      reais.map((r) => r.alunoId),
+      turmaId,
+    );
 
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'DESLOCAMENTO',
@@ -281,16 +287,47 @@ export class IsolateusMatchService {
       // precisa de base de relógio desde o Despertar.
       faseIniciadaEm: new Date().toISOString(),
       movimentosRecebidos: 0,
+      // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
+      // partida mudaria o jogo que a turma começou.
+      debateHabilitado: opcoes.debateHabilitado ?? true,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
     };
     Object.assign(partida, dados);
-    await this.matches.commitPartida(partidaId, dados, {
-      alienAlunoId,
-      vinculos,
-      acaoRodada: null,
-      pontos: {},
-    });
+    await this.matches.commitPartida(
+      partidaId,
+      dados,
+      {
+        alienAlunoId,
+        ameacas: [alienAlunoId],
+        vinculos,
+        acoesRodada: [],
+        pontos: {},
+      },
+      // Conta no sorteio, não no fim: a partida encerrada no meio também valeu
+      // — o aluno já viveu o papel.
+      turmaId ? { turmaId, alunoId: alienAlunoId } : undefined,
+    );
     return partida;
+  }
+
+  /**
+   * O rodízio da Ameaça: numa mesma turma, ninguém repete até todos os
+   * PRESENTES terem sido. Por contagem, não por lista que zera — o sorteio é só
+   * entre os inscritos que menos foram a Ameaça. O ciclo recomeça sozinho
+   * quando todos empatam, o aluno novo (0) é priorizado e o ausente não trava
+   * ninguém. Regra de bastidor: não é anunciada à turma.
+   *
+   * Partida sem turma (legado): sorteio livre, como sempre foi.
+   */
+  private async sortearAmeaca(
+    alunoIds: string[],
+    turmaId?: string,
+  ): Promise<string> {
+    if (!turmaId) return embaralhar(alunoIds)[0];
+    const vezes = await this.matches.lerRodizio(turmaId);
+    const menor = Math.min(...alunoIds.map((a) => vezes[a] ?? 0));
+    const elegiveis = alunoIds.filter((a) => (vezes[a] ?? 0) === menor);
+    return embaralhar(elegiveis)[0];
   }
 
   /**

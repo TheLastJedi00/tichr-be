@@ -256,11 +256,12 @@ describe('Isolateus — o Ciclo de Invasão', () => {
   });
 
   it('Instinto Humano: empate entre reais resolve pela alternativa de menor índice', async () => {
-    // 2 reais na correta ('b' = 1) e 2 na errada ('d' = 3), sem NPCs: empate
+    // 2 aldeões na correta ('b' = 1) e 2 na errada ('d' = 3), sem NPCs: empate
     // perfeito. O desempate olha só para os reais (também empatados) e cai na de
-    // menor índice — determinístico, sem depender do acaso.
-    const { service, partida } = cenario({ reais: 4, npcs: 0 });
-    await todosRespondem(service, 4, 1, { a3: 3, a4: 3 });
+    // menor índice — determinístico, sem depender do acaso. A Ameaça (a1)
+    // responde, mas o voto dela fica fora da apuração.
+    const { service, partida } = cenario({ reais: 5, npcs: 0 });
+    await todosRespondem(service, 5, 1, { a4: 3, a5: 3 });
 
     expect(partida.status).toBe('RESULTADO_RODADA');
     expect(partida.resumoRodada?.defendida).toBe(true); // venceu a 'b'
@@ -287,29 +288,18 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     );
   });
 
-  it('o rumor forjado sai no nome de um NPC, e só a Ameaça pode forjá-lo', async () => {
-    const { service, partida } = cenario({ reais: 4, npcs: 3 });
-
-    await expect(
-      service.forjarRumor('a2', 'p1', 'confiem em mim'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-
-    await service.forjarRumor('a1', 'p1', 'A resposta certa é a letra D!');
-    const forjado = partida.rumores.find((r) => r.tipo === 'FORJADO')!;
-    expect(forjado.autorNome).toMatch(/^NPC [123]$/);
-    expect(forjado.texto).toBe('A resposta certa é a letra D!');
-
-    // Uma interceptação por rodada.
-    await expect(
-      service.forjarRumor('a1', 'p1', 'de novo'),
-    ).rejects.toMatchObject({ response: { code: 'RUMOR_JA_ENVIADO' } });
+  it('o rumor forjado não existe mais: o motor não oferece a jogada', () => {
+    // Saía sempre sob nome de NPC e com tipo FORJADO público — entregava a
+    // Névoa de Guerra e a alternativa que a Ameaça queria empurrar.
+    const { service } = cenario({ reais: 4, npcs: 3 });
+    expect((service as unknown as Record<string, unknown>).forjarRumor).toBeUndefined();
   });
 
-  it('sem NPCs, o rumor forjado sai anônimo — o motor não incrimina um real', async () => {
-    const { service, partida } = cenario({ reais: 10, npcs: 0 });
-    await service.forjarRumor('a1', 'p1', 'é a letra A');
-    const forjado = partida.rumores.find((r) => r.tipo === 'FORJADO')!;
-    expect(forjado.autorNome).toBe('Voz na Névoa');
+  it('o painel da Ameaça não lista mais os NPCs (os antigos disfarces)', async () => {
+    const { service } = cenario({ reais: 4, npcs: 3 });
+    const painel = await service.painel('a1', 'p1');
+    expect(painel.papel).toBe('AMEACA');
+    expect(painel).not.toHaveProperty('disfarces');
   });
 
   it('o Sinal de Rádio é anônimo e só quem saiu da vila pode enviá-lo', async () => {

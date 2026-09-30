@@ -3,8 +3,8 @@ import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { MoverDto } from './dto/mover.dto';
+import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
-  ForjarRumorDto,
   MensagemDto,
   ResponderIsolateusDto,
   VotarSuspeitoDto,
@@ -87,6 +87,19 @@ export class AlunoIsolateusController {
     return this.game.acaoAmeaca(aluno.alunoId, id, dto);
   }
 
+  /**
+   * O Poder Alienígena ganho no acerto (Controle Mental, Contágio ou Delírio
+   * Coletivo). Devolve o painel atualizado; o doc público não muda aqui.
+   */
+  @Post(':id/poder')
+  poder(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: UsarPoderDto,
+  ) {
+    return this.game.usarPoder(aluno.alunoId, id, dto);
+  }
+
   /** A Defesa: o voto na solução do problema. */
   @Post(':id/resposta')
   responder(
@@ -95,16 +108,6 @@ export class AlunoIsolateusController {
     @Body() dto: ResponderIsolateusDto,
   ) {
     return this.game.responder(aluno.alunoId, id, dto.alternativaIndex);
-  }
-
-  /** A Sabotagem de Frequência: o rumor falso da Ameaça, sob o nome de um NPC. */
-  @Post(':id/rumor')
-  forjar(
-    @CurrentStudent() aluno: { alunoId: string },
-    @Param('id') id: string,
-    @Body() dto: ForjarRumorDto,
-  ) {
-    return this.game.forjarRumor(aluno.alunoId, id, dto.texto);
   }
 
   /** O Sinal Interceptado: a dica anônima de quem já foi levado. */

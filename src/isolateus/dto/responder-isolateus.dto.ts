@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class ResponderIsolateusDto {
   @IsInt()
@@ -6,14 +6,7 @@ export class ResponderIsolateusDto {
   alternativaIndex: number;
 }
 
-/** O Alienígena forja um argumento defendendo uma solução falsa (§4). */
-export class ForjarRumorDto {
-  @IsString()
-  @MaxLength(240)
-  texto: string;
-}
-
-/** Mensagem curta: rumor no chat da rodada, sinal de rádio ou fala do debate. */
+/** Mensagem curta: sinal de rádio ou fala do debate. */
 export class MensagemDto {
   @IsString()
   @MaxLength(240)
@@ -32,4 +25,12 @@ export class CriarPartidaIsolateusDto {
   @IsOptional()
   @IsString()
   turmaId?: string;
+}
+
+/** Opções escolhidas no lobby, fixadas no Despertar. */
+export class IniciarPartidaIsolateusDto {
+  /** Debate Tático antes da votação da Quarentena. Ausente = ligado. */
+  @IsOptional()
+  @IsBoolean()
+  debateHabilitado?: boolean;
 }
