@@ -5,8 +5,10 @@ export const WOR = {
   DANO_ATAQUE: 100,
   /** Ataque crítico (rodada em que TODOS os membros acertaram a letra). */
   DANO_CRITICO: 200,
-  /** Cura ao acertar a palavra inteira (Risco Heroico). */
+  /** Cura ao acertar a palavra inteira (Risco Heroico → Recuperar HP). */
   CURA_MASSIVA: 400,
+  /** Dano num castelo rival ao acertar a palavra inteira (Risco Heroico → Catapulta). */
+  DANO_CATAPULTA: 300,
   MAX_CARTAS: 3,
   // ===== Pontuação (desempate por pontos + crédito no ranking da sala) =====
   /** Pontos ganhos por ponto de dano causado a um rival (100 normal / 200 crít). */
@@ -25,6 +27,7 @@ export const WOR = {
 export type TipoAcaoGlobal =
   | 'ATAQUE'
   | 'CURA'
+  | 'CATAPULTA'
   | 'USURPACAO'
   | 'DANO_CRITICO'
   | 'DICA';

@@ -121,7 +121,24 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.status).toBe('QUARENTENA_DEBATE');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
     expect(partida.faseIniciadaEm).not.toBeNull();
-    expect(partida.debate.length).toBeGreaterThan(0); // os NPCs já acusam
+    // Sem falas automáticas: elas saíam sempre sob nome de NPC e entregavam
+    // quem é virtual. O debate é só dos alunos.
+    expect(partida.debate).toEqual([]);
+  });
+
+  it('debate desligado no lobby: a Quarentena vai direto para a votação', async () => {
+    const { service, partida } = cenario({ reais: 3, npcs: 2 });
+    partida.debateHabilitado = false;
+    partida.votosRecebidos = 3; // resto de uma Quarentena anterior
+    await service.convocarQuarentena('p1', 'a2');
+
+    expect(partida.status).toBe('QUARENTENA_VOTO');
+    expect(partida.quarentenaRodada).toBe(partida.rodada);
+    expect(partida.faseIniciadaEm).not.toBeNull();
+    expect(partida.debate).toEqual([]); // nem as falas dos NPCs
+    expect(partida.votosRecebidos).toBe(0);
+    expect(partida.vereditoQuarentena).toBeNull();
+    expect(partida.acontecimentos.at(-1)?.tipo).toBe('QUARENTENA');
   });
 
   it('é uma por rodada — a vila não encadeia convocações na mesma rodada', async () => {
@@ -292,6 +309,38 @@ describe('Isolateus — a Quarentena', () => {
     const texto = partida.vereditoQuarentena!.texto;
     expect(texto).toContain('INOCENTE');
     expect(texto).not.toMatch(/NPC|virtual|bot/i);
+  });
+
+  it('prender inocente reabre a janela de decisão COM relógio: a noite cai sozinha', async () => {
+    // Regressão: o veredito de inocente voltava a RESULTADO_RODADA com
+    // faseIniciadaEm nulo — o relógio travava em 15s e só "Adiantar noite"
+    // destravava a partida.
+    jest.useFakeTimers({ now: new Date('2026-09-29T12:00:00Z') });
+    try {
+      const { service, partida } = cenario({ reais: 4 });
+      await service.convocarQuarentena('p1', 'a2');
+      partida.status = 'QUARENTENA_VOTO';
+      for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
+        await service.votarSuspeito(aluno, 'p1', 'h3');
+      }
+      expect(partida.status).toBe('RESULTADO_RODADA');
+      expect(partida.faseIniciadaEm).toBe('2026-09-29T12:00:00.000Z');
+
+      // Antes do prazo, cobrar não faz nada.
+      jest.setSystemTime(new Date('2026-09-29T12:00:05Z'));
+      await service.resolverPorTempo('p1', { alunoId: 'a2' });
+      expect(partida.status).toBe('RESULTADO_RODADA');
+
+      // Zerada a janela, qualquer tela cobra e a noite seguinte começa.
+      jest.setSystemTime(
+        new Date(Date.parse('2026-09-29T12:00:00Z') + ISOLATEUS.JANELA_DECISAO_MS),
+      );
+      await service.resolverPorTempo('p1', { alunoId: 'a2' });
+      expect(partida.status).toBe('DESLOCAMENTO');
+      expect(partida.rodada).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('prender inocente com a Esperança no limite entrega a partida à Ameaça', async () => {

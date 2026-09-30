@@ -126,7 +126,7 @@ describe('Isolateus — a Ameaça age onde está', () => {
       tipo: 'SABOTAR',
       alvoId: 'abastecimento',
     });
-    expect(segredo.acaoRodada).toEqual({ tipo: 'SABOTAR', setorId: 'energia' });
+    expect(segredo.acoesDaNoite()[0].acao).toEqual({ tipo: 'SABOTAR', setorId: 'energia' });
   });
 
   it('não sabota o setor onde está se ele já caiu', async () => {
@@ -148,12 +148,22 @@ describe('Isolateus — a Ameaça age onde está', () => {
     ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
   });
 
+  it('abdução presencial enxerga quem chegou ao setor nesta noite (posição do cofre)', async () => {
+    const { service } = mapa({
+      posicoes: { h1: 'energia', h2: 'comunicacao' },
+    });
+    await service.mover('a2', 'p1', 'energia');
+    await expect(
+      service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' }),
+    ).resolves.toBeDefined();
+  });
+
   it('abdução presencial aceita alvo do próprio setor', async () => {
     const { service, segredo } = mapa({
       posicoes: { h1: 'energia', h2: 'energia' },
     });
     await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
-    expect(segredo.acaoRodada).toEqual({ tipo: 'ABDUZIR', alvoId: 'h2' });
+    expect(segredo.acoesDaNoite()[0].acao).toEqual({ tipo: 'ABDUZIR', alvoId: 'h2' });
   });
 
   it('abdução às cegas aposta num setor distante, sem alvo nomeado', async () => {
@@ -163,7 +173,7 @@ describe('Isolateus — a Ameaça age onde está', () => {
       setorId: 'abastecimento',
     });
     // Nenhum alvo gravado: a vítima só é sorteada na resolução.
-    expect(segredo.acaoRodada).toEqual({
+    expect(segredo.acoesDaNoite()[0].acao).toEqual({
       tipo: 'ABDUZIR',
       setorId: 'abastecimento',
     });
@@ -179,7 +189,7 @@ describe('Isolateus — a Ameaça age onde está', () => {
   it('AGUARDAR é uma jogada válida: a Ameaça pode se apagar do mapa', async () => {
     const { service, segredo } = mapa();
     await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
-    expect(segredo.acaoRodada).toEqual({ tipo: 'AGUARDAR' });
+    expect(segredo.acoesDaNoite()[0].acao).toEqual({ tipo: 'AGUARDAR' });
   });
 });
 
@@ -189,6 +199,16 @@ describe('Isolateus — a Reconstrução', () => {
       posicoes: { h2: 'energia' },
       ruinas: ['energia'],
     });
+    await service.declararReparo('a2', 'p1');
+    expect(partida.reparoSetorId).toBe('energia');
+  });
+
+  it('quem ENTROU na ruína nesta noite organiza o reparo (posição do cofre)', async () => {
+    const { service, partida } = mapa({
+      posicoes: { h2: 'comunicacao' },
+      ruinas: ['energia'],
+    });
+    await service.mover('a2', 'p1', 'energia');
     await service.declararReparo('a2', 'p1');
     expect(partida.reparoSetorId).toBe('energia');
   });
@@ -223,7 +243,9 @@ describe('Isolateus — a Reconstrução', () => {
     // O público guarda o setor e mais nada: nenhum campo liga o reparo a um
     // habitante, e o alunoId nem aparece.
     expect(partida.reparoSetorId).toBe('energia');
-    expect(JSON.stringify(partida)).not.toContain('a2');
+    // Com as aspas: sem elas, a busca casa com qualquer UUID do Diário que
+    // contenha "a2" e o teste falha ao acaso (mesmo idioma da Quarentena).
+    expect(JSON.stringify(partida)).not.toContain('"a2"');
     const campos = JSON.stringify(partida).match(/"[a-zA-Z]+":/g) ?? [];
     expect(campos).not.toContain('"reparoAutor":');
     expect(campos).not.toContain('"reparoHabitanteId":');

@@ -40,14 +40,32 @@ export class IsolateusSegredoEntity {
   id: string; // = partidaId
   partidaId: string;
 
-  /** O aluno sorteado como Ameaça (sempre um habitante real). */
+  /**
+   * A Ameaça ORIGINAL — a sorteada no Despertar (sempre um habitante real). É a
+   * única que pode contagiar e a única que o rodízio da turma conta.
+   */
   alienAlunoId: string;
+
+  /**
+   * Todas as Ameaças da partida (alunoIds), a original inclusa. Cresce com o
+   * Contágio. Ausente em partidas anteriores ao poder: leia por `ameacasIds()`.
+   */
+  ameacas?: string[];
 
   /** habitanteId → alunoId. Sem `alunoId`, o habitante é um NPC. */
   vinculos: VinculoHabitante[];
 
-  /** A ação escolhida pelo Alien nesta rodada (limpa ao resolvê-la). */
-  acaoRodada: AcaoAmeaca | null;
+  /**
+   * @deprecated Campo único da época de uma Ameaça só. Só é lido (por
+   * `acoesDaNoite`) em partidas antigas; o motor grava `acoesRodada`.
+   */
+  acaoRodada?: AcaoAmeaca | null;
+
+  /**
+   * A jogada de cada Ameaça nesta noite (limpa ao resolvê-la). Lista, e não
+   * mapa: o cofre é gravado com `merge`, e um mapa vazio não apaga chaves.
+   */
+  acoesRodada?: Array<{ alunoId: string; acao: AcaoAmeaca }>;
 
   /**
    * Alunos que pularam o Debate da Quarentena corrente (limpa a cada convocação).
@@ -66,11 +84,64 @@ export class IsolateusSegredoEntity {
    */
   confirmacoesNoite: string[];
 
+  /**
+   * Para onde cada habitante real se deslocou NESTA noite (só quem andou).
+   *
+   * Mora no cofre porque publicar o movimento na hora entregava a Névoa de
+   * Guerra: os NPCs só andam no fechamento da noite, então quem se mexia no
+   * meio da janela era, por eliminação, real. O doc público só recebe as
+   * posições em `fecharNoite`, todas de uma vez.
+   *
+   * Lista, e não mapa, de propósito: o cofre é gravado com `merge`, e um mapa
+   * vazio não apaga as chaves antigas — a lista é substituída inteira.
+   */
+  posicoesNoite: Array<{ habitanteId: string; setorId: string }> = [];
+
+  /**
+   * Poderes Alienígenas ganhos e ainda não usados — um por Ameaça, sem acúmulo
+   * (o acerto novo substitui o que sobrou). `ganhoNaRodada` marca o prazo: vale
+   * até o fechamento da noite seguinte. Lista, pelo mesmo motivo do merge.
+   */
+  poderes?: Array<{ alunoId: string; ganhoNaRodada: number }>;
+
+  /**
+   * Controles Mentais ativos: na `rodada` indicada (a noite e o dia dela), as
+   * jogadas da Ameaça partem do setor do habitante controlado. Um por Ameaça.
+   */
+  controles?: Array<{
+    ameacaAlunoId: string;
+    habitanteId: string;
+    rodada: number;
+  }>;
+
+  /** Contágio escolhido, materializado no próximo fechamento da noite. */
+  contagioPendente?: boolean;
+
+  /** Delírio Coletivo escolhido, materializado no próximo fechamento da noite. */
+  delirioPendente?: boolean;
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 
   constructor(partial: Partial<IsolateusSegredoEntity> = {}) {
     Object.assign(this, partial);
+  }
+
+  /** Os alunos que são Ameaça (original + contagiadas). */
+  ameacasIds(): string[] {
+    return this.ameacas?.length ? this.ameacas : [this.alienAlunoId];
+  }
+
+  ehAmeaca(alunoId: string | undefined): boolean {
+    return !!alunoId && this.ameacasIds().includes(alunoId);
+  }
+
+  /** As jogadas da noite, lendo também o campo único das partidas antigas. */
+  acoesDaNoite(): Array<{ alunoId: string; acao: AcaoAmeaca }> {
+    if (this.acoesRodada) return this.acoesRodada;
+    return this.acaoRodada
+      ? [{ alunoId: this.alienAlunoId, acao: this.acaoRodada }]
+      : [];
   }
 
   /** O habitante que representa este aluno na vila. */

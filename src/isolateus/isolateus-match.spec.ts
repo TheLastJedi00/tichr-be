@@ -13,6 +13,8 @@ import { NOMES_CIDADES, SETOR_IDS } from './isolateus.data';
 function repoFake() {
   const partidas = new Map<string, IsolateusMatchEntity>();
   const segredos = new Map<string, IsolateusSegredoEntity>();
+  /** O rodízio da Ameaça por turma (server-only): turmaId → alunoId → vezes. */
+  const rodizio = new Map<string, Record<string, number>>();
   let seq = 0;
 
   const repo = {
@@ -28,18 +30,33 @@ function repoFake() {
     }),
     buscar: jest.fn(async (id: string) => partidas.get(id) ?? null),
     buscarSegredo: jest.fn(async (id: string) => segredos.get(id) ?? null),
-    commitPartida: jest.fn(async (id: string, publico = {}, segredo = {}) => {
-      Object.assign(partidas.get(id)!, publico);
-      Object.assign(segredos.get(id)!, segredo);
-    }),
+    commitPartida: jest.fn(
+      async (
+        id: string,
+        publico = {},
+        segredo = {},
+        ameaca?: { turmaId: string; alunoId: string },
+      ) => {
+        Object.assign(partidas.get(id)!, publico);
+        Object.assign(segredos.get(id)!, segredo);
+        if (ameaca) {
+          const vezes = rodizio.get(ameaca.turmaId) ?? {};
+          vezes[ameaca.alunoId] = (vezes[ameaca.alunoId] ?? 0) + 1;
+          rodizio.set(ameaca.turmaId, vezes);
+        }
+      },
+    ),
+    lerRodizio: jest.fn(async (turmaId: string) => ({
+      ...(rodizio.get(turmaId) ?? {}),
+    })),
     ativaDaTurma: jest.fn(),
   } as unknown as IsolateusMatchRepository;
 
-  return { repo, partidas, segredos };
+  return { repo, partidas, segredos, rodizio };
 }
 
 function make(opts: { questoes?: number } = {}) {
-  const { repo, partidas, segredos } = repoFake();
+  const { repo, partidas, segredos, rodizio } = repoFake();
   const jogos = {
     findById: jest.fn(async () => ({
       id: 'j1',
@@ -64,7 +81,19 @@ function make(opts: { questoes?: number } = {}) {
   } as unknown as ProfessorService;
 
   const service = new IsolateusMatchService(repo, jogos, turmas, professores);
-  return { service, repo, partidas, segredos };
+  return { service, repo, partidas, segredos, rodizio };
+}
+
+/** Uma partida completa até o Despertar; devolve quem foi sorteado Ameaça. */
+async function jogarUma(
+  ctx: ReturnType<typeof make>,
+  alunos: string[],
+  turmaId: string | undefined = 't1',
+): Promise<string> {
+  const p = await ctx.service.criar('prof', 'j1', turmaId);
+  for (const a of alunos) await ctx.service.entrar(a, 't1', p.id);
+  await ctx.service.iniciar('prof', p.id);
+  return ctx.segredos.get(p.id)!.alienAlunoId;
 }
 
 /** Entra com N alunos no lobby. */
@@ -116,6 +145,27 @@ describe('Isolateus — lobby e Despertar', () => {
     await expect(
       service.removerInscrito('prof', p.id, 'a1'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('o debate vem ligado por padrão (a partida nasce como sempre foi)', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(true);
+  });
+
+  it('o professor desliga o debate no lobby: a escolha é gravada no Despertar', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id, { debateHabilitado: false });
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+  });
+
+  it('partida antiga, sem o campo, é lida com o debate ligado', () => {
+    const antiga = new IsolateusMatchEntity({ id: 'velha' });
+    expect(antiga.debateHabilitado).toBe(true);
   });
 
   it('o Despertar sorteia um codinome de cidade para cada habitante', async () => {
@@ -254,5 +304,66 @@ describe('Isolateus — lobby e Despertar', () => {
     expect(publico.status).toBe('DESLOCAMENTO'); // a noite abre junto com o Despertar
     expect(publico.rodada).toBe(0);
     expect(publico.totalRodadas).toBe(10);
+  });
+});
+
+describe('Isolateus — rodízio da Ameaça por turma', () => {
+  const ALUNOS = ['a1', 'a2', 'a3', 'a4'];
+
+  it('ninguém repete como Ameaça até todos os presentes terem sido', async () => {
+    const ctx = make();
+    const sorteados: string[] = [];
+    for (let i = 0; i < ALUNOS.length; i++) {
+      sorteados.push(await jogarUma(ctx, ALUNOS));
+    }
+    expect(new Set(sorteados).size).toBe(ALUNOS.length);
+
+    // Ciclo fechado: todos empatam de novo e qualquer um pode ser sorteado.
+    const quinta = await jogarUma(ctx, ALUNOS);
+    expect(ALUNOS).toContain(quinta);
+    expect(ctx.rodizio.get('t1')).toEqual(
+      expect.objectContaining({ [quinta]: 2 }),
+    );
+  });
+
+  it('aluno novo na turma é priorizado (nunca foi a Ameaça)', async () => {
+    const ctx = make();
+    ctx.rodizio.set('t1', { a1: 1, a2: 1, a3: 1 });
+    expect(await jogarUma(ctx, ALUNOS)).toBe('a4');
+  });
+
+  it('ausente não trava o rodízio de quem está presente', async () => {
+    const ctx = make();
+    // a5 nunca jogou, mas não está na aula: o sorteio olha só os inscritos.
+    ctx.rodizio.set('t1', { a1: 2, a2: 1, a3: 1, a4: 1 });
+    expect(['a2', 'a3', 'a4']).toContain(await jogarUma(ctx, ALUNOS));
+  });
+
+  it('o rodízio é por turma: outra turma não herda a contagem', async () => {
+    const ctx = make();
+    ctx.rodizio.set('t2', { a1: 5, a2: 5, a3: 5 });
+    await jogarUma(ctx, ALUNOS); // turma t1
+    expect(ctx.rodizio.get('t2')).toEqual({ a1: 5, a2: 5, a3: 5 });
+    expect(Object.values(ctx.rodizio.get('t1')!)).toEqual([1]);
+  });
+
+  it('partida sem turma: sorteio livre e nada é gravado', async () => {
+    const ctx = make();
+    const p = await ctx.service.criar('prof', 'j1', 't1');
+    for (const a of ALUNOS) await ctx.service.entrar(a, 't1', p.id);
+    ctx.partidas.get(p.id)!.turmaId = undefined; // legado
+    await ctx.service.iniciar('prof', p.id);
+
+    expect(ALUNOS).toContain(ctx.segredos.get(p.id)!.alienAlunoId);
+    expect(ctx.rodizio.size).toBe(0);
+  });
+
+  it('a contagem nunca vai para a camada pública', async () => {
+    const ctx = make();
+    const p = await ctx.service.criar('prof', 'j1', 't1');
+    for (const a of ALUNOS) await ctx.service.entrar(a, 't1', p.id);
+    await ctx.service.iniciar('prof', p.id);
+    const json = JSON.stringify(ctx.partidas.get(p.id));
+    expect(json).not.toMatch(/rodizio|ameacas/);
   });
 });

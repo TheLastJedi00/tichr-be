@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
+import { FieldValue } from 'firebase-admin/firestore';
 import { FirebaseService } from '../firebase/firebase.service';
 import { IsolateusMatchEntity } from './entities/isolateus-match.entity';
 import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
@@ -38,6 +39,9 @@ export class IsolateusMatchRepository {
   }
   private get votos() {
     return this.firebase.firestore.collection('isolateus_votos');
+  }
+  private get rodizio() {
+    return this.firebase.firestore.collection('isolateus_rodizio');
   }
   private semId<T extends { id?: string }>(data: T): Omit<T, 'id'> {
     const plain = { ...data };
@@ -85,6 +89,8 @@ export class IsolateusMatchRepository {
     partidaId: string,
     publico: Partial<IsolateusMatchEntity>,
     segredo: Partial<IsolateusSegredoEntity> = {},
+    /** Só no Despertar: conta mais uma vez como Ameaça no rodízio da turma. */
+    ameaca?: { turmaId: string; alunoId: string },
   ): Promise<void> {
     const batch = this.firebase.firestore.batch();
     if (Object.keys(publico).length) {
@@ -97,7 +103,25 @@ export class IsolateusMatchRepository {
         merge: true,
       });
     }
+    if (ameaca) {
+      // `increment` e não leitura+escrita: dois Despertares simultâneos na mesma
+      // turma não podem perder uma contagem.
+      batch.set(
+        this.rodizio.doc(ameaca.turmaId),
+        { ameacas: { [ameaca.alunoId]: FieldValue.increment(1) } },
+        { merge: true },
+      );
+    }
     await batch.commit();
+  }
+
+  /**
+   * Quantas vezes cada aluno da turma já foi a Ameaça. Server-only: revela quem
+   * já teve o papel, então cai no deny-all das Firestore Rules.
+   */
+  async lerRodizio(turmaId: string): Promise<Record<string, number>> {
+    const snap = await this.rodizio.doc(turmaId).get();
+    return (snap.data()?.ameacas as Record<string, number> | undefined) ?? {};
   }
 
   /**
