@@ -1461,6 +1461,20 @@ export class IsolateusGameService {
    * O Instinto Humano: no empate, o consenso dos habitantes reais tem peso
    * soberano sobre o voto randômico dos NPCs.
    */
+  /**
+   * O índice mais votado, com sorteio entre os empatados. Por sorteio e não
+   * pelo menor índice: com só votos reais, o empate é comum, e o desempate
+   * determinístico condenaria sempre quem está no começo da lista.
+   */
+  private maisVotadoComSorteio(votos: number[]): number {
+    const maximo = Math.max(...votos);
+    const empatados = votos
+      .map((v, i) => ({ v, i }))
+      .filter((x) => x.v === maximo)
+      .map((x) => x.i);
+    return embaralhar(empatados)[0];
+  }
+
   private apurar(votosTotais: number[], votosReais: number[]): number {
     const maximo = Math.max(...votosTotais);
     const empatadas = votosTotais
@@ -1785,8 +1799,8 @@ export class IsolateusGameService {
   }
 
   /**
-   * A Revelação. Apura os votos (reais + NPCs randômicos, com o mesmo Instinto
-   * Humano no empate) e tranca o mais votado.
+   * A Revelação. Apura os votos dos habitantes reais e tranca o mais votado;
+   * no empate (inclusive sem voto nenhum), sorteio entre os empatados.
    *
    * Se for a Ameaça, a invasão é contida e a Vila vence. Se for um inocente, a
    * Esperança sofre dano severo e **a identidade do preso permanece em segredo**
@@ -1804,13 +1818,10 @@ export class IsolateusGameService {
       const i = candidatos.findIndex((h) => h.id === v.suspeitoId);
       if (i >= 0) votosReais[i]++;
     }
-    const npcsVivos = candidatos.filter((h) => !segredo.alunoDe(h.id)).length;
-    const votosTotais = [...votosReais];
-    for (let i = 0; i < npcsVivos; i++) {
-      votosTotais[Math.floor(Math.random() * candidatos.length)]++;
-    }
-
-    const preso = candidatos[this.apurar(votosTotais, votosReais)];
+    // Só a turma decide quem é preso: o voto aleatório dos NPCs era ruído que
+    // podia decidir a prisão sozinho (025 §2.3). A expulsão continua
+    // obrigatória — sem voto nenhum, todos empatam em zero e o sorteio cobre.
+    const preso = candidatos[this.maisVotadoComSorteio(votosReais)];
     preso.preso = true;
     const eraAmeaca = segredo.ehAmeaca(segredo.alunoDe(preso.id));
 
