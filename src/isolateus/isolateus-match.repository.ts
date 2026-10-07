@@ -206,4 +206,27 @@ export class IsolateusMatchRepository {
         suspeitoId: v.suspeitoId as string,
       }));
   }
+
+  /**
+   * O Delírio Coletivo regerou os ids: os votos já depositados nesta rodada
+   * passam a apontar para o id novo do mesmo suspeito.
+   */
+  async remapearVotos(
+    partidaId: string,
+    rodada: number,
+    trocar: Record<string, string>,
+  ): Promise<void> {
+    const snap = await this.votos.where('partidaId', '==', partidaId).get();
+    const batch = this.firebase.firestore.batch();
+    let mudou = false;
+    for (const d of snap.docs) {
+      const v = d.data();
+      const novo = trocar[v.suspeitoId as string];
+      if (v.rodada === rodada && novo) {
+        batch.update(d.ref, { suspeitoId: novo });
+        mudou = true;
+      }
+    }
+    if (mudou) await batch.commit();
+  }
 }

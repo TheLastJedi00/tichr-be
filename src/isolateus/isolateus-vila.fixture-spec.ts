@@ -152,6 +152,15 @@ export function vilaComAmeacas(
     lerVotos: jest.fn(async (_id, rodada: number) =>
       votos.filter((v) => v.rodada === rodada),
     ),
+    remapearVotos: jest.fn(
+      async (_id, rodada: number, trocar: Record<string, string>) => {
+        for (const v of votos) {
+          if (v.rodada === rodada && trocar[v.suspeitoId]) {
+            v.suspeitoId = trocar[v.suspeitoId];
+          }
+        }
+      },
+    ),
   } as unknown as IsolateusMatchRepository;
 
   const jogos = {
@@ -167,5 +176,6 @@ export function vilaComAmeacas(
     partida,
     segredo,
     setorDe,
+    repo,
   };
 }

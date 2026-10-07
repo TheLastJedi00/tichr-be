@@ -470,7 +470,13 @@ export class IsolateusGameService {
       partida.id,
       {
         habitantes: partida.habitantes,
-        ...(delirou ? { acontecimentos: partida.acontecimentos } : {}),
+        ...(delirou
+          ? {
+              acontecimentos: partida.acontecimentos,
+              quarentenaConvocadaPor: partida.quarentenaConvocadaPor ?? null,
+              convocadorBloqueado: partida.convocadorBloqueado ?? null,
+            }
+          : {}),
       },
       {
         confirmacoesNoite: segredo.confirmacoesNoite,
@@ -550,8 +556,22 @@ export class IsolateusGameService {
   ): boolean {
     if (!segredo.delirioPendente) return false;
     segredo.delirioPendente = false;
+    return this.permutarVila(partida, segredo) !== null;
+  }
+
+  /**
+   * A permutação do Delírio, comum ao poder da Ameaça e ao botão do professor:
+   * troca nomes e regera ids, remapeia tudo que aponta para um habitante (cofre
+   * e doc público) e registra o evento sem autor. Devolve o mapa id antigo →
+   * novo (para os votos guardados fora do cofre), ou `null` se a vila é pequena
+   * demais para trocar nomes.
+   */
+  private permutarVila(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Record<string, string> | null {
     const todos = partida.habitantes;
-    if (todos.length < 2) return false;
+    if (todos.length < 2) return null;
 
     // Rotacionar uma ordem embaralhada é uma permutação sem ponto fixo.
     const ordem = embaralhar(todos.map((_, i) => i));
@@ -578,13 +598,73 @@ export class IsolateusGameService {
       acao: j.acao.alvoId ? { ...j.acao, alvoId: trocar(j.acao.alvoId) } : j.acao,
     }));
     segredo.acaoRodada = null;
+    segredo.posicoesNoite = (segredo.posicoesNoite ?? []).map((p) => ({
+      ...p,
+      habitanteId: trocar(p.habitanteId),
+    }));
+    if (partida.quarentenaConvocadaPor) {
+      partida.quarentenaConvocadaPor = {
+        ...partida.quarentenaConvocadaPor,
+        habitanteId: trocar(partida.quarentenaConvocadaPor.habitanteId),
+      };
+    }
+    if (partida.convocadorBloqueado) {
+      partida.convocadorBloqueado = {
+        ...partida.convocadorBloqueado,
+        habitanteId: trocar(partida.convocadorBloqueado.habitanteId),
+      };
+    }
 
     this.registrar(
       partida,
       'DELIRIO',
       'Um delírio coletivo tomou a vila: ninguém mais atende pelo mesmo nome.',
     );
-    return true;
+    return Object.fromEntries(novoId);
+  }
+
+  /**
+   * O Delírio Coletivo disparado pelo professor (anti-trapaça: alunos mostrando
+   * a tela ou combinando por fora). Mesma permutação do poder da Ameaça, mas na
+   * hora, em qualquer fase de jogo, e com o mesmo texto no Diário — a turma não
+   * distingue quem causou. Não consome um Delírio pendente de uma Ameaça.
+   */
+  async delirioDoProfessor(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
+      throw new BadRequestException(
+        'O delírio coletivo só vale com a investigação em andamento.',
+      );
+    }
+    const trocar = this.permutarVila(partida, segredo);
+    if (!trocar) return partida;
+
+    // Os votos da Quarentena moram fora do cofre (um doc por aluno) e apontam
+    // para o suspeito pelo id antigo.
+    await this.matches.remapearVotos(partida.id, partida.rodada, trocar);
+    await this.matches.commitPartida(
+      partida.id,
+      {
+        habitantes: partida.habitantes,
+        acontecimentos: partida.acontecimentos,
+        quarentenaConvocadaPor: partida.quarentenaConvocadaPor ?? null,
+        convocadorBloqueado: partida.convocadorBloqueado ?? null,
+      },
+      {
+        vinculos: segredo.vinculos,
+        controles: segredo.controles,
+        acoesRodada: segredo.acoesRodada,
+        acaoRodada: null,
+        posicoesNoite: segredo.posicoesNoite,
+      },
+    );
+    return partida;
   }
 
   /**
