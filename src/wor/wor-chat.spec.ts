@@ -11,7 +11,11 @@ import { WorMatchRepository } from './wor-match.repository';
 import { WorGameService } from './wor-game.service';
 import { WOR, WorMatchEntity } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
-import { CanalEquipe, MensagemChat } from './entities/wor-chat.entity';
+import {
+  CanalEquipe,
+  MensagemChat,
+  WorChatEntity,
+} from './entities/wor-chat.entity';
 import { ModeracaoService } from '../moderacao/moderacao.service';
 
 /**
@@ -119,5 +123,71 @@ describe('WorChatService — canal da equipe (Task 2)', () => {
     const { service, match } = cenario();
     const { canalId } = await service.canal('a1', 'm1');
     expect(JSON.stringify(match)).not.toContain(canalId);
+  });
+});
+
+describe('WorChatService — envio (Task 3)', () => {
+  it('grava a mensagem no canal da equipe, com o nome do aluno', async () => {
+    const { service, mensagens } = cenario();
+    const { canalId } = await service.canal('a1', 'm1');
+    const msg = await service.enviar('a1', 'm1', '  ataca o vermelho  ');
+    expect(msg).toMatchObject({
+      alunoId: 'a1',
+      nome: 'Ana',
+      texto: 'ataca o vermelho',
+    });
+    expect(mensagens[canalId]).toHaveLength(1);
+  });
+
+  it('não vaza para o canal da equipe rival', async () => {
+    const { service, mensagens } = cenario();
+    const rival = await service.canal('b1', 'm1');
+    await service.enviar('a1', 'm1', 'segredo da equipe azul');
+    expect(mensagens[rival.canalId]).toHaveLength(0);
+  });
+
+  it('recusa texto vazio ou acima do limite (depois do trim)', async () => {
+    const { service } = cenario();
+    await expect(service.enviar('a1', 'm1', '    ')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(
+      service.enviar('a1', 'm1', 'x'.repeat(WOR.CHAT_MAX_CARACTERES + 1)),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('só funciona com a partida em andamento', async () => {
+    for (const status of ['LOBBY', 'ENCERRADO'] as const) {
+      const { service } = cenario(status);
+      await expect(service.enviar('a1', 'm1', 'oi')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
+  });
+
+  it('segura rajadas: 429 CHAT_RAPIDO antes do intervalo', async () => {
+    const { service } = cenario();
+    await service.enviar('a1', 'm1', 'primeira');
+    const erro = await service.enviar('a1', 'm1', 'segunda').catch((e) => e);
+    expect(erro).toBeInstanceOf(HttpException);
+    expect((erro as HttpException).getStatus()).toBe(429);
+    // O colega não é afetado pelo intervalo de outro aluno.
+    await expect(service.enviar('a2', 'm1', 'eu posso')).resolves.toBeDefined();
+  });
+
+  it('guarda só as últimas mensagens', () => {
+    const base = Date.parse('2026-10-07T12:00:00Z');
+    let lista: MensagemChat[] = [];
+    for (let i = 0; i < WOR.CHAT_MAX_MENSAGENS + 5; i++) {
+      lista = WorChatEntity.anexar(lista, {
+        id: `${i}`,
+        alunoId: 'a1',
+        nome: 'Ana',
+        texto: `${i}`,
+        em: new Date(base + i * WOR.CHAT_INTERVALO_MS).toISOString(),
+      });
+    }
+    expect(lista).toHaveLength(WOR.CHAT_MAX_MENSAGENS);
+    expect(lista[0].texto).toBe('5');
   });
 });

@@ -4,6 +4,7 @@ import { Roles } from '../auth/roles.decorator';
 import { ArriscarDto } from './dto/arriscar.dto';
 import { ChutarLetraDto } from './dto/chutar-letra.dto';
 import { EntrarWorDto } from './dto/entrar-wor.dto';
+import { EnviarChatDto } from './dto/enviar-chat.dto';
 import { WorChatService } from './wor-chat.service';
 import { WorGameService } from './wor-game.service';
 import { WorMatchService } from './wor-match.service';
@@ -77,5 +78,15 @@ export class AlunoWorController {
     @Param('matchId') matchId: string,
   ) {
     return this.chat.canal(alunoId, matchId);
+  }
+
+  /** Manda uma mensagem no chat da equipe (passa pelo filtro de linguagem). */
+  @Post(':matchId/chat')
+  enviarChat(
+    @CurrentStudent() { alunoId }: Student,
+    @Param('matchId') matchId: string,
+    @Body() dto: EnviarChatDto,
+  ) {
+    return this.chat.enviar(alunoId, matchId, dto.texto);
   }
 }
