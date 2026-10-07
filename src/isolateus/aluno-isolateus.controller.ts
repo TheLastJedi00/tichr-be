@@ -7,6 +7,7 @@ import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
   MensagemDto,
   ResponderIsolateusDto,
+  VotarResgateDto,
   VotarSuspeitoDto,
 } from './dto/responder-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
@@ -75,6 +76,15 @@ export class AlunoIsolateusController {
     @Param('id') id: string,
   ) {
     return this.game.declararReparo(aluno.alunoId, id);
+  }
+
+  /** O Resgate: organiza, de dentro da Saude, a volta de quem saiu da vila. */
+  @Post(':id/resgate')
+  resgate(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.organizarResgate(aluno.alunoId, id);
   }
 
   /** O Turno da Ameaça: sabotar um setor ou abduzir um morador. */
@@ -168,5 +178,15 @@ export class AlunoIsolateusController {
     @Body() dto: VotarSuspeitoDto,
   ) {
     return this.game.votarSuspeito(aluno.alunoId, id, dto.suspeitoId);
+  }
+
+  /** O voto em quem volta pelo resgate. */
+  @Post(':id/resgate-voto')
+  votarResgate(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: VotarResgateDto,
+  ) {
+    return this.game.votarResgate(aluno.alunoId, id, dto.habitanteId);
   }
 }

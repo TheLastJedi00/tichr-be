@@ -290,6 +290,8 @@ export class IsolateusMatchService {
       // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
       // partida mudaria o jogo que a turma começou.
       debateHabilitado: opcoes.debateHabilitado ?? true,
+      cicloBrilho: ISOLATEUS.CICLO_BRILHO,
+      brilho: null,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
     };
     Object.assign(partida, dados);

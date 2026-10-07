@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
 import { TurmaModule } from '../turma/turma.module';
 import { IaGovernancaModule } from '../ia-governanca/ia-governanca.module';
+import { ModeracaoModule } from '../moderacao/moderacao.module';
 import { AlunoWorController } from './aluno-wor.controller';
 import { GeminiService } from './gemini.service';
 import { WorIaService } from './wor-ia.service';
@@ -12,11 +13,13 @@ import { WorGameService } from './wor-game.service';
 import { WorMatchController } from './wor-match.controller';
 import { WorMatchRepository } from './wor-match.repository';
 import { WorMatchService } from './wor-match.service';
+import { WorChatRepository } from './wor-chat.repository';
+import { WorChatService } from './wor-chat.service';
 
 /** Módulo independente do Tichr Wor (arsenal + IA de dicas + partidas). */
 @Module({
   // TurmaModule exporta o XpService (crédito de pontos no ranking da sala).
-  imports: [ProfessorModule, TurmaModule, IaGovernancaModule],
+  imports: [ProfessorModule, TurmaModule, IaGovernancaModule, ModeracaoModule],
   controllers: [WorJogoController, WorMatchController, AlunoWorController],
   providers: [
     WorJogoService,
@@ -26,6 +29,8 @@ import { WorMatchService } from './wor-match.service';
     WorMatchService,
     WorMatchRepository,
     WorGameService,
+    WorChatRepository,
+    WorChatService,
   ],
 })
 export class WorModule {}

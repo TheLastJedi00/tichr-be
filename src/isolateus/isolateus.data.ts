@@ -42,6 +42,9 @@ export const SETORES: Array<{ id: string; nome: string; vizinhos: string[] }> = 
 /** O setor de onde a Quarentena pode ser convocada (§6). */
 export const SETOR_COMUNICACAO = 'comunicacao';
 
+/** O setor de onde se organiza o resgate dos que saíram da vila (025 §6). */
+export const SETOR_SAUDE = 'saude';
+
 /** Os ids dos setores, na ordem canônica do mapa. */
 export const SETOR_IDS: string[] = SETORES.map((s) => s.id);
 

@@ -58,7 +58,9 @@ export class WorGameService {
     alunoId: string,
   ): Promise<{ team: WorTeamEntity; teams: WorTeamEntity[] }> {
     const teams = await this.matches.listarTeams(matchId);
-    const team = teams.find((t) => t.membros.some((m) => m.alunoId === alunoId));
+    const team = teams.find((t) =>
+      t.membros.some((m) => m.alunoId === alunoId),
+    );
     if (!team) throw new ForbiddenException('Você não está em nenhuma equipe.');
     return { team, teams };
   }
@@ -200,7 +202,14 @@ export class WorGameService {
 
     const acoesRodada: AcaoMembro[] = [
       ...match.acoesRodada,
-      { alunoId, tipo: 'LETRA', letra, acertou, voto, ordem: match.acoesRodada.length },
+      {
+        alunoId,
+        tipo: 'LETRA',
+        letra,
+        acertou,
+        voto,
+        ordem: match.acoesRodada.length,
+      },
     ];
     return this.encerrarOuAcumular(matchId, team, acoesRodada);
   }
@@ -317,12 +326,63 @@ export class WorGameService {
 
     const acoesRodada: AcaoMembro[] = [
       ...match.acoesRodada,
-      { alunoId, tipo: 'ARRISCAR', acertou: false, ordem: match.acoesRodada.length },
+      {
+        alunoId,
+        tipo: 'ARRISCAR',
+        acertou: false,
+        ordem: match.acoesRodada.length,
+      },
     ];
     // `congelado`: o card do Dano Crítico já está em cartaz — se a rodada
     // resolver agora (este era o último membro), ela não emite um segundo card
     // por cima; o reveal continua chegando pelo `resumoRodada`.
     return this.encerrarOuAcumular(matchId, team, acoesRodada, true);
+  }
+
+  /**
+   * Linguagem imprópria no chat: o castelo da equipe perde HP (pode cair e virar
+   * Horda), o aluno perde XP no ranking da sala e o alerta, com o nome dele, vai
+   * ao telão e à equipe infratora — sem fan-out para as rivais, que não têm
+   * nada com a mensagem. O card congela a rodada em curso, como os demais.
+   */
+  async penalizarModeracao(matchId: string, alunoId: string): Promise<void> {
+    const match = await this.carregar(matchId);
+    const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
+    const aluno = this.nomeMembro(team, alunoId);
+
+    const tinhaHp = team.hp > 0;
+    if (tinhaHp) team.aplicarDano(WOR.PENALIDADE_HP);
+    const card = this.montarCard(
+      match,
+      'MODERACAO',
+      tinhaHp
+        ? `⚠ ${aluno} usou linguagem imprópria no chat. −${WOR.PENALIDADE_HP} HP para ${team.nome}.`
+        : `⚠ ${aluno} usou linguagem imprópria no chat.`,
+    );
+    await this.matches.commitPartida(
+      matchId,
+      {
+        lastGlobalAction: card,
+        rodadaIniciadaEm: this.adiarRodada(match.rodadaIniciadaEm),
+        placar: this.placarDe(teams),
+      },
+      {
+        [team.id]: {
+          hp: team.hp,
+          isHorde: team.isHorde,
+          lastGlobalAction: card,
+        },
+      },
+    );
+
+    if (match.turmaId) {
+      await this.xp.penalizarJogo(
+        match.turmaId,
+        alunoId,
+        WOR.PENALIDADE_XP,
+        'WOR_MODERACAO',
+      );
+    }
   }
 
   /**
@@ -339,7 +399,9 @@ export class WorGameService {
     if (team.isHorde || opcoes.efeito !== 'CATAPULTA') return null;
     const alvo = teams.find((t) => t.id === opcoes.alvoEquipeId);
     if (!alvo || alvo.id === team.id) {
-      throw new BadRequestException('Escolha um castelo rival para a Catapulta.');
+      throw new BadRequestException(
+        'Escolha um castelo rival para a Catapulta.',
+      );
     }
     if (alvo.isHorde || alvo.hp <= 0) {
       throw new BadRequestException(
@@ -386,7 +448,9 @@ export class WorGameService {
     const letrasDaRodada = acoes
       .filter((a) => a.tipo === 'LETRA' && a.letra)
       .map((a) => a.letra as string);
-    const letrasTentadas = [...new Set([...match.letrasTentadas, ...letrasDaRodada])];
+    const letrasTentadas = [
+      ...new Set([...match.letrasTentadas, ...letrasDaRodada]),
+    ];
     const mascara = WorMatchEntity.mascarar(
       palavra,
       this.reveladas(palavra, letrasTentadas),
@@ -445,7 +509,10 @@ export class WorGameService {
           patches[alvo.id] = { hp: alvo.hp, isHorde: alvo.isHorde };
           // O dano causado vira pontos da equipe atacante (desempate + ranking).
           team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
-          patches[team.id] = { ...(patches[team.id] ?? {}), pontos: team.pontos };
+          patches[team.id] = {
+            ...(patches[team.id] ?? {}),
+            pontos: team.pontos,
+          };
           resumo.acao = 'ATACAR';
           resumo.alvoEquipeId = alvo.id;
           resumo.alvoNome = alvo.nome;
@@ -506,14 +573,19 @@ export class WorGameService {
    * Encerra a rodada por TEMPO esgotado (cronômetro de 1 min). Disparado pelo
    * projetor do professor; o backend valida o prazo antes de resolver.
    */
-  async resolverPorTempo(professorId: string, matchId: string): Promise<MatchView> {
+  async resolverPorTempo(
+    professorId: string,
+    matchId: string,
+  ): Promise<MatchView> {
     const match = await this.carregar(matchId);
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }
     this.assertEmAndamento(match);
     if (!match.turnoEquipeId) return this.view(matchId);
-    const inicio = match.rodadaIniciadaEm ? Date.parse(match.rodadaIniciadaEm) : 0;
+    const inicio = match.rodadaIniciadaEm
+      ? Date.parse(match.rodadaIniciadaEm)
+      : 0;
     if (inicio && Date.now() - inicio < LIMITE_RODADA_MS - 2000) {
       return this.view(matchId); // ainda não esgotou (margem p/ o relógio do cliente)
     }

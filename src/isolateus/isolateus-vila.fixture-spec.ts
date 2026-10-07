@@ -123,6 +123,11 @@ export function vilaComAmeacas(
   }> = [];
   const votos: Array<{ rodada: number; alunoId: string; suspeitoId: string }> =
     [];
+  const votosResgate: Array<{
+    rodada: number;
+    alunoId: string;
+    suspeitoId: string;
+  }> = [];
   const repo = {
     buscar: jest.fn(async () => partida),
     buscarSegredo: jest.fn(async () => segredo),
@@ -152,6 +157,29 @@ export function vilaComAmeacas(
     lerVotos: jest.fn(async (_id, rodada: number) =>
       votos.filter((v) => v.rodada === rodada),
     ),
+    registrarVotoResgate: jest.fn(
+      async (_id, rodada: number, alunoId: string, suspeitoId: string) => {
+        if (
+          votosResgate.some((v) => v.rodada === rodada && v.alunoId === alunoId)
+        ) {
+          return false;
+        }
+        votosResgate.push({ rodada, alunoId, suspeitoId });
+        return true;
+      },
+    ),
+    lerVotosResgate: jest.fn(async (_id, rodada: number) =>
+      votosResgate.filter((v) => v.rodada === rodada),
+    ),
+    remapearVotos: jest.fn(
+      async (_id, rodada: number, trocar: Record<string, string>) => {
+        for (const v of [...votos, ...votosResgate]) {
+          if (v.rodada === rodada && trocar[v.suspeitoId]) {
+            v.suspeitoId = trocar[v.suspeitoId];
+          }
+        }
+      },
+    ),
   } as unknown as IsolateusMatchRepository;
 
   const jogos = {
@@ -167,5 +195,6 @@ export function vilaComAmeacas(
     partida,
     segredo,
     setorDe,
+    repo,
   };
 }

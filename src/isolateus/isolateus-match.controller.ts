@@ -75,6 +75,15 @@ export class IsolateusMatchController {
     return this.game.pularFase(professorId, id, dto.status);
   }
 
+  /**
+   * Delírio Coletivo pelo professor (anti-trapaça): todos trocam de codinome
+   * na hora, com o mesmo aviso anônimo do poder da Ameaça.
+   */
+  @Post('matches/:id/delirio')
+  delirio(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.delirioDoProfessor(professorId, id);
+  }
+
   /** A próxima noite. Obsoleta: o telão usa `pular-fase`. */
   @Post('matches/:id/proxima')
   proxima(@ProfessorId() professorId: string, @Param('id') id: string) {
