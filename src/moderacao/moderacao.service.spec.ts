@@ -33,9 +33,12 @@ describe('ModeracaoService', () => {
     },
   );
 
-  it.each(['fdp', 'FDP!', 'vsf', 'pqp', 'tnc'])('pega siglas: "%s"', (texto) => {
-    expect(moderacao.contemPalavrao(texto)).toBe(true);
-  });
+  it.each(['fdp', 'FDP!', 'vsf', 'pqp', 'tnc'])(
+    'pega siglas: "%s"',
+    (texto) => {
+      expect(moderacao.contemPalavrao(texto)).toBe(true);
+    },
+  );
 
   it.each([
     'bora atacar o castelo azul',
