@@ -1650,10 +1650,14 @@ export class IsolateusGameService {
       vereditoQuarentena: null,
       votosRecebidos: 0,
       pulosRecebidos: 0,
+      quarentenaConvocadaPor: {
+        habitanteId: habitante.id,
+        nome: habitante.nome,
+      },
       acontecimentos: this.registrar(
         partida,
         'QUARENTENA',
-        'A vila convocou a Quarentena.',
+        `${habitante.nome} convocou a Quarentena.`,
       ),
     };
     Object.assign(partida, dados);
@@ -1818,6 +1822,7 @@ export class IsolateusGameService {
         status: 'RESULTADO_RODADA',
         habitantes: partida.habitantes,
         faseIniciadaEm: new Date().toISOString(),
+        quarentenaConvocadaPor: null,
         vereditoQuarentena: { presoNome: preso.nome, eraAmeaca: true, texto },
         acontecimentos: this.registrar(partida, 'VEREDITO', texto),
       };
@@ -1829,6 +1834,7 @@ export class IsolateusGameService {
     if (eraAmeaca) {
       const dados: Partial<IsolateusMatchEntity> = {
         habitantes: partida.habitantes,
+        quarentenaConvocadaPor: null,
         vereditoQuarentena: {
           presoNome: preso.nome,
           eraAmeaca: true,
@@ -1861,6 +1867,7 @@ export class IsolateusGameService {
       // veredito, e zerada ela faz a noite cair sozinha. Com base nula, o
       // prazo nunca vencia e a partida só andava por "Adiantar noite".
       faseIniciadaEm: new Date().toISOString(),
+      quarentenaConvocadaPor: null,
       vereditoQuarentena: {
         presoNome: preso.nome,
         eraAmeaca: false,

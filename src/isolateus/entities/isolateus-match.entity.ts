@@ -306,6 +306,18 @@ export class IsolateusMatchEntity {
    * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
    */
   debateHabilitado = true;
+  /**
+   * Quem convocou a Quarentena em curso (`null` fora dela). **Público de
+   * propósito**: convocar à toa custa −20 de Esperança à vila, e sem autor a
+   * Ameaça poderia convocar toda rodada sem deixar rastro. Como NPC não convoca,
+   * o nome confirma que aquele habitante é real — vazamento aceito (025 §2).
+   */
+  quarentenaConvocadaPor: { habitanteId: string; nome: string } | null = null;
+  /**
+   * Quem convocou uma Quarentena que prendeu um inocente fica sem convocar até
+   * `ateRodada` (a rodada seguinte). Público: o nome dele já era.
+   */
+  convocadorBloqueado: { habitanteId: string; ateRodada: number } | null = null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;
