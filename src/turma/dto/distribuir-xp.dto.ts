@@ -3,8 +3,8 @@ import { IsInt, IsOptional, IsString, MaxLength, Min, Max } from 'class-validato
 export class DistribuirXpDto {
   /** Pontos a somar (positivo) ou subtrair (negativo). */
   @IsInt()
-  @Min(-1000)
-  @Max(1000)
+  @Min(-99999)
+  @Max(99999)
   pontos: number;
 
   @IsOptional()
