@@ -1646,6 +1646,17 @@ export class IsolateusGameService {
         'A Quarentena só pode ser convocada entre as rodadas.',
       );
     }
+    const bloqueio = partida.convocadorBloqueado;
+    if (
+      bloqueio?.habitanteId === habitante.id &&
+      bloqueio.ateRodada >= partida.rodada
+    ) {
+      throw new ForbiddenException({
+        code: 'CONVOCADOR_BLOQUEADO',
+        message:
+          'Sua última Quarentena prendeu um inocente. Você poderá convocar de novo na próxima rodada.',
+      });
+    }
     if (partida.quarentenaRodada === partida.rodada) {
       throw new BadRequestException({
         code: 'QUARENTENA_USADA',
@@ -1811,6 +1822,7 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
     const candidatos = partida.vivos;
+    const convocador = partida.quarentenaConvocadaPor;
     const votos = await this.matches.lerVotos(partida.id, partida.rodada);
 
     const votosReais = new Array<number>(candidatos.length).fill(0);
@@ -1879,6 +1891,10 @@ export class IsolateusGameService {
       // prazo nunca vencia e a partida só andava por "Adiantar noite".
       faseIniciadaEm: new Date().toISOString(),
       quarentenaConvocadaPor: null,
+      // Prendeu um inocente: quem convocou fica a próxima rodada sem convocar.
+      convocadorBloqueado: convocador
+        ? { habitanteId: convocador.habitanteId, ateRodada: partida.rodada + 1 }
+        : (partida.convocadorBloqueado ?? null),
       vereditoQuarentena: {
         presoNome: preso.nome,
         eraAmeaca: false,
