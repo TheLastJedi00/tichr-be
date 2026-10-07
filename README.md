@@ -1398,7 +1398,8 @@ Ameaça livre; a vitória da Ameaça credita todas.
 - **Brilho misterioso.** Nas noites múltiplas de `CICLO_BRILHO` (3, 6, 9… — `rodada` 2, 5, 8),
   `fecharNoite` faz brilhar o setor de onde cada Ameaça livre age (o do **controlado**, sob
   Controle Mental) se ela **não tentou** sabotar nem abduzir naquela noite (abdução repelida ou às
-  cegas num setor vazio contam como tentativa). Só setores reais; um evento `BRILHO` por setor;
+  cegas num setor vazio contam como tentativa). Só setores reais; um evento `BRILHO` por setor
+  (sem brilho na noite do ciclo: "Brilho misterioso não apareceu esta noite." e `setorIds: []`);
   mesmo commit das posições. É o custo de passar a partida só aguardando.
 - **Resgate.** Organizado à noite (cofre); no amanhecer, **depois** da sabotagem, vale se o
   organizador está na Saúde de pé com **2+ habitantes** (`MIN_RESGATE`, NPCs contam) —

@@ -64,7 +64,12 @@ describe('Isolateus — o brilho misterioso (Task 15)', () => {
   it('sabotar evita o brilho', async () => {
     const ctx = vila();
     await fecharNoite(ctx, { a1: { tipo: 'SABOTAR' } });
-    expect(ctx.partida.brilho ?? null).toBeNull();
+    // A noite de brilho é anunciada mesmo sem brilho: a turma esperava por ela.
+    expect(ctx.partida.brilho).toEqual({ rodada: NOITE_3, setorIds: [] });
+    const eventos = ctx.partida.acontecimentos.filter((e) => e.tipo === 'BRILHO');
+    expect(eventos.map((e) => e.texto)).toEqual([
+      'Brilho misterioso não apareceu esta noite.',
+    ]);
   });
 
   it('abdução às cegas num setor vazio também evita (foi uma tentativa)', async () => {
@@ -72,7 +77,7 @@ describe('Isolateus — o brilho misterioso (Task 15)', () => {
     await fecharNoite(ctx, {
       a1: { tipo: 'ABDUZIR', setorId: 'abastecimento' },
     });
-    expect(ctx.partida.brilho ?? null).toBeNull();
+    expect(ctx.partida.brilho?.setorIds).toEqual([]);
   });
 
   it('sob Controle Mental, brilha o setor do controlado', async () => {
@@ -116,5 +121,6 @@ describe('Isolateus — o brilho misterioso (Task 15)', () => {
     ctx.partida.rodada = 1; // Noite 2
     await fecharNoite(ctx, { a1: { tipo: 'AGUARDAR' } });
     expect(ctx.partida.brilho ?? null).toBeNull();
+    expect(ctx.partida.acontecimentos.some((e) => e.tipo === 'BRILHO')).toBe(false);
   });
 });

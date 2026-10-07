@@ -562,7 +562,8 @@ export class IsolateusGameService {
    * vazio também valem). É o custo de passar a partida só aguardando.
    *
    * Só setores reais brilham, sem iscas; duas Ameaças no mesmo setor geram um
-   * brilho só. Registra um evento por setor e devolve `null` se nada brilhou.
+   * brilho só. Registra um evento por setor; numa noite de brilho sem brilho,
+   * registra "não apareceu" e devolve a lista vazia. Fora do ciclo, `null`.
    */
   private brilhoDaNoite(
     partida: IsolateusMatchEntity,
@@ -580,7 +581,16 @@ export class IsolateusGameService {
     }
     // Na ordem do mapa: a ordem das Ameaças não pode vazar pela lista.
     const setorIds = SETOR_IDS.filter((id) => acesos.has(id));
-    if (!setorIds.length) return null;
+    if (!setorIds.length) {
+      // A turma esperava por esta noite (o mapa contava): ela é anunciada
+      // mesmo sem brilho, com a lista vazia.
+      this.registrar(
+        partida,
+        'BRILHO',
+        'Brilho misterioso não apareceu esta noite.',
+      );
+      return { rodada: partida.rodada, setorIds: [] };
+    }
 
     for (const id of setorIds) {
       const setor = partida.setores.find((s) => s.id === id);
