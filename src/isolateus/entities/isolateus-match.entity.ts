@@ -88,6 +88,13 @@ export const ISOLATEUS = {
   CHANCE_MOVER_NPC: 0.45,
   /** Margem de segurança ao revalidar o prazo disparado pelo projetor. */
   MARGEM_TEMPO_MS: 2_000,
+
+  /**
+   * A cada quantas noites o brilho misterioso irradia o setor de onde cada
+   * Ameaça age (noites 3, 6, 9…). Só sabotar ou abduzir naquela noite o evita:
+   * é o que impede a Ameaça de passar a partida inteira só aguardando.
+   */
+  CICLO_BRILHO: 3,
 } as const;
 
 export type StatusIsolateus =
@@ -208,6 +215,8 @@ export type TipoAcontecimento =
   | 'QUARENTENA'
   /** O Delírio Coletivo: todos trocaram de codinome (sem autor). */
   | 'DELIRIO'
+  /** O brilho misterioso das noites múltiplas de `CICLO_BRILHO` (um por setor). */
+  | 'BRILHO'
   | 'VEREDITO'
   | 'FIM';
 
@@ -318,6 +327,13 @@ export class IsolateusMatchEntity {
    * `ateRodada` (a rodada seguinte). Público: o nome dele já era.
    */
   convocadorBloqueado: { habitanteId: string; ateRodada: number } | null = null;
+  /**
+   * De quantas em quantas noites o brilho acontece. Gravado no Despertar para o
+   * cliente calcular a contagem regressiva sem duplicar a constante.
+   */
+  cicloBrilho: number = ISOLATEUS.CICLO_BRILHO;
+  /** O último brilho: a noite (`rodada`) e os setores que irradiaram. */
+  brilho: { rodada: number; setorIds: string[] } | null = null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;

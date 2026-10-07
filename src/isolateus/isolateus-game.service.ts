@@ -449,6 +449,10 @@ export class IsolateusGameService {
       if (h) h.setorId = setorId;
     }
     this.moverNpcs(partida, segredo);
+    // O brilho sai das posições finais, antes de o cofre esquecer as jogadas e
+    // os controles da noite — e entra no mesmo commit das posições.
+    const brilho = this.brilhoDaNoite(partida, segredo);
+    if (brilho) partida.brilho = brilho;
 
     // O prazo dos poderes: o ganho numa rodada vale até ESTE fechamento (o da
     // noite seguinte). Controles de rodadas passadas também saem.
@@ -470,9 +474,12 @@ export class IsolateusGameService {
       partida.id,
       {
         habitantes: partida.habitantes,
+        ...(delirou || brilho
+          ? { acontecimentos: partida.acontecimentos }
+          : {}),
+        ...(brilho ? { brilho } : {}),
         ...(delirou
           ? {
-              acontecimentos: partida.acontecimentos,
               quarentenaConvocadaPor: partida.quarentenaConvocadaPor ?? null,
               convocadorBloqueado: partida.convocadorBloqueado ?? null,
             }
@@ -538,6 +545,45 @@ export class IsolateusGameService {
       return this.abrirJanelaDeDecisao(partida, resumo);
     }
     return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
+  }
+
+  /**
+   * O brilho misterioso (025 §5). Nas noites múltiplas de `CICLO_BRILHO`, o
+   * setor de onde cada Ameaça livre age — o dela, ou o do controlado sob
+   * Controle Mental — irradia no mapa de todos, a menos que ela tenha TENTADO
+   * sabotar ou abduzir naquela noite (abdução repelida ou às cegas num setor
+   * vazio também valem). É o custo de passar a partida só aguardando.
+   *
+   * Só setores reais brilham, sem iscas; duas Ameaças no mesmo setor geram um
+   * brilho só. Registra um evento por setor e devolve `null` se nada brilhou.
+   */
+  private brilhoDaNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): { rodada: number; setorIds: string[] } | null {
+    // `rodada` é 0-indexada: a Noite 3 é a rodada 2.
+    if ((partida.rodada + 1) % ISOLATEUS.CICLO_BRILHO !== 0) return null;
+
+    const jogadas = segredo.acoesDaNoite();
+    const acesos = new Set<string>();
+    for (const alunoId of this.ameacasLivres(partida, segredo)) {
+      const tipo = jogadas.find((j) => j.alunoId === alunoId)?.acao.tipo;
+      if (tipo === 'SABOTAR' || tipo === 'ABDUZIR') continue;
+      acesos.add(this.origemDaAmeaca(partida, segredo, alunoId).setorId);
+    }
+    // Na ordem do mapa: a ordem das Ameaças não pode vazar pela lista.
+    const setorIds = SETOR_IDS.filter((id) => acesos.has(id));
+    if (!setorIds.length) return null;
+
+    for (const id of setorIds) {
+      const setor = partida.setores.find((s) => s.id === id);
+      this.registrar(
+        partida,
+        'BRILHO',
+        `Brilho misterioso irradiando no ${setor?.nome ?? 'setor'}.`,
+      );
+    }
+    return { rodada: partida.rodada, setorIds };
   }
 
   /**
@@ -1538,10 +1584,6 @@ export class IsolateusGameService {
   }
 
   /**
-   * O Instinto Humano: no empate, o consenso dos habitantes reais tem peso
-   * soberano sobre o voto randômico dos NPCs.
-   */
-  /**
    * O índice mais votado, com sorteio entre os empatados. Por sorteio e não
    * pelo menor índice: com só votos reais, o empate é comum, e o desempate
    * determinístico condenaria sempre quem está no começo da lista.
@@ -1555,6 +1597,10 @@ export class IsolateusGameService {
     return embaralhar(empatados)[0];
   }
 
+  /**
+   * O Instinto Humano: no empate, o consenso dos habitantes reais tem peso
+   * soberano sobre o voto randômico dos NPCs.
+   */
   private apurar(votosTotais: number[], votosReais: number[]): number {
     const maximo = Math.max(...votosTotais);
     const empatadas = votosTotais
