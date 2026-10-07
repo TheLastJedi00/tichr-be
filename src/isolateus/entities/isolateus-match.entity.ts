@@ -88,6 +88,19 @@ export const ISOLATEUS = {
   CHANCE_MOVER_NPC: 0.45,
   /** Margem de segurança ao revalidar o prazo disparado pelo projetor. */
   MARGEM_TEMPO_MS: 2_000,
+
+  /**
+   * A cada quantas noites o brilho misterioso irradia o setor de onde cada
+   * Ameaça age (noites 3, 6, 9…). Só sabotar ou abduzir naquela noite o evita:
+   * é o que impede a Ameaça de passar a partida inteira só aguardando.
+   */
+  CICLO_BRILHO: 3,
+  /** Mínimo de habitantes (NPCs contam) na Saúde para o resgate valer. */
+  MIN_RESGATE: 2,
+  /** Votação de quem volta pelo resgate (avanço rápido e pulo do professor). */
+  RESGATE_VOTO_MS: 60_000,
+  /** Esperança devolvida por um resgate concluído (teto 100). */
+  BONUS_RESGATE: 10,
 } as const;
 
 export type StatusIsolateus =
@@ -104,6 +117,8 @@ export type StatusIsolateus =
   | 'RESULTADO_RODADA'
   | 'QUARENTENA_DEBATE'
   | 'QUARENTENA_VOTO'
+  /** A turma acertou a questão do resgate e vota quem volta (025 §6.4). */
+  | 'RESGATE_VOTO'
   | 'ENCERRADO';
 
 /**
@@ -208,6 +223,10 @@ export type TipoAcontecimento =
   | 'QUARENTENA'
   /** O Delírio Coletivo: todos trocaram de codinome (sem autor). */
   | 'DELIRIO'
+  /** O brilho misterioso das noites múltiplas de `CICLO_BRILHO` (um por setor). */
+  | 'BRILHO'
+  /** O resgate pela Saúde: organizado, cancelado, fracassado ou concluído. */
+  | 'RESGATE'
   | 'VEREDITO'
   | 'FIM';
 
@@ -306,6 +325,34 @@ export class IsolateusMatchEntity {
    * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
    */
   debateHabilitado = true;
+  /**
+   * Quem convocou a Quarentena em curso (`null` fora dela). **Público de
+   * propósito**: convocar à toa custa −20 de Esperança à vila, e sem autor a
+   * Ameaça poderia convocar toda rodada sem deixar rastro. Como NPC não convoca,
+   * o nome confirma que aquele habitante é real — vazamento aceito (025 §2).
+   */
+  quarentenaConvocadaPor: { habitanteId: string; nome: string } | null = null;
+  /**
+   * Quem convocou uma Quarentena que prendeu um inocente fica sem convocar até
+   * `ateRodada` (a rodada seguinte). Público: o nome dele já era.
+   */
+  convocadorBloqueado: { habitanteId: string; ateRodada: number } | null = null;
+  /**
+   * De quantas em quantas noites o brilho acontece. Gravado no Despertar para o
+   * cliente calcular a contagem regressiva sem duplicar a constante.
+   */
+  cicloBrilho: number = ISOLATEUS.CICLO_BRILHO;
+  /** O último brilho: a noite (`rodada`) e os setores que irradiaram. */
+  brilho: { rodada: number; setorIds: string[] } | null = null;
+  /**
+   * Um resgate organizado na Saúde passou pela validação do amanhecer e está
+   * em jogo na questão do dia (sem autor: o organizador é anônimo).
+   */
+  resgatePendente = false;
+  /** Quantos já votaram no resgate (contagem apenas — o voto é secreto). */
+  votosResgateRecebidos = 0;
+  /** Quem o último resgate trouxe de volta (o papel dele continua secreto). */
+  resgateResultado: { habitanteId: string; nome: string } | null = null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;

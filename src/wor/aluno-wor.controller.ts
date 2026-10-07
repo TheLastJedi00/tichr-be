@@ -4,6 +4,8 @@ import { Roles } from '../auth/roles.decorator';
 import { ArriscarDto } from './dto/arriscar.dto';
 import { ChutarLetraDto } from './dto/chutar-letra.dto';
 import { EntrarWorDto } from './dto/entrar-wor.dto';
+import { EnviarChatDto } from './dto/enviar-chat.dto';
+import { WorChatService } from './wor-chat.service';
 import { WorGameService } from './wor-game.service';
 import { WorMatchService } from './wor-match.service';
 
@@ -16,6 +18,7 @@ export class AlunoWorController {
   constructor(
     private readonly service: WorMatchService,
     private readonly game: WorGameService,
+    private readonly chat: WorChatService,
   ) {}
 
   /** Partida ativa da turma do aluno (lobby ou em andamento), ou null. */
@@ -31,7 +34,12 @@ export class AlunoWorController {
     @Param('matchId') matchId: string,
     @Body() dto: EntrarWorDto,
   ) {
-    return this.service.inscrever(alunoId, turmaId, matchId, dto.nome ?? 'Aluno');
+    return this.service.inscrever(
+      alunoId,
+      turmaId,
+      matchId,
+      dto.nome ?? 'Aluno',
+    );
   }
 
   /** Chuta uma letra e vota a ação da equipe (atacar rival / comprar dica). */
@@ -41,7 +49,13 @@ export class AlunoWorController {
     @Param('matchId') matchId: string,
     @Body() dto: ChutarLetraDto,
   ) {
-    return this.game.chutarLetra(alunoId, matchId, dto.letra, dto.acao, dto.alvoEquipeId);
+    return this.game.chutarLetra(
+      alunoId,
+      matchId,
+      dto.letra,
+      dto.acao,
+      dto.alvoEquipeId,
+    );
   }
 
   /** Risco Heroico / Invasão: tenta a palavra inteira. */
@@ -55,5 +69,24 @@ export class AlunoWorController {
       efeito: dto.efeito,
       alvoEquipeId: dto.alvoEquipeId,
     });
+  }
+
+  /** O canal do chat privado da equipe do aluno (lido via onSnapshot). */
+  @Get(':matchId/chat')
+  canalChat(
+    @CurrentStudent() { alunoId }: Student,
+    @Param('matchId') matchId: string,
+  ) {
+    return this.chat.canal(alunoId, matchId);
+  }
+
+  /** Manda uma mensagem no chat da equipe (passa pelo filtro de linguagem). */
+  @Post(':matchId/chat')
+  enviarChat(
+    @CurrentStudent() { alunoId }: Student,
+    @Param('matchId') matchId: string,
+    @Body() dto: EnviarChatDto,
+  ) {
+    return this.chat.enviar(alunoId, matchId, dto.texto);
   }
 }

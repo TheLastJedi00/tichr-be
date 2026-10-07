@@ -597,7 +597,7 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 | `PATCH` | `/turmas/:turmaId/alunos/:alunoId` | `{ nome }` | `AlunoEntity` — **renomeia** o aluno. **403 `PLANO_LOCKED`** se `< MESTRE` |
 | `DELETE` | `/turmas/:turmaId/alunos/:alunoId` | — | `{ removido: true }` |
 | `PATCH` | `/turmas/:turmaId/alunos/:alunoId/equipe` | `{ equipeId: string \| null }` | `AlunoEntity` — move o aluno para uma equipe (drop) ou de volta ao pool (`null`) |
-| `POST` | `/turmas/:turmaId/alunos/:alunoId/xp` | `{ pontos, motivo? }` | `{ alunoId, xpTotal }` — grava log + atualiza total. **403 `GAMIFICACAO_LOCKED`** se não-PhD; **400** se `pontuacaoAtiva=false` |
+| `POST` | `/turmas/:turmaId/alunos/:alunoId/xp` | `{ pontos, motivo? }` | `{ alunoId, xpTotal }` — `pontos` inteiro em **±99999** por operação (piso 0 no total); grava log + atualiza total. **403 `GAMIFICACAO_LOCKED`** se não-PhD; **400** se `pontuacaoAtiva=false` |
 | `POST` | `/turmas/:turmaId/agrupamento` | `{ numeroEquipes, papeis?, temas? }` | `{ squads }` — sorteio efêmero |
 | `GET` | `/turmas/:turmaId/ranking` | — | `[{ posicao, alunoId, nome, xpTotal }]` (professor **ou** aluno da turma). **403** se `rankingAtivo=false` |
 
@@ -1080,6 +1080,8 @@ seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
 | `GET` | `/aluno/wor` | partida ativa da turma do aluno |
 | `POST` | `/aluno/wor/:id/entrar` | inscreve o aluno no lobby |
 | `POST` | `/aluno/wor/:id/letra` `{ letra, acao, alvoEquipeId? }` | chuta a letra **e vota** a ação da equipe (atacar rival / comprar dica) |
+| `GET` | `/aluno/wor/:id/chat` | `{ canalId }` do chat privado da **equipe do aluno** (403 sem equipe). Cria os canais que faltam numa transação (idempotente — cobre partidas antigas). O cliente escuta `wor_chats/{canalId}` |
+| `POST` | `/aluno/wor/:id/chat` `{ texto }` | Mensagem no chat da equipe: só em `EM_ANDAMENTO`, 1–200 caracteres depois do `trim`, 1 a cada 2s por aluno (429 `CHAT_RAPIDO`). **Palavrão → 422 `MENSAGEM_BLOQUEADA`**, a mensagem não é gravada e a penalidade é aplicada |
 | `POST` | `/aluno/wor/:id/arriscar` `{ palavra, efeito?, alvoEquipeId? }` | **Risco Heroico**: acertou → `efeito` `CURAR` (padrão) ou `CATAPULTA` no castelo `alvoEquipeId` + encerra a onda / **Invasão** da Horda (usurpação; ignora o efeito). Efeito/alvo inválidos → **400 antes de conferir a palavra** (a tentativa não é consumida) |
 
 ### Regras (constantes em `WOR`, ajustáveis)
@@ -1104,9 +1106,33 @@ restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
 `XP = pontos × XP_POR_PONTO (0,1)`, cheio para a campeã e **metade** para as demais
 (`XpService.creditarPartida`, motivo `WOR`).
 
+### Chat privado da equipe
+
+Cada equipe (a Horda inclusive) tem um chat que **só os membros leem** — nem as rivais, nem o
+professor. O aluno não usa Firebase Auth, então as rules não sabem de que equipe ele é, e
+`matches/**` é público: a privacidade vem de um **id impossível de adivinhar**.
+
+- **`wor_canais/{matchId}`** (deny-all): `canais[{ teamId, canalId }]` — o `canalId` é um UUID e
+  **nunca** aparece em `matches/**`.
+- **`wor_chats/{canalId}`** (`get` liberado, `list`/`write` negados): `{ matchId, teamId,
+  mensagens[{ id, alunoId, nome, texto, em }] }`, aparado nas últimas 50. O intervalo de 2s é
+  conferido na mesma transação que grava (`WorChatEntity.anexar`).
+
+**Moderação** (`ModeracaoService`, módulo próprio e reaproveitável): a `piii` com o dicionário
+base + um complemento PT-BR (o base só tem seis raízes) + aliases leet ("p0rra", "m3rda"). A
+decisão é só do servidor. Mensagem com palavrão:
+
+- o aluno perde **1000 de XP** no ranking da sala (`PENALIDADE_XP`, piso 0, `xp_logs` com motivo
+  `WOR_MODERACAO`, sem o gate de `pontuacaoAtiva`) — `XpService.penalizarJogo`;
+- o castelo perde **100 HP** (`PENALIDADE_HP`) e pode cair (vira Horda); Horda só perde o XP;
+- Action Card **`MODERACAO`** com o nome do aluno, gravado **só na raiz e na equipe infratora**
+  (sem fan-out para as rivais), com o freeze de 3s de sempre.
+
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração do arsenal por IA (sem ela, palavras e dicas manuais).
-- `firestore.rules`: `matches/**` **leitura pública, escrita negada** (o Admin SDK ignora).
+- `firestore.rules`: `matches/**` **leitura pública, escrita negada** (o Admin SDK ignora);
+  `wor_chats/{canalId}` só `get` (sem `list`); `wor_canais` no deny-all. **A regra do chat exige
+  `firebase deploy --only firestore:rules`** — sem ela o chat não carrega.
 
 ---
 
@@ -1165,7 +1191,10 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   `RESULTADO_RODADA`), `alerta`, **`acontecimentos[]`** (o Diário, aparado em 60),
   `rumores[]` (**só `SINAL`** — o Chat de Rumores saiu), `debate[]` (**só falas de alunos**),
   `resumoRodada`, `quarentenaRodada`, **`debateHabilitado`** (escolha do lobby; ausente = `true`),
-  `vereditoQuarentena`, `votosRecebidos`, `pulosRecebidos` e `movimentosRecebidos` (**só as
+  `vereditoQuarentena`, **`quarentenaConvocadaPor`** (`{ habitanteId, nome }`, público durante a
+  Quarentena), **`convocadorBloqueado`** (`{ habitanteId, ateRodada }`), **`cicloBrilho`** (3) e
+  **`brilho`** (`{ rodada, setorIds[] }`), **`resgatePendente`**, `votosResgateRecebidos` e
+  `resgateResultado` (`{ habitanteId, nome }`), `votosRecebidos`, `pulosRecebidos` e `movimentosRecebidos` (**só as
   contagens** — as listas são listas de habitantes reais e moram no cofre),
   `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
   O `setorId` dos habitantes é o do **anoitecer** durante toda a noite (ver *A noite no cofre*).
@@ -1175,7 +1204,7 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   por Ameaça: `SABOTAR | ABDUZIR | AGUARDAR`, com `alvoId` **ou** `setorId`), **`posicoesNoite[]`**
   (o destino de quem andou nesta noite), **`poderes[]`** (`{ alunoId, ganhoNaRodada }`),
   **`controles[]`** (`{ ameacaAlunoId, habitanteId, rodada }`), `contagioPendente`,
-  `delirioPendente`, `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`.
+  `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`.
   Partidas antigas com o campo único `acaoRodada` são lidas por `acoesDaNoite()`, e as sem
   `ameacas` por `ameacasIds()` (= a original).
   > **Listas, não mapas:** o cofre é gravado com `set(..., { merge: true })`, e gravar um mapa
@@ -1234,6 +1263,12 @@ abdução ou reparo; senão o dia vai direto ao card.
   unanimidade e usa a **mesma transição do prazo zerado** (`encerrarFase`), então pular nunca
   diverge do fim natural do relógio. `status` é a fase que o telão exibia: se a partida já virou,
   o clique volta sem efeito (não derruba duas fases). 400 fora de fase cronometrada.
+- `POST /isolateus/matches/:id/delirio` — **Delírio Coletivo pelo professor** (anti-trapaça: a
+  turma mostrando a tela ou combinando por fora). Mesma permutação do poder da Ameaça
+  (`permutarVila`), mas **na hora**, em qualquer fase fora de `LOBBY`/`ENCERRADO` (400), com o
+  mesmo texto anônimo no Diário. Remapeia também posições da noite, votos pendentes
+  (`remapearVotos`), convocador, bloqueio e resultado do resgate. Não consome o Delírio
+  pendente de uma Ameaça.
 - `POST /isolateus/matches/:id/proxima` — **obsoleta** (o telão usa `pular-fase`); mantida para
   clientes em cache. Só na janela de decisão.
 - `POST /isolateus/matches/:id/encerrar` — encerra a investigação **no meio do jogo** (o sinal
@@ -1267,13 +1302,20 @@ abdução ou reparo; senão o dia vai direto ao card.
   `SABOTAR` (o `alvoId` do cliente é **ignorado** — sabota-se de onde se age),
   `ABDUZIR` com `alvoId` (presencial, só o setor de onde age; nunca uma aliada nem o
   controlado) **ou** `setorId` (às cegas, qualquer outro), `AGUARDAR`.
+- `POST /aluno/isolateus/:id/resgate` — organiza o **resgate** de dentro do Setor de Saúde (noite;
+  vivo, livre, na Saúde pela posição do cofre). 403 `FORA_DA_SAUDE` / `SAUDE_EM_RUINAS`; 400
+  `SEM_RESGATAVEIS` / `RESGATE_USADO`. Anônimo; a intenção fica no cofre e fecha a jogada da noite.
+- `POST /aluno/isolateus/:id/resgate-voto` `{ habitanteId }` — o voto em quem volta (só em
+  `RESGATE_VOTO`, só reais na vila, só em abduzidos/presos). Mesma coleção dos votos, doc com
+  sufixo `_resgate` e `tipo: 'RESGATE'` (a apuração da Quarentena ignora esses docs).
 - `POST /aluno/isolateus/:id/poder` `{ poder: 'CONTROLE' | 'CONTAGIO' | 'DELIRIO', alvoId? }` —
   gasta o Poder Alienígena. **Não escreve nada no doc público**; devolve o painel. 403 se não for
   Ameaça livre; 400 `SEM_PODER`, `SO_ORIGINAL` (Contágio por contagiada), `SEM_ALVO`, ou alvo
   inválido no Controle.
 - `POST /aluno/isolateus/:id/resposta` — a questão. **Abduzidos e presos continuam pontuando.**
 - `POST /aluno/isolateus/:id/sinal` · `/quarentena` · `/debate` · `/pular-debate` · `/suspeito` —
-  `/quarentena` exige estar **vivo, no Setor de Comunicação e com ele de pé**. **Não há mais
+  `/quarentena` exige estar **vivo, no Setor de Comunicação e com ele de pé** e não estar
+  bloqueado (403 `CONVOCADOR_BLOQUEADO`). **Não há mais
   exceção para o professor.** A rota `/rumor` (rumor forjado) **foi removida**.
 - `POST /aluno/isolateus/:id/tempo` — o celular também cobra o prazo vencido da fase. Mesma
   revalidação da rota do telão; exige apenas **ser da partida** (abduzidos e presos incluídos —
@@ -1344,6 +1386,33 @@ cai numa Ameaça); cada Ameaça livre pontua pelo erro da vila; prender uma, res
 a partida (*"…Mas a invasão não acabou…"*, sem dizer quantas restam); a Vila vence quando não há
 Ameaça livre; a vitória da Ameaça credita todas.
 
+### Quem convoca, o brilho e o resgate (spec 025)
+
+- **Convocador público.** Convocar à toa custava −20 de Esperança à vila sem deixar rastro: o
+  codinome de quem convoca vai para `quarentenaConvocadaPor` e para o Diário. Como NPC não
+  convoca, o nome confirma que o habitante é real — **vazamento aceito**. Quem convocou e
+  **prendeu um inocente** fica a rodada seguinte sem convocar (`convocadorBloqueado`).
+- **Só votos reais na Quarentena.** O voto aleatório dos NPCs podia decidir a prisão sozinho. A
+  expulsão continua obrigatória: empate (inclusive urna vazia) vira **sorteio entre os
+  empatados** (`maisVotadoComSorteio`), não o menor índice.
+- **Brilho misterioso.** Nas noites múltiplas de `CICLO_BRILHO` (3, 6, 9… — `rodada` 2, 5, 8),
+  `fecharNoite` faz brilhar o setor de onde cada Ameaça livre age (o do **controlado**, sob
+  Controle Mental) se ela **não tentou** sabotar nem abduzir naquela noite (abdução repelida ou às
+  cegas num setor vazio contam como tentativa). Só setores reais; um evento `BRILHO` por setor
+  (sem brilho na noite do ciclo: "Brilho misterioso não apareceu esta noite." e `setorIds: []`);
+  mesmo commit das posições. É o custo de passar a partida só aguardando.
+- **Resgate.** Organizado à noite (cofre); no amanhecer, **depois** da sabotagem, vale se o
+  organizador está na Saúde de pé com **2+ habitantes** (`MIN_RESGATE`, NPCs contam) —
+  `resgatePendente` + evento `RESGATE`, ou cancelado. Gera questão (a mesma da defesa/reparo) com
+  critério próprio: **mais da metade das respostas dos aldeões reais** certas (Ameaças fora; zero
+  respostas = falha). Acerto → `RESGATE_VOTO` (60s, avanço rápido, pulo do professor): só os
+  reais votam, sorteio no empate ou sem voto; o escolhido volta **vivo, livre, na Saúde** e a
+  Esperança sobe `BONUS_RESGATE` (10, teto 100). Uma Ameaça presa resgatada volta livre.
+
+```
+QUESTAO_ATIVA → [RESGATE_VOTO] → RESULTADO_RODADA
+```
+
 ### Regras (constantes em `ISOLATEUS`, ajustáveis)
 
 Mínimo de **4** investigadores reais. **Rodízio da Ameaça:** numa mesma turma, a Ameaça é
@@ -1363,13 +1432,13 @@ noite, e NPC se mexendo fora de hora denunciaria que não é um colega decidindo
 
 Esperança inicial **100** · sabotagem **−15** (não contestada) · abdução **−10** (contestada
 pela questão) · inocente preso **−20** · contágio **−10** (silencioso) · reparo bem-sucedido
-**+15**. Esperança em 0 = vitória da Ameaça.
+**+15** · resgate concluído **+10**. Esperança em 0 = vitória da Ameaça.
 
 **Apuração:** votam os aldeões reais na vila + os NPCs (aleatório) — **as Ameaças não**. No
 empate vale o **Instinto Humano** — ganha a alternativa mais votada pelos **aldeões reais**;
 persistindo, a de menor índice (determinístico).
 
-**Quarentena:** **uma por rodada**, convocada **só pela vila** — de dentro da Comunicação, com o
+**Quarentena:** **uma por rodada**, convocada **só pela vila** (com o convocador público) — de dentro da Comunicação, com o
 rádio de pé (o atalho do telão saiu; ver Endpoints).
 Debate **90s** (opcional: `debateHabilitado`) → votação **60s**, os dois com avanço rápido e
 pulo do professor. Prendeu a última Ameaça livre → Vila vence; prendeu uma restando outra → a
@@ -1390,6 +1459,6 @@ viram XP **1:1** no encerramento (`XpService.creditarPartida`, motivo `ISOLATEUS
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração das 10 questões (sem ela, escrita manual).
 - `firestore.rules`: `isolateus_partidas/{id}` **leitura pública, escrita negada**;
   `isolateus_segredos`, `isolateus_respostas`, `isolateus_votos` e `isolateus_rodizio` no
-  **deny-all** — é isso que impede o DevTools de revelar o infiltrado. **Sem alteração nesta
-  spec** (a coleção nova cai no deny-all padrão; não há deploy de rules).
+  **deny-all** — é isso que impede o DevTools de revelar o infiltrado. **Sem alteração nas specs 024 e 025**
+  (as coleções novas caem no deny-all padrão; não há deploy de rules para o Isolateus).
 

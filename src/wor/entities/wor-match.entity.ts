@@ -21,6 +21,17 @@ export const WOR = {
   XP_POR_PONTO: 0.1,
   /** Duração do Action Card — e do congelamento do jogo enquanto ele está no ar. */
   FREEZE_MS: 3000,
+  // ===== Chat da equipe =====
+  /** Tamanho máximo de uma mensagem (depois do trim). */
+  CHAT_MAX_CARACTERES: 200,
+  /** Quantas mensagens o canal guarda (as mais antigas saem). */
+  CHAT_MAX_MENSAGENS: 50,
+  /** Intervalo mínimo entre duas mensagens do mesmo aluno. */
+  CHAT_INTERVALO_MS: 2000,
+  /** Penalidade por linguagem imprópria: XP do aluno no ranking da sala… */
+  PENALIDADE_XP: 1000,
+  /** …e HP do castelo da equipe. */
+  PENALIDADE_HP: 100,
 } as const;
 
 /** Gatilhos narrados por um Action Card (interrupção global de 3s). */
@@ -30,7 +41,8 @@ export type TipoAcaoGlobal =
   | 'CATAPULTA'
   | 'USURPACAO'
   | 'DANO_CRITICO'
-  | 'DICA';
+  | 'DICA'
+  | 'MODERACAO';
 
 /**
  * Evento de impacto narrado em TODAS as telas (alunos + telão) ao mesmo tempo.

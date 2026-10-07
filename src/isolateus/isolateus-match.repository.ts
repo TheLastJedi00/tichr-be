@@ -200,10 +200,69 @@ export class IsolateusMatchRepository {
     const snap = await this.votos.where('partidaId', '==', partidaId).get();
     return snap.docs
       .map((d) => d.data())
-      .filter((v) => v.rodada === rodada)
+      // Os votos do resgate moram na mesma coleção, marcados por `tipo`.
+      .filter((v) => v.rodada === rodada && v.tipo !== 'RESGATE')
       .map((v) => ({
         alunoId: v.alunoId as string,
         suspeitoId: v.suspeitoId as string,
       }));
+  }
+
+  // --- Votos do resgate (025 §6.4): mesma coleção, doc com sufixo `_resgate` ---
+
+  /** Registra o voto em quem volta; `false` se o aluno já votou nesta rodada. */
+  async registrarVotoResgate(
+    partidaId: string,
+    rodada: number,
+    alunoId: string,
+    habitanteId: string,
+  ): Promise<boolean> {
+    const ref = this.votos.doc(`${partidaId}_${rodada}_${alunoId}_resgate`);
+    if ((await ref.get()).exists) return false;
+    await ref.set({
+      partidaId,
+      rodada,
+      alunoId,
+      suspeitoId: habitanteId,
+      tipo: 'RESGATE',
+    });
+    return true;
+  }
+
+  async lerVotosResgate(
+    partidaId: string,
+    rodada: number,
+  ): Promise<Array<{ alunoId: string; suspeitoId: string }>> {
+    const snap = await this.votos.where('partidaId', '==', partidaId).get();
+    return snap.docs
+      .map((d) => d.data())
+      .filter((v) => v.rodada === rodada && v.tipo === 'RESGATE')
+      .map((v) => ({
+        alunoId: v.alunoId as string,
+        suspeitoId: v.suspeitoId as string,
+      }));
+  }
+
+  /**
+   * O Delírio Coletivo regerou os ids: os votos já depositados nesta rodada
+   * passam a apontar para o id novo do mesmo suspeito.
+   */
+  async remapearVotos(
+    partidaId: string,
+    rodada: number,
+    trocar: Record<string, string>,
+  ): Promise<void> {
+    const snap = await this.votos.where('partidaId', '==', partidaId).get();
+    const batch = this.firebase.firestore.batch();
+    let mudou = false;
+    for (const d of snap.docs) {
+      const v = d.data();
+      const novo = trocar[v.suspeitoId as string];
+      if (v.rodada === rodada && novo) {
+        batch.update(d.ref, { suspeitoId: novo });
+        mudou = true;
+      }
+    }
+    if (mudou) await batch.commit();
   }
 }

@@ -34,3 +34,10 @@ export class IniciarPartidaIsolateusDto {
   @IsBoolean()
   debateHabilitado?: boolean;
 }
+
+/** O voto em quem volta pelo resgate (025 §6.4). */
+export class VotarResgateDto {
+  @IsString()
+  @MaxLength(60)
+  habitanteId: string;
+}
