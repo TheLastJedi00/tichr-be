@@ -30,6 +30,7 @@ import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
   SETOR_COMUNICACAO,
   SETOR_IDS,
+  SETOR_SAUDE,
   saoVizinhos,
   vizinhosDe,
 } from './isolateus.data';
@@ -513,15 +514,19 @@ export class IsolateusGameService {
     // O Contágio escolhido se materializa aqui, junto dos demais danos da
     // noite — sem card e sem Diário: a vila só vê a barra cair.
     const contagio = this.aplicarContagio(partida, segredo);
-    if (caidos.length || contagio) {
+    // O resgate é validado DEPOIS da sabotagem: uma Saúde derrubada nesta
+    // noite não socorre ninguém.
+    const resgateDecidido = this.validarResgate(partida, segredo);
+    if (caidos.length || contagio || resgateDecidido) {
       await this.matches.commitPartida(
         partida.id,
         {
           setores: partida.setores,
           esperanca: partida.esperanca,
           acontecimentos: partida.acontecimentos,
+          resgatePendente: partida.resgatePendente,
         },
-        contagio ?? {},
+        { ...(contagio ?? {}), resgateNoite: null },
       );
       if (partida.esperanca <= 0) {
         return this.encerrar(partida, segredo, {
@@ -532,13 +537,13 @@ export class IsolateusGameService {
       }
     }
 
-    // A questão do dia só existe se houver disputa: uma abdução a repelir ou um
-    // reparo a fazer. Noite de pura sabotagem passa sem pergunta — e deixa a
-    // ruína no mapa cobrando reação.
+    // A questão do dia só existe se houver disputa: uma abdução a repelir, um
+    // reparo a fazer ou um resgate a tentar. Noite de pura sabotagem passa sem
+    // pergunta — e deixa a ruína no mapa cobrando reação.
     const temAbducao = segredo
       .acoesDaNoite()
       .some((j) => j.acao.tipo === 'ABDUZIR');
-    if (!temAbducao && !partida.reparoSetorId) {
+    if (!temAbducao && !partida.reparoSetorId && !partida.resgatePendente) {
       const resumo = this.resumoSemDisputa(partida, caidos);
       // A sabotagem já registrou o próprio evento; só a noite calma falta.
       if (!caidos.length) this.registrar(partida, 'ESPERA', resumo.texto);
@@ -1094,6 +1099,94 @@ export class IsolateusGameService {
     });
     // Declarar o reparo também fecha a jogada da noite de quem declarou.
     return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /** Quem saiu da vila e pode voltar por um resgate: abduzidos e presos. */
+  private resgataveis(partida: IsolateusMatchEntity): Habitante[] {
+    return partida.habitantes.filter((h) => !h.vivo || h.preso);
+  }
+
+  /**
+   * O Resgate (025 §6.2): um habitante **dentro** do Setor de Saúde, de pé,
+   * organiza a volta de quem saiu da vila. Qualquer papel pode organizar, e é
+   * anônimo como o reparo. A intenção fica no cofre até o amanhecer, quando é
+   * validada (`validarResgate`) — publicar na hora revelaria que há alguém real
+   * na Saúde durante a noite.
+   */
+  async organizarResgate(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
+
+    if (this.posicaoDe(segredo, habitante) !== SETOR_SAUDE) {
+      throw new ForbiddenException({
+        code: 'FORA_DA_SAUDE',
+        message: 'Só quem está no Setor de Saúde pode organizar um resgate.',
+      });
+    }
+    const saude = partida.setores.find((s) => s.id === SETOR_SAUDE);
+    if (!saude?.intacto) {
+      throw new ForbiddenException({
+        code: 'SAUDE_EM_RUINAS',
+        message:
+          'O Setor de Saúde está em ruínas. Reconstrua-o para organizar um resgate.',
+      });
+    }
+    if (!this.resgataveis(partida).length) {
+      throw new BadRequestException({
+        code: 'SEM_RESGATAVEIS',
+        message: 'Ninguém saiu da vila: não há quem resgatar.',
+      });
+    }
+    if (segredo.resgateNoite) {
+      throw new BadRequestException({
+        code: 'RESGATE_USADO',
+        message: 'Já há um resgate organizado esta noite.',
+      });
+    }
+
+    segredo.resgateNoite = { alunoId };
+    await this.matches.commitPartida(partidaId, {}, { resgateNoite: { alunoId } });
+    // Como no reparo, organizar também fecha a jogada da noite.
+    return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /**
+   * O amanhecer decide se o resgate organizado vale: o organizador terminou a
+   * noite na Saúde, a Saúde segue de pé (a sabotagem da noite já caiu) e há
+   * pelo menos `MIN_RESGATE` habitantes nela — NPCs contam. Publica o resultado
+   * no Diário e devolve se algo foi decidido (para entrar no commit).
+   */
+  private validarResgate(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): boolean {
+    const intencao = segredo.resgateNoite;
+    if (!intencao) return false;
+    segredo.resgateNoite = null;
+
+    const organizador = partida.vivos.find(
+      (h) => h.id === segredo.habitanteDe(intencao.alunoId),
+    );
+    const saude = partida.setores.find((s) => s.id === SETOR_SAUDE);
+    const naSaude = partida.vivos.filter((h) => h.setorId === SETOR_SAUDE);
+    const vale =
+      organizador?.setorId === SETOR_SAUDE &&
+      !!saude?.intacto &&
+      naSaude.length >= ISOLATEUS.MIN_RESGATE &&
+      this.resgataveis(partida).length > 0;
+
+    partida.resgatePendente = vale;
+    this.registrar(
+      partida,
+      'RESGATE',
+      vale
+        ? 'Um resgate foi organizado no Setor de Saúde.'
+        : 'O resgate no Setor de Saúde não reuniu gente suficiente.',
+    );
+    return true;
   }
 
   /**

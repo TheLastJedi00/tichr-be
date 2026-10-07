@@ -120,6 +120,12 @@ export class IsolateusSegredoEntity {
   /** Delírio Coletivo escolhido, materializado no próximo fechamento da noite. */
   delirioPendente?: boolean;
 
+  /**
+   * O resgate organizado nesta noite (025 §6.2). Fica no cofre até o
+   * amanhecer: publicado na hora, revelaria que há um habitante real na Saúde.
+   */
+  resgateNoite?: { alunoId: string } | null;
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 

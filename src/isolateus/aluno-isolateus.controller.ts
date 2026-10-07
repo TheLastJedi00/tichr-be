@@ -77,6 +77,15 @@ export class AlunoIsolateusController {
     return this.game.declararReparo(aluno.alunoId, id);
   }
 
+  /** O Resgate: organiza, de dentro da Saude, a volta de quem saiu da vila. */
+  @Post(':id/resgate')
+  resgate(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.organizarResgate(aluno.alunoId, id);
+  }
+
   /** O Turno da Ameaça: sabotar um setor ou abduzir um morador. */
   @Post(':id/acao')
   acao(

@@ -95,6 +95,8 @@ export const ISOLATEUS = {
    * é o que impede a Ameaça de passar a partida inteira só aguardando.
    */
   CICLO_BRILHO: 3,
+  /** Mínimo de habitantes (NPCs contam) na Saúde para o resgate valer. */
+  MIN_RESGATE: 2,
 } as const;
 
 export type StatusIsolateus =
@@ -217,6 +219,8 @@ export type TipoAcontecimento =
   | 'DELIRIO'
   /** O brilho misterioso das noites múltiplas de `CICLO_BRILHO` (um por setor). */
   | 'BRILHO'
+  /** O resgate pela Saúde: organizado, cancelado, fracassado ou concluído. */
+  | 'RESGATE'
   | 'VEREDITO'
   | 'FIM';
 
@@ -334,6 +338,11 @@ export class IsolateusMatchEntity {
   cicloBrilho: number = ISOLATEUS.CICLO_BRILHO;
   /** O último brilho: a noite (`rodada`) e os setores que irradiaram. */
   brilho: { rodada: number; setorIds: string[] } | null = null;
+  /**
+   * Um resgate organizado na Saúde passou pela validação do amanhecer e está
+   * em jogo na questão do dia (sem autor: o organizador é anônimo).
+   */
+  resgatePendente = false;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;
