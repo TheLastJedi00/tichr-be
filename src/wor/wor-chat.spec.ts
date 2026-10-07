@@ -191,3 +191,22 @@ describe('WorChatService — envio (Task 3)', () => {
     expect(lista[0].texto).toBe('5');
   });
 });
+
+describe('WorChatService — moderação (Task 4)', () => {
+  it('palavrão: 422 MENSAGEM_BLOQUEADA, nada gravado e penalidade aplicada', async () => {
+    const { service, mensagens, game } = cenario();
+    const { canalId } = await service.canal('a1', 'm1');
+    const erro = await service
+      .enviar('a1', 'm1', 'que porra de palavra')
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(UnprocessableEntityException);
+    expect(mensagens[canalId]).toHaveLength(0);
+    expect(game.penalizarModeracao).toHaveBeenCalledWith('m1', 'a1');
+  });
+
+  it('texto limpo não penaliza', async () => {
+    const { service, game } = cenario();
+    await service.enviar('a1', 'm1', 'vamos de dica');
+    expect(game.penalizarModeracao).not.toHaveBeenCalled();
+  });
+});

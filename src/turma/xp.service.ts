@@ -134,6 +134,39 @@ export class XpService {
   }
 
   /**
+   * Debita XP de um aluno por uma penalidade de jogo (ex.: linguagem imprópria
+   * no chat do Wor). Como o crédito das partidas, dispensa o gate de
+   * `pontuacaoAtiva` — o jogo é a opção de gamificar. Nunca deixa o XP negativo
+   * (transação, como `distribuir`). Aluno fora da turma: ignorado.
+   */
+  async penalizarJogo(
+    turmaId: string,
+    alunoId: string,
+    pontos: number,
+    motivo: 'WOR_MODERACAO',
+  ): Promise<void> {
+    const aluno = await this.alunoRepo.findById(alunoId);
+    if (!aluno || aluno.turmaId !== turmaId || pontos <= 0) {
+      return;
+    }
+    const db = this.firebase.firestore;
+    const alunoRef = db.collection('alunos').doc(alunoId);
+    const logRef = db.collection('xp_logs').doc();
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(alunoRef);
+      const atual = (snap.data()?.xpTotal as number | undefined) ?? 0;
+      tx.update(alunoRef, { xpTotal: Math.max(0, atual - pontos) });
+      tx.set(logRef, {
+        alunoId,
+        turmaId,
+        pontos: -pontos,
+        motivo,
+        data: new Date().toISOString(),
+      });
+    });
+  }
+
+  /**
    * Credita ao XP dos alunos os pontos de uma partida encerrada (Tichr Qlick ou
    * Wor, conforme `motivo`). O próprio jogo é a opção de gamificar (PhD), então
    * dispensa o gate de `pontuacaoAtiva`. Usa `increment` para somar sem corrida

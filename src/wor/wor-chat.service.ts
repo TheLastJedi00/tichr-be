@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ModeracaoService } from '../moderacao/moderacao.service';
 import { WorChatRepository } from './wor-chat.repository';
@@ -67,6 +68,15 @@ export class WorChatService {
       throw new BadRequestException(
         `A mensagem precisa ter de 1 a ${WOR.CHAT_MAX_CARACTERES} caracteres.`,
       );
+    }
+
+    // A mensagem ofensiva nunca chega à equipe: é barrada aqui e cobrada.
+    if (this.moderacao.contemPalavrao(limpo)) {
+      await this.game.penalizarModeracao(matchId, alunoId);
+      throw new UnprocessableEntityException({
+        code: 'MENSAGEM_BLOQUEADA',
+        message: `Mensagem bloqueada: linguagem imprópria. Sua equipe perdeu ${WOR.PENALIDADE_HP} HP e você perdeu ${WOR.PENALIDADE_XP} XP.`,
+      });
     }
 
     const canalId = await this.canalDaEquipe(matchId, team, teams);
