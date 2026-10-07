@@ -1511,7 +1511,11 @@ export class IsolateusGameService {
     const partes = [
       this.resolverAbducao(partida, segredo, acertou),
       this.resolverReparo(partida, acertou),
-    ].filter((t): t is string => !!t);
+    ];
+    // O resgate tem critério próprio (maioria dos aldeões), mas é a mesma
+    // questão: uma pergunta por noite, qualquer que seja a disputa.
+    const resgate = this.resolverResgate(partida, votantes, respostas, questao);
+    partes.push(resgate?.texto ?? null);
 
     const pontos = { ...(segredo.pontos ?? {}) };
     if (!acertou) {
@@ -1523,10 +1527,13 @@ export class IsolateusGameService {
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
-      status: 'RESULTADO_RODADA',
+      // Resgate conquistado: a turma vota quem volta antes da janela de decisão.
+      status: resgate?.sucesso ? 'RESGATE_VOTO' : 'RESULTADO_RODADA',
       corretaIndex: questao.corretaIndex,
-      // A janela de decisão começa a correr agora (a Quarentena cabe nela).
+      // A fase seguinte começa a correr agora (a Quarentena cabe na janela).
       faseIniciadaEm: new Date().toISOString(),
+      resgatePendente: false,
+      votosResgateRecebidos: 0,
       esperanca: partida.esperanca,
       setores: partida.setores,
       habitantes: partida.habitantes,
@@ -1539,7 +1546,7 @@ export class IsolateusGameService {
       resumoRodada: {
         seq: partida.rodada,
         defendida: acertou,
-        texto: partes.join(' '),
+        texto: partes.filter((t): t is string => !!t).join(' '),
       },
     };
 
@@ -1650,6 +1657,34 @@ export class IsolateusGameService {
     // repelida — texto e tipo. Se diferissem, ela saberia que a Ameaça atirou de
     // longe e errou, e por eliminação onde ela não estava.
     return textos.length ? textos.join(' ') : repelir();
+  }
+
+  /**
+   * O resgate, decidido pela questão: dá certo se MAIS DA METADE das respostas
+   * dos aldeões reais na vila estiver certa (025 §6.3). Mais exigente que a
+   * apuração da defesa de propósito — trazer alguém de volta é um prêmio, e o
+   * voto aleatório dos NPCs não entra. Zero respostas = falha. `null` se não
+   * havia resgate em jogo.
+   */
+  private resolverResgate(
+    partida: IsolateusMatchEntity,
+    aldeoes: Array<{ alunoId: string }>,
+    respostas: Array<{ alunoId: string; alternativaIndex: number }>,
+    questao: { corretaIndex: number },
+  ): { sucesso: boolean; texto: string } | null {
+    if (!partida.resgatePendente) return null;
+    const dosAldeoes = respostas.filter((r) =>
+      aldeoes.some((a) => a.alunoId === r.alunoId),
+    );
+    const certas = dosAldeoes.filter(
+      (r) => r.alternativaIndex === questao.corretaIndex,
+    ).length;
+    const sucesso = certas * 2 > dosAldeoes.length;
+    const texto = sucesso
+      ? 'O resgate deu certo: a vila vai escolher quem volta.'
+      : 'O resgate fracassou.';
+    this.registrar(partida, 'RESGATE', texto);
+    return { sucesso, texto };
   }
 
   /** A Perícia do reparo. `null` se ninguém declarou reparo nesta noite. */

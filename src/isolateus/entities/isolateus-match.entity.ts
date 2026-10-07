@@ -113,6 +113,8 @@ export type StatusIsolateus =
   | 'RESULTADO_RODADA'
   | 'QUARENTENA_DEBATE'
   | 'QUARENTENA_VOTO'
+  /** A turma acertou a questão do resgate e vota quem volta (025 §6.4). */
+  | 'RESGATE_VOTO'
   | 'ENCERRADO';
 
 /**
@@ -343,6 +345,10 @@ export class IsolateusMatchEntity {
    * em jogo na questão do dia (sem autor: o organizador é anônimo).
    */
   resgatePendente = false;
+  /** Quantos já votaram no resgate (contagem apenas — o voto é secreto). */
+  votosResgateRecebidos = 0;
+  /** Quem o último resgate trouxe de volta (o papel dele continua secreto). */
+  resgateResultado: { habitanteId: string; nome: string } | null = null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;

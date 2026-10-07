@@ -34,6 +34,14 @@ const codigo = (e: unknown) =>
   ((e as BadRequestException).getResponse() as { code?: string }).code;
 
 describe('Isolateus — organizar o resgate (Task 16)', () => {
+  // O NPC anda ao acaso no fechamento da noite; parado, a contagem da Saúde
+  // fica determinística (Math.random alto = NPC não se move).
+  let random: jest.SpyInstance;
+  beforeEach(() => {
+    random = jest.spyOn(Math, 'random').mockReturnValue(0.99);
+  });
+  afterEach(() => random.mockRestore());
+
   it('quem está na Saúde organiza; nada aparece no doc público durante a noite', async () => {
     const ctx = vila();
     const eventos = ctx.partida.acontecimentos.length;
