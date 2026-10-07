@@ -97,6 +97,10 @@ export const ISOLATEUS = {
   CICLO_BRILHO: 3,
   /** Mínimo de habitantes (NPCs contam) na Saúde para o resgate valer. */
   MIN_RESGATE: 2,
+  /** Votação de quem volta pelo resgate (avanço rápido e pulo do professor). */
+  RESGATE_VOTO_MS: 60_000,
+  /** Esperança devolvida por um resgate concluído (teto 100). */
+  BONUS_RESGATE: 10,
 } as const;
 
 export type StatusIsolateus =

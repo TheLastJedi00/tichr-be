@@ -200,7 +200,43 @@ export class IsolateusMatchRepository {
     const snap = await this.votos.where('partidaId', '==', partidaId).get();
     return snap.docs
       .map((d) => d.data())
-      .filter((v) => v.rodada === rodada)
+      // Os votos do resgate moram na mesma coleção, marcados por `tipo`.
+      .filter((v) => v.rodada === rodada && v.tipo !== 'RESGATE')
+      .map((v) => ({
+        alunoId: v.alunoId as string,
+        suspeitoId: v.suspeitoId as string,
+      }));
+  }
+
+  // --- Votos do resgate (025 §6.4): mesma coleção, doc com sufixo `_resgate` ---
+
+  /** Registra o voto em quem volta; `false` se o aluno já votou nesta rodada. */
+  async registrarVotoResgate(
+    partidaId: string,
+    rodada: number,
+    alunoId: string,
+    habitanteId: string,
+  ): Promise<boolean> {
+    const ref = this.votos.doc(`${partidaId}_${rodada}_${alunoId}_resgate`);
+    if ((await ref.get()).exists) return false;
+    await ref.set({
+      partidaId,
+      rodada,
+      alunoId,
+      suspeitoId: habitanteId,
+      tipo: 'RESGATE',
+    });
+    return true;
+  }
+
+  async lerVotosResgate(
+    partidaId: string,
+    rodada: number,
+  ): Promise<Array<{ alunoId: string; suspeitoId: string }>> {
+    const snap = await this.votos.where('partidaId', '==', partidaId).get();
+    return snap.docs
+      .map((d) => d.data())
+      .filter((v) => v.rodada === rodada && v.tipo === 'RESGATE')
       .map((v) => ({
         alunoId: v.alunoId as string,
         suspeitoId: v.suspeitoId as string,

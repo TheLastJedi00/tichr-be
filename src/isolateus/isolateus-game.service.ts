@@ -483,6 +483,8 @@ export class IsolateusGameService {
           ? {
               quarentenaConvocadaPor: partida.quarentenaConvocadaPor ?? null,
               convocadorBloqueado: partida.convocadorBloqueado ?? null,
+
+              resgateResultado: partida.resgateResultado ?? null,
             }
           : {}),
       },
@@ -665,6 +667,12 @@ export class IsolateusGameService {
         habitanteId: trocar(partida.convocadorBloqueado.habitanteId),
       };
     }
+    if (partida.resgateResultado) {
+      partida.resgateResultado = {
+        ...partida.resgateResultado,
+        habitanteId: trocar(partida.resgateResultado.habitanteId),
+      };
+    }
 
     this.registrar(
       partida,
@@ -706,6 +714,8 @@ export class IsolateusGameService {
         acontecimentos: partida.acontecimentos,
         quarentenaConvocadaPor: partida.quarentenaConvocadaPor ?? null,
         convocadorBloqueado: partida.convocadorBloqueado ?? null,
+
+        resgateResultado: partida.resgateResultado ?? null,
       },
       {
         vinculos: segredo.vinculos,
@@ -1430,6 +1440,7 @@ export class IsolateusGameService {
       QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
       QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
       QUARENTENA_VOTO: ISOLATEUS.LIMITE_VOTO_MS,
+      RESGATE_VOTO: ISOLATEUS.RESGATE_VOTO_MS,
     };
     return limites[partida.status];
   }
@@ -1455,6 +1466,9 @@ export class IsolateusGameService {
     }
     if (partida.status === 'QUARENTENA_DEBATE') {
       return this.abrirVotacao(partida);
+    }
+    if (partida.status === 'RESGATE_VOTO') {
+      return this.apurarResgate(partida, segredo);
     }
     return this.apurarQuarentena(partida, segredo);
   }
@@ -2173,6 +2187,96 @@ export class IsolateusGameService {
           'A AMEAÇA VENCEU: a vila trancou um inocente e a Barra de Esperança chegou a zero.',
       });
     }
+    return partida;
+  }
+
+  // ===== O Resgate (025 §6.4) =====
+
+  /** O voto em quem volta: só os reais na vila, em quem saiu dela. */
+  async votarResgate(
+    alunoId: string,
+    partidaId: string,
+    habitanteId: string,
+  ): Promise<{ registrado: boolean }> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    if (partida.status !== 'RESGATE_VOTO') {
+      throw new BadRequestException('A votação do resgate não está aberta.');
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException('Quem saiu da vila não vota no resgate.');
+    }
+    if (!this.resgataveis(partida).some((h) => h.id === habitanteId)) {
+      throw new BadRequestException('Esse habitante não saiu da vila.');
+    }
+
+    const registrado = await this.matches.registrarVotoResgate(
+      partidaId,
+      partida.rodada,
+      alunoId,
+      habitanteId,
+    );
+    if (!registrado) return { registrado: false };
+
+    const votos = await this.matches.lerVotosResgate(partidaId, partida.rodada);
+    partida.votosResgateRecebidos = votos.length;
+    await this.matches.commitPartida(partidaId, {
+      votosResgateRecebidos: votos.length,
+    });
+    // Avanço rápido: todos os reais na vila votaram.
+    if (votos.length >= this.reaisNaVila(partida, segredo).length) {
+      await this.apurarResgate(partida, segredo);
+    }
+    return { registrado: true };
+  }
+
+  /**
+   * Quem volta: o mais votado pelos reais, com sorteio no empate — inclusive
+   * sem voto nenhum, já que o resgate foi conquistado na questão. Volta vivo,
+   * livre, no Setor de Saúde, e a Esperança sobe `BONUS_RESGATE`. O papel dele
+   * continua secreto: uma Ameaça presa resgatada volta a ser Ameaça livre.
+   */
+  private async apurarResgate(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
+    const candidatos = this.resgataveis(partida);
+    const fase: Partial<IsolateusMatchEntity> = {
+      status: 'RESULTADO_RODADA',
+      faseIniciadaEm: new Date().toISOString(),
+    };
+    if (!candidatos.length) {
+      Object.assign(partida, fase);
+      await this.matches.commitPartida(partida.id, fase);
+      return partida;
+    }
+
+    const votos = await this.matches.lerVotosResgate(partida.id, partida.rodada);
+    const contagem = candidatos.map(
+      (h) => votos.filter((v) => v.suspeitoId === h.id).length,
+    );
+    const volta = candidatos[this.maisVotadoComSorteio(contagem)];
+    volta.vivo = true;
+    volta.preso = false;
+    volta.setorId = SETOR_SAUDE;
+    partida.esperanca = Math.min(
+      ISOLATEUS.ESPERANCA_INICIAL,
+      partida.esperanca + ISOLATEUS.BONUS_RESGATE,
+    );
+
+    const dados: Partial<IsolateusMatchEntity> = {
+      ...fase,
+      habitantes: partida.habitantes,
+      esperanca: partida.esperanca,
+      resgateResultado: { habitanteId: volta.id, nome: volta.nome },
+      acontecimentos: this.registrar(
+        partida,
+        'RESGATE',
+        `${volta.nome} foi resgatado e voltou à vila.`,
+      ),
+    };
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partida.id, dados);
     return partida;
   }
 
