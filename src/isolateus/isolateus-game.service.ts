@@ -461,7 +461,7 @@ export class IsolateusGameService {
     );
 
     if (this.noiteEstaFechada(partida, segredo)) {
-      return this.fecharNoite(partida, segredo);
+      return this.fecharNoite(partida);
     }
     await this.encurtarPelaCarencia(partida, segredo);
     return partida;
@@ -588,7 +588,6 @@ export class IsolateusGameService {
    */
   private async fecharNoite(
     partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
     const rodada = partida.rodada;
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
@@ -1707,7 +1706,7 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
     if (partida.status === 'DESLOCAMENTO') {
-      return this.fecharNoite(partida, segredo);
+      return this.fecharNoite(partida);
     }
     if (partida.status === 'RESULTADO_RODADA') {
       // A janela de decisão zerou sem Quarentena: a noite cai sozinha.
