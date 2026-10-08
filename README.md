@@ -1070,6 +1070,7 @@ seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
 | `POST` | `/wor/jogos/:jogoId/partida` `{ turmaId }` | cria a partida (lobby) amarrada a uma turma |
 | `GET` | `/wor/matches/:id` | estado (raiz + times) |
 | `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
+| `POST` | `/wor/matches/:id/multiplicador` `{ multiplicador }` | **só no lobby**: quanto valem os pontos da partida, inteiro de **1 a 10** (400 fora da faixa ou depois do início; 403 se a partida não é do professor). Público em `multiplicador` (ausente = 1) |
 | `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
 | `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
 | `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo) |
@@ -1103,8 +1104,14 @@ Errar a palavra ignora o efeito escolhido (Dano Crítico no próprio castelo, co
 
 **Economia de XP:** o dano vira **pontos de combate** da equipe atacante; no fim, o HP
 restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
-`XP = pontos × XP_POR_PONTO (0,1)`, cheio para a campeã e **metade** para as demais
-(`XpService.creditarPartida`, motivo `WOR`).
+`XP = pontos × XP_POR_PONTO (1)`, cheio para a campeã e **metade** para as demais
+(`XpService.creditarPartida`, motivo `WOR`). A conversão era **0,1** e deixava o Wor muito abaixo
+do Qlick e do Isolateus; agora é **1:1**, a mesma régua deles.
+
+**Multiplicador da partida:** no lobby, o professor escolhe de **1x a 10x**
+(`MULTIPLICADOR_MIN`/`MULTIPLICADOR_MAX`). Todo ponto ganho na partida é multiplicado (dano,
+bônus de arriscar e bônus de HP do fim), o que multiplica também o XP. O dano no castelo não
+muda: o multiplicador mexe só na pontuação. Fica fixo depois do início.
 
 ### Chat privado da equipe
 

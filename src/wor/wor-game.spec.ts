@@ -269,10 +269,58 @@ describe('WorGameService — rodada por membros', () => {
 
     expect(creditos).toHaveLength(1);
     expect(creditos[0].motivo).toBe('WOR');
-    // eq1 (campeã ×1): (1000 + bônus HP 1000) * 0.1 = 200; eq2 (×0,5): (400 + 500) * 0.1 * 0.5 = 45
+    // Pontos → XP na razão 1:1, como no Qlick e no Isolateus.
+    // eq1 (campeã ×1): 1000 + bônus HP 1000 = 2000; eq2 (×0,5): (400 + 500) * 0,5 = 450
     expect(creditos[0].pontos).toEqual([
-      { alunoId: 'a1', pontos: 200 },
-      { alunoId: 'b1', pontos: 45 },
+      { alunoId: 'a1', pontos: 2000 },
+      { alunoId: 'b1', pontos: 450 },
     ]);
+  });
+});
+
+describe('WorGameService — multiplicador de pontos da partida', () => {
+  it('o dano vira pontos multiplicados', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    match.multiplicador = 3;
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    expect(teams[0].pontos).toBe(WOR.DANO_ATAQUE * WOR.PONTOS_POR_DANO * 3); // 300
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE); // o dano não muda
+  });
+
+  it('o bônus de arriscar também é multiplicado', async () => {
+    const teams = [time('equipe-1', ['a1'], 500), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    match.multiplicador = 4;
+    await service.arriscar('a1', 'm1', 'arte');
+    expect(teams[0].pontos).toBe(WOR.BONUS_ARRISCAR * 4); // 1200
+  });
+
+  it('o bônus de HP do fim é multiplicado, e o XP sai dos pontos multiplicados', async () => {
+    const teams = [time('equipe-1', ['a1'], 1000), time('equipe-2', ['b1'], 500)];
+    teams[0].pontos = 2000; // já ganhos na partida (com o multiplicador)
+    teams[1].pontos = 800;
+    const { service, match, creditos } = cenario(teams);
+    match.multiplicador = 2;
+    match.turmaId = 't1';
+    match.ondaIndex = 1;
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA'); // completa REI → encerra
+
+    // eq1: 2000 + 1000 HP × 2 = 4000 (×1); eq2: (800 + 500 HP × 2) × 0,5 = 900
+    expect(teams[0].pontos).toBe(4000);
+    expect(creditos[0].pontos).toEqual([
+      { alunoId: 'a1', pontos: 4000 },
+      { alunoId: 'b1', pontos: 900 },
+    ]);
+  });
+
+  it('partida antiga sem o campo vale 1x', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    delete (match as Partial<WorMatchEntity>).multiplicador;
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    expect(teams[0].pontos).toBe(WOR.DANO_ATAQUE * WOR.PONTOS_POR_DANO);
   });
 });

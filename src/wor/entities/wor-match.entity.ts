@@ -17,8 +17,20 @@ export const WOR = {
   BONUS_ARRISCAR: 300,
   /** Bônus de intactez no fim: `+hp * fator` (recompensa terminar de pé). */
   BONUS_HP_FATOR: 1,
-  /** Conversão pontos-de-jogo → XP da sala (campeã ×1, demais ×0,5). */
-  XP_POR_PONTO: 0.1,
+  /**
+   * Conversão pontos-de-jogo → XP da sala (campeã ×1, demais ×0,5).
+   *
+   * Era 0,1: uma equipe campeã com 2000 pontos levava 200 XP, enquanto um Qlick
+   * de 10 questões rende ~10000. Agora 1:1, a mesma régua do Qlick e do
+   * Isolateus.
+   */
+  XP_POR_PONTO: 1,
+  /**
+   * Multiplicador de pontos escolhido pelo professor no lobby (inteiro). Vale
+   * para todo ponto ganho na partida: dano, arriscar e o bônus de HP do fim.
+   */
+  MULTIPLICADOR_MIN: 1,
+  MULTIPLICADOR_MAX: 10,
   /** Duração do Action Card — e do congelamento do jogo enquanto ele está no ar. */
   FREEZE_MS: 3000,
   // ===== Chat da equipe =====
@@ -139,6 +151,13 @@ export class WorMatchEntity {
 
   status: StatusMatch = 'LOBBY';
   criadaEm?: string | null;
+
+  /**
+   * Quanto valem os pontos desta partida (1x a 10x), definido pelo professor no
+   * lobby e fixo depois do início. Público: o lobby e o telão mostram o valor.
+   * Partidas antigas (sem o campo) valem 1x.
+   */
+  multiplicador = 1;
 
   /** Índice da onda (palavra) atual no baralho e total de ondas. */
   ondaIndex = 0;
