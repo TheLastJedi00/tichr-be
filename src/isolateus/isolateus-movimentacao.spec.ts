@@ -581,3 +581,33 @@ describe('Isolateus 026 — corrida entre o pulso e o mover (transação)', () =
     expect(ctx.banco.partida.deslocamentosNoite).toHaveLength(2);
   });
 });
+
+describe('Isolateus 026 — a noite fecha uma vez só', () => {
+  it('um segundo fechamento com leitura velha não reverte a noite', async () => {
+    const ctx = vilaComAmeacas({ npcs: 1 });
+    ctx.segredo.agendaNpc = [];
+    await ctx.service.mover('a3', 'p1', 'energia');
+    avancar(ISOLATEUS.LIMITE_DESLOCAMENTO_MS + 1);
+
+    // Uma requisição leu a partida ANTES do amanhecer (status DESLOCAMENTO,
+    // posições antigas) e chega depois que a noite já fechou.
+    const velha = structuredClone({ ...ctx.partida });
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.setorDe('h3')).toBe('energia');
+    const amanhecer = ctx.partida.ultimosDeslocamentos;
+
+    const repo = ctx.repo as unknown as { buscar: jest.Mock };
+    repo.buscar.mockImplementationOnce(() =>
+      Promise.resolve(
+        Object.assign(
+          Object.create(Object.getPrototypeOf(ctx.partida) as object),
+          velha,
+        ),
+      ),
+    );
+    await ctx.service.resolverPorTempo('p1', { alunoId: 'a4' });
+
+    expect(ctx.setorDe('h3')).toBe('energia');
+    expect(ctx.partida.ultimosDeslocamentos).toEqual(amanhecer);
+  });
+});

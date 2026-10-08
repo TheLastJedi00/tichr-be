@@ -579,8 +579,30 @@ export class IsolateusGameService {
    *
    * Ter um ponto só importa porque antes era a ação da Ameaça que virava o dia:
    * ela controlava o relógio da turma, e demorar a agir era um *tell* dela.
+   *
+   * E ele roda UMA vez por noite: o fechamento é reivindicado numa transação,
+   * e só quem reivindica fecha — sobre a leitura atômica dessa transação.
+   * Vários celulares cobram o prazo (e o pulso da 026 chama o `/tempo` a cada
+   * ~3s); uma segunda requisição que leu a partida antes do amanhecer refazia o
+   * fechamento com as posições antigas e revertia a noite.
    */
   private async fecharNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<IsolateusMatchEntity> {
+    const rodada = partida.rodada;
+    const fresco = await this.matches.transacao(partida.id, (p, s) => {
+      if (p.status !== 'DESLOCAMENTO' || p.rodada !== rodada) return null;
+      if (s.noiteFechada === rodada) return null;
+      s.noiteFechada = rodada;
+      return { segredo: { noiteFechada: rodada } };
+    });
+    if (!fresco) return (await this.matches.buscar(partida.id)) ?? partida;
+    return this.amanhecer(fresco.partida, fresco.segredo);
+  }
+
+  /** O fechamento em si, já reivindicado por `fecharNoite`. */
+  private async amanhecer(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {

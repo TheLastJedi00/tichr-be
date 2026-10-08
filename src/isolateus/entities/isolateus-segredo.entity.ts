@@ -130,6 +130,14 @@ export class IsolateusSegredoEntity {
   /** A última troca de destino de cada aluno nesta noite (rate limit do `mover`). */
   ultimosMover?: Array<{ alunoId: string; em: string }>;
 
+  /**
+   * A última noite (`rodada`) cujo fechamento já foi reivindicado. Garante que
+   * a virada da noite rode UMA vez: com vários celulares cobrando o prazo, uma
+   * segunda requisição com leitura velha refazia o fechamento e revertia as
+   * posições da noite.
+   */
+  noiteFechada?: number;
+
   /** Contágio escolhido, materializado no próximo fechamento da noite. */
   contagioPendente?: boolean;
 
