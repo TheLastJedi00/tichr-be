@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
+import { DefinirMultiplicadorDto } from './dto/definir-multiplicador.dto';
 import { WorGameService } from './wor-game.service';
 import { WorMatchService } from './wor-match.service';
 
@@ -29,6 +30,16 @@ export class WorMatchController {
   @Post('matches/:id/distribuir')
   distribuir(@ProfessorId() uid: string, @Param('id') id: string) {
     return this.service.distribuir(uid, id);
+  }
+
+  /** Lobby: quanto valem os pontos desta partida (1x a 10x). */
+  @Post('matches/:id/multiplicador')
+  multiplicador(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirMultiplicadorDto,
+  ) {
+    return this.service.definirMultiplicador(uid, id, dto.multiplicador);
   }
 
   @Post('matches/:id/iniciar')

@@ -76,6 +76,7 @@ export class WorMatchService {
       turmaId: escolhida,
       nome: jogo.nome,
       status: 'LOBBY',
+      multiplicador: 1,
       criadaEm: new Date().toISOString(),
       ondaIndex: 0,
       totalOndas: jogo.palavras.length,
@@ -219,6 +220,26 @@ export class WorMatchService {
       pontos: 0,
     }));
     await this.matches.atualizar(matchId, { ordemEquipes, placar });
+    return this.view(matchId);
+  }
+
+  /**
+   * O multiplicador de pontos da partida (1x a 10x). Só no lobby: depois do
+   * início, mudar o valor no meio da batalha mudaria o jogo que a turma
+   * começou. A faixa é validada na DTO.
+   */
+  async definirMultiplicador(
+    professorId: string,
+    matchId: string,
+    multiplicador: number,
+  ): Promise<MatchView> {
+    const match = await this.assertProfessor(matchId, professorId);
+    if (match.status !== 'LOBBY') {
+      throw new BadRequestException(
+        'O multiplicador só pode ser escolhido antes de a partida começar.',
+      );
+    }
+    await this.matches.atualizar(matchId, { multiplicador });
     return this.view(matchId);
   }
 
