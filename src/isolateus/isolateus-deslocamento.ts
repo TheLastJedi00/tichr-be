@@ -79,3 +79,25 @@ export function sortearAgendaNpc(
   }
   return agenda.sort((a, b) => Date.parse(a.em) - Date.parse(b.em));
 }
+
+/**
+ * A carência encurtou a noite: os avisos ainda não liberados (depois de
+ * `agora`) são comprimidos, na mesma proporção e na mesma ordem, para caber
+ * entre `agora` e o novo fim (026 §2.3). Sem isso, um NPC agendado para os 30s
+ * só "avisaria" no fechamento, junto de todos os outros.
+ */
+export function reescalarAgenda(
+  agenda: AvisoNpc[],
+  agora: number,
+  fimAntigo: number,
+  fimNovo: number,
+): AvisoNpc[] {
+  const antes = fimAntigo - agora;
+  if (antes <= 0) return agenda;
+  const fator = (fimNovo - agora) / antes;
+  return agenda.map((a) => {
+    const t = Date.parse(a.em);
+    if (t <= agora) return a;
+    return { ...a, em: new Date(agora + (t - agora) * fator).toISOString() };
+  });
+}

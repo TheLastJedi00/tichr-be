@@ -27,7 +27,11 @@ import {
   AcaoAmeaca,
   IsolateusSegredoEntity,
 } from './entities/isolateus-segredo.entity';
-import { aplicarAviso, sortearAgendaNpc } from './isolateus-deslocamento';
+import {
+  aplicarAviso,
+  reescalarAgenda,
+  sortearAgendaNpc,
+} from './isolateus-deslocamento';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
@@ -251,6 +255,7 @@ export class IsolateusGameService {
     setorId: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
+    await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
     // A origem é onde a noite começou (a posição pública): trocar de ideia
@@ -361,8 +366,28 @@ export class IsolateusGameService {
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
+    await this.pulsoDaAgenda(partida, segredo);
     this.habitanteDaNoite(partida, segredo, alunoId);
     return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /**
+   * O pulso da agenda dos NPCs (026 §2.3). Não há timer no servidor: os avisos
+   * vencidos saem quando alguém da partida fala com ele durante a noite — o
+   * `/tempo` que os celulares e o telão chamam a cada ~3s, ou qualquer jogada.
+   * Só escreve se houver aviso a liberar.
+   */
+  private async pulsoDaAgenda(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<void> {
+    if (partida.status !== 'DESLOCAMENTO') return;
+    if (!this.liberarAgenda(partida, segredo, Date.now())) return;
+    await this.matches.commitPartida(
+      partida.id,
+      { deslocamentosNoite: partida.deslocamentosNoite },
+      { posicoesNoite: segredo.posicoesNoite, agendaNpc: segredo.agendaNpc },
+    );
   }
 
   /** O habitante do aluno, exigindo que ele esteja na vila e que seja noite. */
@@ -443,7 +468,17 @@ export class IsolateusGameService {
       novoFim - ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
     ).toISOString();
     partida.faseIniciadaEm = base;
-    await this.matches.commitPartida(partida.id, { faseIniciadaEm: base });
+    // Os avisos de NPC que ainda faltam cabem na carência, no mesmo commit do
+    // relógio novo (026 §2.3): senão sairiam todos juntos no fechamento.
+    const agenda = segredo.agendaNpc
+      ? reescalarAgenda(segredo.agendaNpc, Date.now(), fim, novoFim)
+      : undefined;
+    if (agenda) segredo.agendaNpc = agenda;
+    await this.matches.commitPartida(
+      partida.id,
+      { faseIniciadaEm: base },
+      agenda ? { agendaNpc: agenda } : {},
+    );
   }
 
   /**
@@ -981,6 +1016,7 @@ export class IsolateusGameService {
     dto: AcaoAmeacaDto,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
+    await this.pulsoDaAgenda(partida, segredo);
     if (!segredo.ehAmeaca(alunoId)) {
       throw new ForbiddenException('Você é um Aldeão.');
     }
@@ -1196,6 +1232,7 @@ export class IsolateusGameService {
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
+    await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
     const aqui = this.posicaoDe(segredo, habitante);
@@ -1248,6 +1285,7 @@ export class IsolateusGameService {
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregar(partidaId);
+    await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
     if (this.posicaoDe(segredo, habitante) !== SETOR_SAUDE) {
@@ -1520,6 +1558,8 @@ export class IsolateusGameService {
 
     const decorrido = Date.now() - Date.parse(partida.faseIniciadaEm);
     if (decorrido < limite - ISOLATEUS.MARGEM_TEMPO_MS) {
+      // Antes do prazo, o /tempo da noite é o pulso da agenda dos NPCs.
+      await this.pulsoDaAgenda(partida, segredo);
       return partida;
     }
     return this.encerrarFase(partida, segredo);

@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
 import { ISOLATEUS } from './entities/isolateus-match.entity';
-import { sortearAgendaNpc } from './isolateus-deslocamento';
+import { reescalarAgenda, sortearAgendaNpc } from './isolateus-deslocamento';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 import { vizinhosDe } from './isolateus.data';
 
@@ -244,5 +244,124 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
     expect(ctx.setorDe('n2')).toBe('seguranca');
     expect(ctx.setorDe('n3')).toBe('seguranca'); // sem aviso: não sorteia mais
     expect(ctx.segredo.agendaNpc).toEqual([]);
+  });
+});
+
+describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
+  /** Vila com NPCs e uma agenda relativa ao "agora" do teste. */
+  const comAgenda = (
+    avisos: Array<[string, string | null, number]>,
+    opts: Parameters<typeof vilaComAmeacas>[0] = {},
+  ) => {
+    const ctx = vilaComAmeacas({ npcs: 3, ...opts });
+    ctx.segredo.agendaNpc = avisos.map(([habitanteId, para, ms]) => ({
+      habitanteId,
+      para,
+      em: new Date(agora + ms).toISOString(),
+    }));
+    return ctx;
+  };
+  const commits = (ctx: ReturnType<typeof vilaComAmeacas>) =>
+    (ctx.repo.commitPartida as jest.Mock).mock.calls.length;
+
+  it('o pulso do /tempo libera só os avisos vencidos, sem fechar a noite', async () => {
+    const ctx = comAgenda([
+      ['n1', 'energia', 2_000],
+      ['n2', 'comercio', 10_000],
+    ]);
+    avancar(3_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    expect(ctx.partida.deslocamentosNoite).toEqual([
+      { habitanteId: 'n1', para: 'energia' },
+    ]);
+    expect(ctx.segredo.agendaNpc!.map((a) => a.habitanteId)).toEqual(['n2']);
+    // O NPC liberado conta como "está indo": a fileira da Ameaça já o vê no
+    // destino, como um real que andou.
+    expect(ctx.segredo.posicoesNoite).toEqual([
+      { habitanteId: 'n1', setorId: 'energia' },
+    ]);
+  });
+
+  it('é idempotente: um segundo pulso não duplica nem escreve', async () => {
+    const ctx = comAgenda([['n1', 'energia', 2_000]]);
+    avancar(3_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    const antes = commits(ctx);
+    await ctx.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(commits(ctx)).toBe(antes);
+    expect(ctx.partida.deslocamentosNoite).toHaveLength(1);
+  });
+
+  it('sem aviso vencido, o pulso não escreve nada', async () => {
+    const ctx = comAgenda([['n1', 'energia', 10_000]]);
+    avancar(3_000);
+    await ctx.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(commits(ctx)).toBe(0);
+  });
+
+  it('a desistência do NPC retira o aviso dele', async () => {
+    const ctx = comAgenda([
+      ['n1', 'energia', 2_000],
+      ['n1', null, 4_000],
+    ]);
+    avancar(3_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.partida.deslocamentosNoite).toHaveLength(1);
+    avancar(2_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.partida.deslocamentosNoite).toEqual([]);
+    expect(ctx.segredo.posicoesNoite).toEqual([]);
+  });
+
+  it('qualquer requisição da noite também libera: mover, confirmar, jogada', async () => {
+    const ctx = comAgenda([
+      ['n1', 'energia', 1_000],
+      ['n2', 'comercio', 2_000],
+      ['n3', 'energia', 3_000],
+    ]);
+    avancar(1_500);
+    await ctx.service.mover('a3', 'p1', 'comercio');
+    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toEqual([
+      'n1',
+      'h3',
+    ]);
+    avancar(1_000);
+    await ctx.service.confirmarPosicao('a4', 'p1');
+    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toContain(
+      'n2',
+    );
+    avancar(1_000);
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toContain(
+      'n3',
+    );
+  });
+
+  it('na carência, os avisos restantes passam a cair dentro dela', async () => {
+    const ctx = comAgenda([['n1', 'energia', 30_000]], { ameacas: ['a1'] });
+    avancar(5_000);
+    // Todos os reais confirmam; falta só a jogada da Ameaça → carência.
+    for (const a of ['a1', 'a2', 'a3', 'a4', 'a5']) {
+      await ctx.service.confirmarPosicao(a, 'p1');
+    }
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    const em = Date.parse(ctx.segredo.agendaNpc![0].em);
+    expect(em).toBeGreaterThan(agora);
+    expect(em).toBeLessThanOrEqual(agora + ISOLATEUS.CARENCIA_AMEACA_MS);
+  });
+
+  it('reescalarAgenda comprime proporcionalmente e mantém a ordem', () => {
+    const base = 1_000_000;
+    const agenda = [10_000, 20_000, 40_000].map((ms, i) => ({
+      habitanteId: `n${i}`,
+      para: 'energia',
+      em: new Date(base + ms).toISOString(),
+    }));
+    const nova = reescalarAgenda(agenda, base, base + 60_000, base + 6_000);
+    expect(nova.map((a) => Date.parse(a.em) - base)).toEqual([
+      1_000, 2_000, 4_000,
+    ]);
   });
 });
