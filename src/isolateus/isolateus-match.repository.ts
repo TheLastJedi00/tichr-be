@@ -116,6 +116,59 @@ export class IsolateusMatchRepository {
   }
 
   /**
+   * Lê a partida e o cofre e grava o que `fn` devolver, numa TRANSAÇÃO (026).
+   *
+   * Para o que várias requisições alteram ao mesmo tempo durante a noite: os
+   * avisos de saída e os destinos (`deslocamentosNoite`/`posicoesNoite`). O
+   * pulso dos celulares libera avisos de NPC a cada ~3s; com ler-e-gravar
+   * simples, um aluno que andasse entre a leitura e a escrita do pulso perdia
+   * o movimento. `fn` pode rodar mais de uma vez (o Firestore repete em
+   * conflito): só deve mutar as entidades que recebe. Devolve `null` sem gravar.
+   */
+  async transacao(
+    partidaId: string,
+    fn: (
+      partida: IsolateusMatchEntity,
+      segredo: IsolateusSegredoEntity,
+    ) => {
+      publico?: Partial<IsolateusMatchEntity>;
+      segredo?: Partial<IsolateusSegredoEntity>;
+    } | null,
+  ): Promise<{
+    partida: IsolateusMatchEntity;
+    segredo: IsolateusSegredoEntity;
+  } | null> {
+    const refPartida = this.col.doc(partidaId);
+    const refCofre = this.cofre.doc(partidaId);
+    return this.firebase.firestore.runTransaction(async (tx) => {
+      const [snapP, snapS] = await Promise.all([
+        tx.get(refPartida),
+        tx.get(refCofre),
+      ]);
+      if (!snapP.exists || !snapS.exists) return null;
+      const partida = plainToInstance(IsolateusMatchEntity, {
+        ...snapP.data(),
+        id: snapP.id,
+      });
+      const segredo = plainToInstance(IsolateusSegredoEntity, {
+        ...snapS.data(),
+        id: snapS.id,
+      });
+      const mudancas = fn(partida, segredo);
+      if (!mudancas) return null;
+      if (mudancas.publico && Object.keys(mudancas.publico).length) {
+        tx.set(refPartida, this.semId({ ...mudancas.publico }), {
+          merge: true,
+        });
+      }
+      if (mudancas.segredo && Object.keys(mudancas.segredo).length) {
+        tx.set(refCofre, this.semId({ ...mudancas.segredo }), { merge: true });
+      }
+      return { partida, segredo };
+    });
+  }
+
+  /**
    * Quantas vezes cada aluno da turma já foi a Ameaça. Server-only: revela quem
    * já teve o papel, então cai no deny-all das Firestore Rules.
    */

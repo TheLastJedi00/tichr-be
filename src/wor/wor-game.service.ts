@@ -281,7 +281,8 @@ export class WorGameService {
           hp: catapultaEm.hp,
           isHorde: catapultaEm.isHorde,
         };
-        team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
+        team.pontos =
+          (team.pontos ?? 0) + this.pontos(match, dano * WOR.PONTOS_POR_DANO);
         card = this.montarCard(
           match,
           'CATAPULTA',
@@ -297,7 +298,7 @@ export class WorGameService {
         );
       }
       // Arriscar tudo e acertar rende pontos extras (desempate + ranking).
-      team.pontos = (team.pontos ?? 0) + WOR.BONUS_ARRISCAR;
+      team.pontos = (team.pontos ?? 0) + this.pontos(match, WOR.BONUS_ARRISCAR);
       patches[team.id] = { ...(patches[team.id] ?? {}), pontos: team.pontos };
 
       const raiz: Partial<WorMatchEntity> = { acoesRodada: [] };
@@ -508,7 +509,8 @@ export class WorGameService {
           alvo.aplicarDano(dano);
           patches[alvo.id] = { hp: alvo.hp, isHorde: alvo.isHorde };
           // O dano causado vira pontos da equipe atacante (desempate + ranking).
-          team.pontos = (team.pontos ?? 0) + dano * WOR.PONTOS_POR_DANO;
+          team.pontos =
+            (team.pontos ?? 0) + this.pontos(match, dano * WOR.PONTOS_POR_DANO);
           patches[team.id] = {
             ...(patches[team.id] ?? {}),
             pontos: team.pontos,
@@ -719,7 +721,8 @@ export class WorGameService {
 
     // Bônus de fim: terminar intacto rende pontos (reforça o desempate).
     for (const t of teams) {
-      t.pontos = (t.pontos ?? 0) + Math.round(t.hp * WOR.BONUS_HP_FATOR);
+      t.pontos =
+        (t.pontos ?? 0) + this.pontos(match, t.hp * WOR.BONUS_HP_FATOR);
       await this.matches.atualizarTeam(matchId, t.id, { pontos: t.pontos });
     }
 
@@ -749,6 +752,14 @@ export class WorGameService {
       }
       await this.xp.creditarPartida(match.turmaId, creditos, 'WOR');
     }
+  }
+
+  /**
+   * Os pontos que a equipe ganha, já com o multiplicador da partida (1x a 10x,
+   * escolhido no lobby). Partida antiga, sem o campo, vale 1x.
+   */
+  private pontos(match: WorMatchEntity, base: number): number {
+    return Math.round(base * (match.multiplicador ?? 1));
   }
 
   private async view(matchId: string): Promise<MatchView> {

@@ -106,6 +106,14 @@ function noite(opts: {
   const repo = {
     buscar: jest.fn(async () => partida),
     buscarSegredo: jest.fn(async () => segredo),
+    // Em memória não há corrida: a "transação" roda sobre os próprios objetos.
+    transacao: jest.fn(async (_id, fn) => {
+      const r = fn(partida, segredo);
+      if (!r) return null;
+      Object.assign(partida, r.publico ?? {});
+      Object.assign(segredo, r.segredo ?? {});
+      return { partida, segredo };
+    }),
     commitPartida: jest.fn(async (_id, publico = {}, seg = {}) => {
       Object.assign(partida, publico);
       Object.assign(segredo, seg);
@@ -159,13 +167,17 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
   });
 
   it('um passo por noite, contado de onde a noite começou (não encadeia)', async () => {
-    const { service, setorDe } = noite({ posicoes: { h2: 'comunicacao' } });
+    const { service, segredo, setorDe } = noite({
+      posicoes: { h2: 'comunicacao' },
+    });
     await service.mover('a2', 'p1', 'energia');
     // Segurança é vizinha da Energia, mas não da Comunicação, de onde ele saiu.
     await expect(
       service.mover('a2', 'p1', 'seguranca'),
     ).rejects.toMatchObject({ response: { code: 'SEM_ESTRADA' } });
-    // Trocar de ideia para outro vizinho da origem é permitido.
+    // Trocar de ideia para outro vizinho da origem é permitido (passado o
+    // intervalo mínimo entre trocas, 026 §2.2).
+    segredo.ultimosMover = [];
     await service.mover('a2', 'p1', 'saude');
     expect((await service.painel('a2', 'p1')).setorId).toBe('saude');
     expect(setorDe('h2')).toBe('comunicacao');
@@ -174,6 +186,7 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
   it('voltar ao setor de origem desfaz o deslocamento', async () => {
     const { service, segredo } = noite({ posicoes: { h2: 'comunicacao' } });
     await service.mover('a2', 'p1', 'energia');
+    segredo.ultimosMover = []; // passado o intervalo mínimo entre trocas
     await service.mover('a2', 'p1', 'comunicacao');
     expect(segredo.posicoesNoite).toEqual([]);
     expect((await service.painel('a2', 'p1')).setorId).toBe('comunicacao');
