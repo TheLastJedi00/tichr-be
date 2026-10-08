@@ -76,6 +76,14 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const repo = {
     buscar: jest.fn(async () => partida),
     buscarSegredo: jest.fn(async () => segredo),
+    // Em memória não há corrida: a "transação" roda sobre os próprios objetos.
+    transacao: jest.fn(async (_id, fn) => {
+      const r = fn(partida, segredo);
+      if (!r) return null;
+      Object.assign(partida, r.publico ?? {});
+      Object.assign(segredo, r.segredo ?? {});
+      return { partida, segredo };
+    }),
     commitPartida: jest.fn(async (_id, publico = {}, seg = {}) => {
       Object.assign(partida, publico);
       Object.assign(segredo, seg);

@@ -147,6 +147,26 @@ describe('Isolateus — lobby e Despertar', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('o Despertar já sorteia a agenda dos NPCs da primeira noite (026 §2.3)', async () => {
+    const { service, partidas, segredos } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4); // 4 reais → 3 NPCs
+    const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+    await service.iniciar('prof', p.id);
+    random.mockRestore();
+
+    const partida = partidas.get(p.id)!;
+    const segredo = segredos.get(p.id)!;
+    expect(partida.deslocamentosNoite).toEqual([]);
+    expect(segredo.agendaNpc?.length).toBeGreaterThan(0);
+    const npcs = new Set(segredo.npcIds);
+    const inicio = Date.parse(partida.faseIniciadaEm!);
+    for (const a of segredo.agendaNpc!) {
+      expect(npcs.has(a.habitanteId)).toBe(true);
+      expect(Date.parse(a.em)).toBeGreaterThan(inicio);
+    }
+  });
+
   it('o debate vem ligado por padrão (a partida nasce como sempre foi)', async () => {
     const { service, partidas } = make();
     const p = await service.criar('prof', 'j1', 't1');

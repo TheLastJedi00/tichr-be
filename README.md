@@ -1196,15 +1196,22 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   **`brilho`** (`{ rodada, setorIds[] }`), **`resgatePendente`**, `votosResgateRecebidos` e
   `resgateResultado` (`{ habitanteId, nome }`), `votosRecebidos`, `pulosRecebidos` e `movimentosRecebidos` (**só as
   contagens** — as listas são listas de habitantes reais e moram no cofre),
-  `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**).
-  O `setorId` dos habitantes é o do **anoitecer** durante toda a noite (ver *A noite no cofre*).
+  `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**),
+  **`deslocamentosNoite[]`** (`{ habitanteId, para }`, os avisos de saída da noite, reais e NPCs
+  iguais) e **`ultimosDeslocamentos`** (`{ rodada, movimentos[{ habitanteId, de, para }] } | null`,
+  quem trocou de setor no último amanhecer; `null` em noite de Delírio).
+  O `setorId` dos habitantes é o do **anoitecer** durante toda a noite (ver *A movimentação em
+  tempo real*).
 - **`isolateus_segredos`** (o **cofre**, deny-all): `alienAlunoId` (a Ameaça **original**),
   **`ameacas[]`** (todas, a original inclusa — cresce com o Contágio), `vinculos[]`
   (`habitanteId` → `alunoId`; sem `alunoId` = NPC), **`acoesRodada[]`** (`{ alunoId, acao }`, uma
   por Ameaça: `SABOTAR | ABDUZIR | AGUARDAR`, com `alvoId` **ou** `setorId`), **`posicoesNoite[]`**
   (o destino de quem andou nesta noite), **`poderes[]`** (`{ alunoId, ganhoNaRodada }`),
   **`controles[]`** (`{ ameacaAlunoId, habitanteId, rodada }`), `contagioPendente`,
-  `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`.
+  `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`,
+  **`agendaNpc[]`** (`{ habitanteId, para | null, em }`, os avisos de saída dos NPCs da noite;
+  ausente = partida anterior à 026), **`delirioNaNoite`**, **`ultimosMover[]`** (`{ alunoId, em }`,
+  rate limit do `mover`) e **`noiteFechada`** (a última `rodada` cujo fechamento foi reivindicado).
   Partidas antigas com o campo único `acaoRodada` são lidas por `acoesDaNoite()`, e as sem
   `ameacas` por `ameacasIds()` (= a original).
   > **Listas, não mapas:** o cofre é gravado com `set(..., { merge: true })`, e gravar um mapa
@@ -1257,7 +1264,9 @@ abdução ou reparo; senão o dia vai direto ao card.
 - `POST /isolateus/matches/:id/tempo` — cobra a fase cronometrada vencida (**não há timer no
   servidor**; ele revalida o prazo com margem de 2s). É também o que faz o **avanço
   automático**: zerada a janela de decisão, a noite cai sem o professor clicar em nada.
-  **O telão não é mais o único a cobrar** — ver *O relógio é de todos*, abaixo.
+  **O telão não é mais o único a cobrar** — ver *O relógio é de todos*, abaixo. Durante a noite,
+  antes do prazo, é também o **pulso** que libera os avisos de saída dos NPCs (o telão chama a
+  cada ~3s; ver *A movimentação em tempo real*).
 - `POST /isolateus/matches/:id/pular-fase` `{ status? }` — o professor **pula o tempo restante
   de qualquer fase cronometrada** (noite, questão, janela de decisão, debate, votação). Vale pela
   unanimidade e usa a **mesma transição do prazo zerado** (`encerrarFase`), então pular nunca
@@ -1294,8 +1303,11 @@ abdução ou reparo; senão o dia vai direto ao card.
   **polling** daqui — nada disso passa pelo doc público.
 - `POST /aluno/isolateus/:id/mover` `{ setorId }` — anda **um** setor pelas estradas, contado de
   onde a noite começou (trocar de ideia vale, encadear dois passos não; voltar à origem desfaz).
-  O destino vai para o **cofre**, não para o doc público.
-- `POST /aluno/isolateus/:id/confirmar-posicao` — "eu fico"; fecha a jogada da noite.
+  O destino vai para o **cofre** (`posicoesNoite`) e o **aviso de saída** para o doc público
+  (`deslocamentosNoite`), na mesma transação. 400 `SEM_ESTRADA`; 429 `MOVER_RAPIDO` abaixo de
+  1s entre duas trocas do mesmo aluno.
+- `POST /aluno/isolateus/:id/confirmar-posicao` — "eu fico"; fecha a jogada da noite. Só
+  confirma: quem já andou e quer voltar usa `mover` com a origem.
 - `POST /aluno/isolateus/:id/reparo` — organiza o reparo da ruína **onde você está**.
   Um por noite, **anônimo** (autor visível atestaria que aquele habitante é real).
 - `POST /aluno/isolateus/:id/acao` — a jogada de **cada** Ameaça (uma por noite):
@@ -1319,7 +1331,8 @@ abdução ou reparo; senão o dia vai direto ao card.
   exceção para o professor.** A rota `/rumor` (rumor forjado) **foi removida**.
 - `POST /aluno/isolateus/:id/tempo` — o celular também cobra o prazo vencido da fase. Mesma
   revalidação da rota do telão; exige apenas **ser da partida** (abduzidos e presos incluídos —
-  eles seguem na aula, com a mesma tela cronometrada).
+  eles seguem na aula, com a mesma tela cronometrada). Durante a noite, cada celular na vila
+  chama a rota a cada **3s ± 1s** como **pulso** da agenda dos NPCs.
 
 ### O relógio é de todos, não só do telão
 
@@ -1353,16 +1366,42 @@ dele e `resolverPorTempo` revalida contra ele, sem regra nova.
 > Quem estima o desvio entre o relógio local e o do servidor tem de usar o **mínimo** das amostras,
 > não a última — a carência reescreve o campo para o passado de propósito.
 
-### A noite no cofre (a Névoa de Guerra não vaza pelo movimento)
+### A movimentação em tempo real (spec 026)
 
-Os NPCs só andam no fechamento da noite. Enquanto `mover` gravava a posição no doc público na
-hora, **quem se mexia no meio da janela era, por eliminação, real** — pelo DevTools e pela
-contagem por setor que o telão atualizava ao vivo no projetor. Agora o destino fica em
-`posicoesNoite` e **todas** as posições (reais e NPCs) chegam ao doc público num commit só, em
-`fecharNoite`. Toda validação que depende de lugar durante a noite (reparo, sabotagem, abdução
-presencial, Controle Mental) usa a posição do cofre (`posicaoDe`). Pela mesma razão saíram o
-Chat de Rumores (ruído e rumor forjado saíam sempre sob nome de NPC, e o tipo `FORJADO` era
-público) e as falas automáticas do debate.
+O `setorId` público é o do anoitecer até o fechamento; o destino da noite mora no cofre
+(`posicoesNoite`), e toda validação que depende de lugar (reparo, sabotagem, abdução presencial,
+Controle Mental, resgate) usa a posição do cofre (`posicaoDe`). Por cima disso, a vila vê **quem
+está saindo**:
+
+- **Avisos de saída** (`deslocamentosNoite`): o `mover` publica `{ habitanteId, para }` na hora;
+  trocar substitui, voltar à origem remove. O celular mostra só os do próprio setor (recorte de
+  UI, como as posições: pelo DevTools se lê tudo, e o aviso não revela papel nem real × NPC).
+- **NPCs anunciam como os reais.** Se só os reais aparecessem saindo, todo habitante que andasse
+  sem aviso seria NPC. Na **abertura da noite** (Despertar e `avancarNoite`), `sortearAgendaNpc`
+  decide o destino de cada NPC vivo e livre (`CHANCE_MOVER_NPC`) e sorteia o horário do aviso em
+  `NPC_AVISO_JANELA_MS` (1,5s–35s); com `CHANCE_NPC_MUDAR_IDEIA` (15%) ganha um segundo aviso
+  (outro vizinho ou desistir). O destino final é o do último aviso.
+- **Pulso, sem timer no servidor:** os avisos vencidos da `agendaNpc` são aplicados quando alguém
+  fala com o servidor durante a noite — o `/tempo` antes do prazo (celulares e telão a cada ~3s),
+  `mover`, `confirmar-posicao`, `acao`, `reparo` e `resgate`. Idempotente; sem aviso vencido, nada
+  é gravado. Na **carência**, os avisos restantes são reescalados para dentro dela. No fechamento,
+  os que sobraram entram no commit do amanhecer (vazamento aceito: a última confirmação real
+  também cai nesse commit).
+- **Amanhecer** (`ultimosDeslocamentos`): quem trocou de setor, com origem e destino, para a
+  animação de saídas e chegadas. `null` quando houve **Delírio** na noite (da Ameaça no amanhecer
+  ou do professor durante a noite, marcado em `delirioNaNoite`): movimento + nome novo casariam
+  quem era quem. O Delírio do professor também zera os avisos da noite e remapeia a agenda.
+- **Concorrência.** O pulso grava a noite a cada poucos segundos, então `mover`, pulso e carência
+  leem e gravam `deslocamentosNoite`/`posicoesNoite`/`agendaNpc`/`ultimosMover` numa **transação**
+  (`IsolateusMatchRepository.transacao`): com ler-e-gravar simples, um aluno que andasse entre a
+  leitura e a escrita do pulso perdia o movimento. E a **virada da noite roda uma vez**:
+  `fecharNoite` reivindica a `rodada` no cofre (`noiteFechada`) numa transação e só o vencedor
+  fecha, sobre a leitura atômica dela — antes, uma segunda cobrança de prazo com leitura velha
+  refazia o fechamento e revertia as posições.
+- Partidas abertas antes da 026 (sem `agendaNpc`) seguem com os NPCs sorteando no fechamento.
+
+Pela mesma Névoa de Guerra saíram, antes, o Chat de Rumores (ruído e rumor forjado saíam sempre
+sob nome de NPC, e o tipo `FORJADO` era público) e as falas automáticas do debate.
 
 ### O voto da Ameaça e os Poderes Alienígenas
 
@@ -1427,8 +1466,10 @@ separados fariam da origem do nome uma pista.
 **Movimento:** janela de **60s** (eram 20s: cobriam o clique, não a decisão — o aluno lê o próprio
 setor, abre o mapa, localiza as ruínas, e a Ameaça ainda escolhe a jogada dentro da mesma janela),
 um salto por noite, com **carência de 8s** quando só falta a Ameaça. Os **NPCs também andam**
-(`CHANCE_MOVER_NPC`), decididos só no fechamento: NPC parado seria identificado em uma
-noite, e NPC se mexendo fora de hora denunciaria que não é um colega decidindo.
+(`CHANCE_MOVER_NPC` = 0,45), decididos na abertura da noite e anunciados ao longo da janela
+(`NPC_AVISO_JANELA_MS` = 1,5s–35s, `CHANCE_NPC_MUDAR_IDEIA` = 0,15): NPC parado seria
+identificado em uma noite, e NPC que só aparecesse no amanhecer, sem aviso, também. Troca de
+destino limitada a uma por segundo por aluno (`MOVER_INTERVALO_MS` = 1000).
 
 Esperança inicial **100** · sabotagem **−15** (não contestada) · abdução **−10** (contestada
 pela questão) · inocente preso **−20** · contágio **−10** (silencioso) · reparo bem-sucedido

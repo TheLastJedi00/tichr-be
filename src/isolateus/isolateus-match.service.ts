@@ -15,6 +15,7 @@ import {
   IsolateusMatchEntity,
 } from './entities/isolateus-match.entity';
 import { VinculoHabitante } from './entities/isolateus-segredo.entity';
+import { sortearAgendaNpc } from './isolateus-deslocamento';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { ISOLATEUS_LOCKED } from './isolateus-jogo.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
@@ -279,14 +280,25 @@ export class IsolateusMatchService {
       turmaId,
     );
 
+    const distribuidos = this.distribuirPeloMapa(embaralhar(habitantes));
+    const inicio = new Date();
+    // A primeira noite também tem agenda (026 §2.3): sem ela, os NPCs ficariam
+    // parados enquanto os reais anunciam a saída. Mesmo sorteio da virada.
+    const agendaNpc = sortearAgendaNpc(
+      distribuidos,
+      vinculos.filter((v) => !v.alunoId).map((v) => v.habitanteId),
+      inicio.getTime(),
+    );
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'DESLOCAMENTO',
-      habitantes: this.distribuirPeloMapa(embaralhar(habitantes)),
+      habitantes: distribuidos,
       rodada: 0,
       // A primeira noite já nasce cronometrada: a janela de deslocamento
       // precisa de base de relógio desde o Despertar.
-      faseIniciadaEm: new Date().toISOString(),
+      faseIniciadaEm: inicio.toISOString(),
       movimentosRecebidos: 0,
+      deslocamentosNoite: [],
+      ultimosDeslocamentos: null,
       // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
       // partida mudaria o jogo que a turma começou.
       debateHabilitado: opcoes.debateHabilitado ?? true,
@@ -304,6 +316,9 @@ export class IsolateusMatchService {
         vinculos,
         acoesRodada: [],
         pontos: {},
+        agendaNpc,
+        delirioNaNoite: false,
+        ultimosMover: [],
       },
       // Conta no sorteio, não no fim: a partida encerrada no meio também valeu
       // — o aluno já viveu o papel.
