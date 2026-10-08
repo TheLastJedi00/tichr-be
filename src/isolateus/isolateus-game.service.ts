@@ -29,6 +29,7 @@ import {
 } from './entities/isolateus-segredo.entity';
 import {
   aplicarAviso,
+  movimentosDaNoite,
   reescalarAgenda,
   sortearAgendaNpc,
 } from './isolateus-deslocamento';
@@ -550,6 +551,7 @@ export class IsolateusGameService {
     // sorteiam no fechamento, como antes.
     const comAgenda = segredo.agendaNpc !== undefined;
     if (comAgenda) this.liberarAgenda(partida, segredo, Infinity);
+    const antes = new Map(partida.habitantes.map((h) => [h.id, h.setorId]));
     // Reais e NPCs aparecem nas posições novas no MESMO commit: nenhum
     // movimento fica visível antes do outro.
     for (const { habitanteId, setorId } of segredo.posicoesNoite ?? []) {
@@ -557,6 +559,7 @@ export class IsolateusGameService {
       if (h) h.setorId = setorId;
     }
     if (!comAgenda) this.moverNpcs(partida, segredo);
+    const movimentos = movimentosDaNoite(antes, partida.habitantes);
     // O brilho sai das posições finais, antes de o cofre esquecer as jogadas e
     // os controles da noite — e entra no mesmo commit das posições.
     const brilho = this.brilhoDaNoite(partida, segredo);
@@ -578,10 +581,20 @@ export class IsolateusGameService {
     // novas aparecem: nome e lugar mudam juntos, e casar "quem era quem" pela
     // posição fica mais difícil.
     const delirou = this.aplicarDelirio(partida, segredo);
+    // A animação de saídas e chegadas (026 §3). Numa noite de Delírio ela
+    // casaria o nome antigo com o novo pelo movimento: fica de fora.
+    const ultimosDeslocamentos =
+      delirou || segredo.delirioNaNoite
+        ? null
+        : { rodada: partida.rodada, movimentos };
+    Object.assign(partida, { deslocamentosNoite: [], ultimosDeslocamentos });
+    segredo.delirioNaNoite = false;
     await this.matches.commitPartida(
       partida.id,
       {
         habitantes: partida.habitantes,
+        deslocamentosNoite: [],
+        ultimosDeslocamentos,
         ...(delirou || brilho
           ? { acontecimentos: partida.acontecimentos }
           : {}),
@@ -599,6 +612,7 @@ export class IsolateusGameService {
         confirmacoesNoite: segredo.confirmacoesNoite,
         posicoesNoite: segredo.posicoesNoite,
         ...(comAgenda ? { agendaNpc: [] } : {}),
+        delirioNaNoite: false,
         poderes: segredo.poderes,
         controles: segredo.controles,
         ...(delirou
@@ -773,6 +787,12 @@ export class IsolateusGameService {
       ...p,
       habitanteId: trocar(p.habitanteId),
     }));
+    if (segredo.agendaNpc) {
+      segredo.agendaNpc = segredo.agendaNpc.map((a) => ({
+        ...a,
+        habitanteId: trocar(a.habitanteId),
+      }));
+    }
     if (partida.quarentenaConvocadaPor) {
       partida.quarentenaConvocadaPor = {
         ...partida.quarentenaConvocadaPor,
@@ -822,6 +842,14 @@ export class IsolateusGameService {
     const trocar = this.permutarVila(partida, segredo);
     if (!trocar) return partida;
 
+    // Movimento + nome novo casariam quem era quem (026 §2.4): os avisos da
+    // noite somem, o amanhecer desta noite não anima, e o último amanhecer
+    // (com ids que não existem mais) sai do doc.
+    const naNoite = partida.status === 'DESLOCAMENTO';
+    partida.deslocamentosNoite = naNoite ? [] : partida.deslocamentosNoite;
+    partida.ultimosDeslocamentos = null;
+    if (naNoite) segredo.delirioNaNoite = true;
+
     // Os votos da Quarentena moram fora do cofre (um doc por aluno) e apontam
     // para o suspeito pelo id antigo.
     await this.matches.remapearVotos(partida.id, partida.rodada, trocar);
@@ -834,6 +862,8 @@ export class IsolateusGameService {
         convocadorBloqueado: partida.convocadorBloqueado ?? null,
 
         resgateResultado: partida.resgateResultado ?? null,
+        deslocamentosNoite: partida.deslocamentosNoite ?? [],
+        ultimosDeslocamentos: null,
       },
       {
         vinculos: segredo.vinculos,
@@ -841,6 +871,8 @@ export class IsolateusGameService {
         acoesRodada: segredo.acoesRodada,
         acaoRodada: null,
         posicoesNoite: segredo.posicoesNoite,
+        ...(segredo.agendaNpc ? { agendaNpc: segredo.agendaNpc } : {}),
+        ...(naNoite ? { delirioNaNoite: true } : {}),
       },
     );
     return partida;

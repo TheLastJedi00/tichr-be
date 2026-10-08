@@ -365,3 +365,105 @@ describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
     ]);
   });
 });
+
+describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
+  const fecharPorTempo = async (ctx: ReturnType<typeof vilaComAmeacas>) => {
+    avancar(ISOLATEUS.LIMITE_DESLOCAMENTO_MS + 1);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+  };
+
+  it('publica quem trocou de setor (reais e NPCs), com origem e destino', async () => {
+    const ctx = vilaComAmeacas({ npcs: 2 });
+    ctx.segredo.agendaNpc = [
+      {
+        habitanteId: 'n1',
+        para: 'comercio',
+        em: new Date(agora + 40_000).toISOString(), // sai só no fechamento
+      },
+    ];
+    await ctx.service.mover('a3', 'p1', 'energia');
+    await fecharPorTempo(ctx);
+
+    expect(ctx.partida.deslocamentosNoite).toEqual([]);
+    expect(ctx.partida.ultimosDeslocamentos?.rodada).toBe(0);
+    expect(ctx.partida.ultimosDeslocamentos?.movimentos).toEqual(
+      expect.arrayContaining([
+        { habitanteId: 'h3', de: 'seguranca', para: 'energia' },
+        { habitanteId: 'n1', de: 'seguranca', para: 'comercio' },
+      ]),
+    );
+    expect(ctx.partida.ultimosDeslocamentos?.movimentos).toHaveLength(2);
+  });
+
+  it('quem está fora da vila nunca aparece nos movimentos', async () => {
+    const ctx = vilaComAmeacas({ npcs: 2 });
+    ctx.partida.habitantes.find((h) => h.id === 'n2')!.preso = true;
+    ctx.segredo.agendaNpc = [
+      { habitanteId: 'n2', para: 'energia', em: new Date(agora).toISOString() },
+    ];
+    await fecharPorTempo(ctx);
+    expect(ctx.partida.ultimosDeslocamentos?.movimentos).toEqual([]);
+    expect(ctx.setorDe('n2')).toBe('seguranca');
+  });
+
+  it('o Delírio da Ameaça neste amanhecer suprime a animação', async () => {
+    const ctx = vilaComAmeacas();
+    ctx.segredo.agendaNpc = [];
+    ctx.segredo.delirioPendente = true;
+    await ctx.service.mover('a3', 'p1', 'energia');
+    await fecharPorTempo(ctx);
+    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
+  });
+
+  it('o Delírio do professor na noite zera os avisos, remapeia a agenda e suprime o amanhecer', async () => {
+    const ctx = vilaComAmeacas({ npcs: 1 });
+    ctx.segredo.agendaNpc = [
+      {
+        habitanteId: 'n1',
+        para: 'energia',
+        em: new Date(agora + 20_000).toISOString(),
+      },
+    ];
+    ctx.partida.ultimosDeslocamentos = { rodada: -1, movimentos: [] };
+    await ctx.service.mover('a3', 'p1', 'energia');
+
+    await ctx.service.delirioDoProfessor('prof', 'p1');
+
+    expect(ctx.partida.deslocamentosNoite).toEqual([]);
+    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
+    expect(ctx.segredo.delirioNaNoite).toBe(true);
+    // Os ids foram regerados: agenda e destino seguem os habitantes novos.
+    const npcNovo = ctx.segredo.npcIds[0];
+    expect(npcNovo).not.toBe('n1');
+    expect(ctx.segredo.agendaNpc[0].habitanteId).toBe(npcNovo);
+    const h3Novo = ctx.segredo.habitanteDe('a3')!;
+    expect(ctx.segredo.posicoesNoite).toEqual([
+      { habitanteId: h3Novo, setorId: 'energia' },
+    ]);
+
+    // O aviso que sai DEPOIS do delírio aparece normalmente, com o id novo.
+    avancar(21_000);
+    await ctx.service.resolverPorTempo('p1', { alunoId: 'a4' });
+    expect(ctx.partida.deslocamentosNoite).toEqual([
+      { habitanteId: npcNovo, para: 'energia' },
+    ]);
+
+    await fecharPorTempo(ctx);
+    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
+    expect(ctx.segredo.delirioNaNoite).toBe(false);
+    expect(ctx.partida.habitantes.find((h) => h.id === h3Novo)!.setorId).toBe(
+      'energia',
+    );
+  });
+
+  it('o Delírio do professor de dia também apaga o último amanhecer (ids mudaram)', async () => {
+    const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA' });
+    ctx.partida.ultimosDeslocamentos = {
+      rodada: 0,
+      movimentos: [{ habitanteId: 'h3', de: 'seguranca', para: 'energia' }],
+    };
+    await ctx.service.delirioDoProfessor('prof', 'p1');
+    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
+    expect(ctx.segredo.delirioNaNoite ?? false).toBe(false);
+  });
+});

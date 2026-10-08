@@ -101,3 +101,18 @@ export function reescalarAgenda(
     return { ...a, em: new Date(agora + (t - agora) * fator).toISOString() };
   });
 }
+
+/**
+ * Quem trocou de setor entre `antes` (posições do início da noite) e as
+ * posições finais, para a animação do amanhecer (026 §3). Só quem está na
+ * vila: abduzido e preso não andam.
+ */
+export function movimentosDaNoite(
+  antes: Map<string, string>,
+  habitantes: Habitante[],
+): Array<{ habitanteId: string; de: string; para: string }> {
+  return habitantes
+    .filter((h) => h.vivo && !h.preso)
+    .filter((h) => antes.has(h.id) && antes.get(h.id) !== h.setorId)
+    .map((h) => ({ habitanteId: h.id, de: antes.get(h.id)!, para: h.setorId }));
+}
