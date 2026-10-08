@@ -1,5 +1,8 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
+import { ISOLATEUS } from './entities/isolateus-match.entity';
+import { sortearAgendaNpc } from './isolateus-deslocamento';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { vizinhosDe } from './isolateus.data';
 
 /**
  * 026 — Movimentação em tempo real. Os avisos de saída da noite
@@ -115,5 +118,131 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
       ctx.service.mover('a3', 'p1', 'energia'),
     ).rejects.toBeDefined();
     expect(ctx.partida.deslocamentosNoite).toEqual([]);
+  });
+});
+
+/** Um gerador "aleatório" que devolve a sequência dada (e repete o último). */
+const sequencia = (...valores: number[]) => {
+  let i = 0;
+  return () => valores[Math.min(i++, valores.length - 1)];
+};
+const [MIN, MAX] = ISOLATEUS.NPC_AVISO_JANELA_MS;
+
+describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
+  const inicio = Date.parse('2026-10-07T12:00:00.000Z');
+
+  it('só NPCs vivos e livres entram na agenda; reais nunca', () => {
+    const { partida } = vilaComAmeacas({ npcs: 3 });
+    partida.habitantes.find((h) => h.id === 'n2')!.vivo = false;
+    partida.habitantes.find((h) => h.id === 'n3')!.preso = true;
+    const agenda = sortearAgendaNpc(
+      partida.habitantes,
+      ['n1', 'n2', 'n3'],
+      inicio,
+      () => 0, // todo NPC anda e muda de ideia
+    );
+    expect(new Set(agenda.map((a) => a.habitanteId))).toEqual(new Set(['n1']));
+  });
+
+  it('com o sorteio acima da chance, nenhum NPC anda', () => {
+    const { partida } = vilaComAmeacas({ npcs: 3 });
+    const agenda = sortearAgendaNpc(
+      partida.habitantes,
+      ['n1', 'n2', 'n3'],
+      inicio,
+      () => 0.99,
+    );
+    expect(agenda).toEqual([]);
+  });
+
+  it('anda um vizinho, avisa dentro da faixa e, se mudar de ideia, avisa de novo DEPOIS', () => {
+    const { partida } = vilaComAmeacas({ npcs: 1 });
+    // anda (0) → vizinho 0 → horário 0 → muda de ideia (0) → opção 0 → horário 0
+    const agenda = sortearAgendaNpc(
+      partida.habitantes,
+      ['n1'],
+      inicio,
+      () => 0,
+    );
+    expect(agenda).toHaveLength(2);
+    const [primeiro, segundo] = agenda;
+    expect(primeiro.para).toBe(vizinhosDe('seguranca')[0]);
+    expect(Date.parse(primeiro.em)).toBe(inicio + MIN);
+    expect(Date.parse(segundo.em)).toBeGreaterThan(Date.parse(primeiro.em));
+    expect(segundo.para).not.toBe(primeiro.para);
+  });
+
+  it('propriedades com sorteio real: faixa, ordem, estradas e troca de fato', () => {
+    const { partida } = vilaComAmeacas({
+      npcs: 6,
+      posicoes: {
+        n1: 'seguranca',
+        n2: 'energia',
+        n3: 'abastecimento',
+        n4: 'comunicacao',
+        n5: 'comercio',
+        n6: 'saude',
+      },
+    });
+    const ids = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'];
+    for (let rodada = 0; rodada < 200; rodada++) {
+      const agenda = sortearAgendaNpc(partida.habitantes, ids, inicio);
+      for (const id of ids) {
+        const dele = agenda.filter((a) => a.habitanteId === id);
+        expect(dele.length).toBeLessThanOrEqual(2);
+        const origem = partida.habitantes.find((h) => h.id === id)!.setorId;
+        for (const a of dele) {
+          const t = Date.parse(a.em) - inicio;
+          expect(t).toBeGreaterThanOrEqual(MIN);
+          expect(t).toBeLessThanOrEqual(MAX);
+          if (a.para) expect(vizinhosDe(origem)).toContain(a.para);
+        }
+        if (dele.length === 2) {
+          expect(Date.parse(dele[1].em)).toBeGreaterThan(
+            Date.parse(dele[0].em),
+          );
+          expect(dele[1].para).not.toBe(dele[0].para);
+          expect(dele[0].para).not.toBeNull();
+        }
+      }
+      // Em ordem de horário, para a liberação ler do começo.
+      const tempos = agenda.map((a) => Date.parse(a.em));
+      expect(tempos).toEqual([...tempos].sort((a, b) => a - b));
+    }
+  });
+
+  it('a virada da noite sorteia a agenda e zera os avisos públicos', async () => {
+    const ctx = vilaComAmeacas({ npcs: 3, status: 'RESULTADO_RODADA' });
+    ctx.partida.deslocamentosNoite = [{ habitanteId: 'h3', para: 'energia' }];
+    const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+    avancar(ISOLATEUS.JANELA_DECISAO_MS + 1);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    random.mockRestore();
+
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    expect(ctx.partida.deslocamentosNoite).toEqual([]);
+    expect(ctx.segredo.agendaNpc?.length).toBeGreaterThan(0);
+    const base = Date.parse(ctx.partida.faseIniciadaEm!);
+    for (const a of ctx.segredo.agendaNpc!) {
+      expect(a.habitanteId).toMatch(/^n/);
+      expect(Date.parse(a.em) - base).toBeGreaterThanOrEqual(MIN);
+    }
+  });
+
+  it('no fechamento, cada NPC termina no ÚLTIMO aviso dele; sem aviso, fica', async () => {
+    const ctx = vilaComAmeacas({ npcs: 3 });
+    const em = (ms: number) => new Date(agora + ms).toISOString();
+    ctx.segredo.agendaNpc = [
+      { habitanteId: 'n1', para: 'energia', em: em(2_000) },
+      { habitanteId: 'n2', para: 'comercio', em: em(3_000) },
+      { habitanteId: 'n2', para: null, em: em(9_000) }, // desistiu
+    ];
+    avancar(ISOLATEUS.LIMITE_DESLOCAMENTO_MS + 1);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+
+    expect(ctx.setorDe('n1')).toBe('energia');
+    expect(ctx.setorDe('n2')).toBe('seguranca');
+    expect(ctx.setorDe('n3')).toBe('seguranca'); // sem aviso: não sorteia mais
+    expect(ctx.segredo.agendaNpc).toEqual([]);
   });
 });

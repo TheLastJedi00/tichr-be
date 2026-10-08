@@ -27,7 +27,7 @@ import {
   AcaoAmeaca,
   IsolateusSegredoEntity,
 } from './entities/isolateus-segredo.entity';
-import { aplicarAviso } from './isolateus-deslocamento';
+import { aplicarAviso, sortearAgendaNpc } from './isolateus-deslocamento';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
@@ -510,13 +510,18 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
+    // Os avisos de NPC que ainda não saíram entram AGORA, no mesmo commit do
+    // amanhecer (026 §2.3). Partida anterior à 026 (sem agenda): os NPCs
+    // sorteiam no fechamento, como antes.
+    const comAgenda = segredo.agendaNpc !== undefined;
+    if (comAgenda) this.liberarAgenda(partida, segredo, Infinity);
     // Reais e NPCs aparecem nas posições novas no MESMO commit: nenhum
     // movimento fica visível antes do outro.
     for (const { habitanteId, setorId } of segredo.posicoesNoite ?? []) {
       const h = partida.habitantes.find((x) => x.id === habitanteId);
       if (h) h.setorId = setorId;
     }
-    this.moverNpcs(partida, segredo);
+    if (!comAgenda) this.moverNpcs(partida, segredo);
     // O brilho sai das posições finais, antes de o cofre esquecer as jogadas e
     // os controles da noite — e entra no mesmo commit das posições.
     const brilho = this.brilhoDaNoite(partida, segredo);
@@ -558,6 +563,7 @@ export class IsolateusGameService {
       {
         confirmacoesNoite: segredo.confirmacoesNoite,
         posicoesNoite: segredo.posicoesNoite,
+        ...(comAgenda ? { agendaNpc: [] } : {}),
         poderes: segredo.poderes,
         controles: segredo.controles,
         ...(delirou
@@ -906,6 +912,43 @@ export class IsolateusGameService {
   }
 
   /**
+   * Aplica os avisos de NPC vencidos até `ate` (ms): o destino vai para o
+   * cofre (`posicoesNoite`, como o de um real) e o aviso para o espelho
+   * público. Cada aviso sai da agenda ao ser aplicado, então chamar duas vezes
+   * não duplica. Só muta as entidades: quem chama decide o commit. Devolve se
+   * algo mudou.
+   */
+  private liberarAgenda(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    ate: number,
+  ): boolean {
+    const agenda = segredo.agendaNpc ?? [];
+    const vencidos = agenda.filter((a) => Date.parse(a.em) <= ate);
+    if (!vencidos.length) return false;
+    segredo.agendaNpc = agenda.filter((a) => !vencidos.includes(a));
+
+    let posicoes = segredo.posicoesNoite ?? [];
+    let avisos = partida.deslocamentosNoite ?? [];
+    for (const aviso of vencidos) {
+      const h = partida.habitantes.find((x) => x.id === aviso.habitanteId);
+      if (!h || !h.vivo || h.preso) continue;
+      const destino = aviso.para ?? h.setorId;
+      posicoes = posicoes.filter((p) => p.habitanteId !== h.id);
+      if (destino !== h.setorId) {
+        posicoes = [...posicoes, { habitanteId: h.id, setorId: destino }];
+      }
+      avisos = aplicarAviso(avisos, h.id, destino, h.setorId);
+    }
+    segredo.posicoesNoite = posicoes;
+    partida.deslocamentosNoite = avisos;
+    return true;
+  }
+
+  /**
+   * Só para partidas abertas antes da 026 (sem `agendaNpc`): o NPC sorteia no
+   * fechamento. Nas novas, o destino vem da agenda (`liberarAgenda`).
+   *
    * A Névoa de Guerra também anda. Cada NPC troca de setor com probabilidade
    * `CHANCE_MOVER_NPC`, pelas mesmas estradas que os habitantes reais usam.
    *
@@ -1887,6 +1930,7 @@ export class IsolateusGameService {
       // A noite é cronometrada: a janela de deslocamento precisa de base.
       faseIniciadaEm: new Date().toISOString(),
       movimentosRecebidos: 0,
+      deslocamentosNoite: [],
       acontecimentos: this.registrar(
         partida,
         'NOITE',
@@ -1895,9 +1939,20 @@ export class IsolateusGameService {
       ),
     };
     Object.assign(partida, dados);
-    segredo.confirmacoesNoite = [];
-    await this.matches.commitPartida(partida.id, dados, {
+    // Os NPCs decidem a noite AGORA e anunciam ao longo da janela (026 §2.3).
+    const noiteNova: Partial<IsolateusSegredoEntity> = {
       confirmacoesNoite: [],
+      agendaNpc: sortearAgendaNpc(
+        partida.habitantes,
+        segredo.npcIds,
+        Date.parse(dados.faseIniciadaEm!),
+      ),
+      delirioNaNoite: false,
+      ultimosMover: [],
+    };
+    Object.assign(segredo, noiteNova);
+    await this.matches.commitPartida(partida.id, dados, {
+      ...noiteNova,
       acaoRodada: null,
       acoesRodada: [],
     });
