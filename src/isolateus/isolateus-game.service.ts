@@ -269,10 +269,7 @@ export class IsolateusGameService {
       });
     }
 
-    const ultimosMover = this.limitarTroca(segredo, alunoId);
-    await this.gravarDestino(partida, segredo, habitante, setorId, {
-      ultimosMover,
-    });
+    await this.gravarDestino(partida, segredo, habitante.id, setorId, alunoId);
     return this.registrarConfirmacao(partida, segredo, alunoId);
   }
 
@@ -311,35 +308,58 @@ export class IsolateusGameService {
    * validações) e o aviso de saída no doc público (`deslocamentosNoite`, o
    * espelho que os colegas do setor veem), no MESMO commit. Voltar à origem
    * desfaz os dois.
+   *
+   * Numa transação, sobre a leitura fresca: outro aluno andando, ou o pulso
+   * liberando um NPC, no mesmo instante não pode ter a escrita apagada. O rate
+   * limit também é checado ali, contra o último movimento gravado.
    */
   private async gravarDestino(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
-    habitante: Habitante,
+    habitanteId: string,
     setorId: string,
-    extraCofre: Partial<IsolateusSegredoEntity> = {},
+    alunoId: string,
   ): Promise<void> {
-    const origem = habitante.setorId;
-    const posicoes = (segredo.posicoesNoite ?? []).filter(
-      (p) => p.habitanteId !== habitante.id,
-    );
-    if (setorId !== origem) {
-      posicoes.push({ habitanteId: habitante.id, setorId });
-    }
-    const avisos = aplicarAviso(
-      partida.deslocamentosNoite ?? [],
-      habitante.id,
-      setorId,
-      origem,
-    );
-    segredo.posicoesNoite = posicoes;
-    partida.deslocamentosNoite = avisos;
-    Object.assign(segredo, extraCofre);
-    await this.matches.commitPartida(
-      partida.id,
-      { deslocamentosNoite: avisos },
-      { posicoesNoite: posicoes, ...extraCofre },
-    );
+    const fresco = await this.matches.transacao(partida.id, (p, s) => {
+      if (p.status !== 'DESLOCAMENTO') {
+        throw new BadRequestException('A noite não está aberta.');
+      }
+      const ultimosMover = this.limitarTroca(s, alunoId);
+      const origem =
+        p.habitantes.find((h) => h.id === habitanteId)?.setorId ?? setorId;
+      const posicoes = (s.posicoesNoite ?? []).filter(
+        (x) => x.habitanteId !== habitanteId,
+      );
+      if (setorId !== origem) posicoes.push({ habitanteId, setorId });
+      const avisos = aplicarAviso(
+        p.deslocamentosNoite ?? [],
+        habitanteId,
+        setorId,
+        origem,
+      );
+      Object.assign(s, { posicoesNoite: posicoes, ultimosMover });
+      p.deslocamentosNoite = avisos;
+      return {
+        publico: { deslocamentosNoite: avisos },
+        segredo: { posicoesNoite: posicoes, ultimosMover },
+      };
+    });
+    if (fresco) this.sincronizarNoite(partida, segredo, fresco);
+  }
+
+  /**
+   * Traz para as entidades da requisição o que a transação leu e gravou: o
+   * resto do handler (confirmação, carência) segue com o estado fresco.
+   */
+  private sincronizarNoite(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    fresco: { partida: IsolateusMatchEntity; segredo: IsolateusSegredoEntity },
+  ): void {
+    partida.deslocamentosNoite = fresco.partida.deslocamentosNoite ?? [];
+    segredo.posicoesNoite = fresco.segredo.posicoesNoite ?? [];
+    segredo.agendaNpc = fresco.segredo.agendaNpc;
+    segredo.ultimosMover = fresco.segredo.ultimosMover;
   }
 
   /**
@@ -376,19 +396,29 @@ export class IsolateusGameService {
    * O pulso da agenda dos NPCs (026 §2.3). Não há timer no servidor: os avisos
    * vencidos saem quando alguém da partida fala com ele durante a noite — o
    * `/tempo` que os celulares e o telão chamam a cada ~3s, ou qualquer jogada.
-   * Só escreve se houver aviso a liberar.
+   * Só escreve se houver aviso a liberar, e numa transação: o pulso roda o
+   * tempo todo e não pode apagar o movimento de um aluno gravado no meio.
    */
   private async pulsoDaAgenda(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<void> {
     if (partida.status !== 'DESLOCAMENTO') return;
-    if (!this.liberarAgenda(partida, segredo, Date.now())) return;
-    await this.matches.commitPartida(
-      partida.id,
-      { deslocamentosNoite: partida.deslocamentosNoite },
-      { posicoesNoite: segredo.posicoesNoite, agendaNpc: segredo.agendaNpc },
-    );
+    const agora = Date.now();
+    // Checagem barata na leitura que o handler já fez: sem aviso vencido, nem
+    // abre transação.
+    if (!(segredo.agendaNpc ?? []).some((a) => Date.parse(a.em) <= agora)) {
+      return;
+    }
+    const fresco = await this.matches.transacao(partida.id, (p, s) => {
+      if (p.status !== 'DESLOCAMENTO') return null;
+      if (!this.liberarAgenda(p, s, agora)) return null;
+      return {
+        publico: { deslocamentosNoite: p.deslocamentosNoite },
+        segredo: { posicoesNoite: s.posicoesNoite, agendaNpc: s.agendaNpc },
+      };
+    });
+    if (fresco) this.sincronizarNoite(partida, segredo, fresco);
   }
 
   /** O habitante do aluno, exigindo que ele esteja na vila e que seja noite. */
@@ -469,17 +499,25 @@ export class IsolateusGameService {
       novoFim - ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
     ).toISOString();
     partida.faseIniciadaEm = base;
+    if (segredo.agendaNpc === undefined) {
+      await this.matches.commitPartida(partida.id, { faseIniciadaEm: base });
+      return;
+    }
     // Os avisos de NPC que ainda faltam cabem na carência, no mesmo commit do
-    // relógio novo (026 §2.3): senão sairiam todos juntos no fechamento.
-    const agenda = segredo.agendaNpc
-      ? reescalarAgenda(segredo.agendaNpc, Date.now(), fim, novoFim)
-      : undefined;
-    if (agenda) segredo.agendaNpc = agenda;
-    await this.matches.commitPartida(
-      partida.id,
-      { faseIniciadaEm: base },
-      agenda ? { agendaNpc: agenda } : {},
-    );
+    // relógio novo (026 §2.3): senão sairiam todos juntos no fechamento. Numa
+    // transação, sobre a agenda fresca: gravar a lida aqui devolveria à agenda
+    // um aviso que o pulso acabou de liberar.
+    const agora = Date.now();
+    const fresco = await this.matches.transacao(partida.id, (p, s) => {
+      if (p.status !== 'DESLOCAMENTO') return null;
+      s.agendaNpc = reescalarAgenda(s.agendaNpc ?? [], agora, fim, novoFim);
+      p.faseIniciadaEm = base;
+      return {
+        publico: { faseIniciadaEm: base },
+        segredo: { agendaNpc: s.agendaNpc },
+      };
+    });
+    if (fresco) segredo.agendaNpc = fresco.segredo.agendaNpc;
   }
 
   /**

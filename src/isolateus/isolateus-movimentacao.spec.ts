@@ -29,7 +29,33 @@ afterEach(() => jest.useRealTimers());
 describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
   it('grava o aviso no doc público e o destino no cofre, no MESMO commit', async () => {
     const ctx = vilaComAmeacas();
+    // O que cada transação gravou (público e cofre juntos).
+    type Escrita = { publico?: unknown; segredo?: unknown } | null;
+    type Fn = (p: unknown, s: unknown) => Escrita;
+    const gravados: Escrita[] = [];
+    const repo = ctx.repo as unknown as { transacao: jest.Mock };
+    const original = repo.transacao.getMockImplementation() as (
+      id: string,
+      fn: Fn,
+    ) => Promise<unknown>;
+    repo.transacao.mockImplementation((id: string, fn: Fn) =>
+      original(id, (p, s) => {
+        const r = fn(p, s);
+        gravados.push(r);
+        return r;
+      }),
+    );
     await ctx.service.mover('a3', 'p1', 'energia');
+    expect(gravados).toEqual([
+      {
+        publico: {
+          deslocamentosNoite: [{ habitanteId: 'h3', para: 'energia' }],
+        },
+        segredo: expect.objectContaining({
+          posicoesNoite: [{ habitanteId: 'h3', setorId: 'energia' }],
+        }) as unknown,
+      },
+    ]);
 
     expect(ctx.partida.deslocamentosNoite).toEqual([
       { habitanteId: 'h3', para: 'energia' },
@@ -37,10 +63,6 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
     expect(ctx.segredo.posicoesNoite).toEqual([
       { habitanteId: 'h3', setorId: 'energia' },
     ]);
-    const commit = (ctx.repo.commitPartida as jest.Mock).mock.calls.find(
-      ([, pub]) => pub && 'deslocamentosNoite' in pub,
-    );
-    expect(commit?.[2]).toHaveProperty('posicoesNoite');
     // A posição pública só muda no amanhecer.
     expect(ctx.setorDe('h3')).toBe('seguranca');
   });
@@ -121,11 +143,6 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
   });
 });
 
-/** Um gerador "aleatório" que devolve a sequência dada (e repete o último). */
-const sequencia = (...valores: number[]) => {
-  let i = 0;
-  return () => valores[Math.min(i++, valores.length - 1)];
-};
 const [MIN, MAX] = ISOLATEUS.NPC_AVISO_JANELA_MS;
 
 describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
@@ -465,5 +482,102 @@ describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
     await ctx.service.delirioDoProfessor('prof', 'p1');
     expect(ctx.partida.ultimosDeslocamentos).toBeNull();
     expect(ctx.segredo.delirioNaNoite ?? false).toBe(false);
+  });
+});
+
+describe('Isolateus 026 — corrida entre o pulso e o mover (transação)', () => {
+  /**
+   * Repositório que se comporta como o Firestore: cada leitura devolve uma
+   * CÓPIA, e só o que é gravado muda o "banco". `aoLerCofre` roda logo depois
+   * de uma leitura, simulando outra requisição que gravou no meio.
+   */
+  function bancoComCorrida() {
+    const ctx = vilaComAmeacas({ npcs: 2 });
+    const copia = <T>(o: T): T =>
+      Object.assign(
+        Object.create(Object.getPrototypeOf(o) as object),
+        structuredClone({ ...o }),
+      ) as T;
+    const banco = { partida: copia(ctx.partida), segredo: copia(ctx.segredo) };
+    let aoLerCofre: (() => void) | null = null;
+    const repo = ctx.repo as unknown as Record<string, jest.Mock>;
+    type Escrita = { publico?: object; segredo?: object } | null;
+    repo.buscar.mockImplementation(() => Promise.resolve(copia(banco.partida)));
+    repo.buscarSegredo.mockImplementation(() => {
+      const lido = copia(banco.segredo);
+      const gancho = aoLerCofre;
+      aoLerCofre = null;
+      gancho?.();
+      return Promise.resolve(lido);
+    });
+    repo.commitPartida.mockImplementation(
+      (_id: string, pub: object = {}, seg: object = {}) => {
+        Object.assign(banco.partida, pub);
+        Object.assign(banco.segredo, seg);
+        return Promise.resolve();
+      },
+    );
+    repo.transacao.mockImplementation(
+      (_id: string, fn: (p: unknown, s: unknown) => Escrita) => {
+        const p = copia(banco.partida);
+        const s = copia(banco.segredo);
+        const r = fn(p, s);
+        if (!r) return Promise.resolve(null);
+        Object.assign(banco.partida, r.publico ?? {});
+        Object.assign(banco.segredo, r.segredo ?? {});
+        return Promise.resolve({ partida: p, segredo: s });
+      },
+    );
+    return { ...ctx, banco, depoisDeLer: (f: () => void) => (aoLerCofre = f) };
+  }
+
+  it('um aluno que anda enquanto o pulso libera um NPC não perde o movimento', async () => {
+    const ctx = bancoComCorrida();
+    ctx.banco.segredo.agendaNpc = [
+      {
+        habitanteId: 'n1',
+        para: 'energia',
+        em: new Date(agora + 1_000).toISOString(),
+      },
+    ];
+    avancar(2_000);
+    // O pulso lê o cofre; logo em seguida, o aluno a3 anda (outra requisição).
+    ctx.depoisDeLer(() => {
+      ctx.banco.segredo.posicoesNoite = [
+        { habitanteId: 'h3', setorId: 'comercio' },
+      ];
+      ctx.banco.partida.deslocamentosNoite = [
+        { habitanteId: 'h3', para: 'comercio' },
+      ];
+    });
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+
+    expect(ctx.banco.segredo.posicoesNoite).toEqual(
+      expect.arrayContaining([
+        { habitanteId: 'h3', setorId: 'comercio' },
+        { habitanteId: 'n1', setorId: 'energia' },
+      ]),
+    );
+    expect(ctx.banco.partida.deslocamentosNoite).toHaveLength(2);
+  });
+
+  it('dois alunos andando ao mesmo tempo: o segundo não apaga o primeiro', async () => {
+    const ctx = bancoComCorrida();
+    ctx.depoisDeLer(() => {
+      ctx.banco.segredo.posicoesNoite = [
+        { habitanteId: 'h4', setorId: 'energia' },
+      ];
+      ctx.banco.partida.deslocamentosNoite = [
+        { habitanteId: 'h4', para: 'energia' },
+      ];
+    });
+    await ctx.service.mover('a3', 'p1', 'comercio');
+    expect(ctx.banco.segredo.posicoesNoite).toEqual(
+      expect.arrayContaining([
+        { habitanteId: 'h4', setorId: 'energia' },
+        { habitanteId: 'h3', setorId: 'comercio' },
+      ]),
+    );
+    expect(ctx.banco.partida.deslocamentosNoite).toHaveLength(2);
   });
 });
