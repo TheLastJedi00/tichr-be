@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -25,6 +27,7 @@ import {
   AcaoAmeaca,
   IsolateusSegredoEntity,
 } from './entities/isolateus-segredo.entity';
+import { aplicarAviso } from './isolateus-deslocamento';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
@@ -260,17 +263,77 @@ export class IsolateusGameService {
       });
     }
 
-    // O destino fica no cofre até o fechamento da noite; voltar à origem
-    // desfaz o deslocamento.
+    const ultimosMover = this.limitarTroca(segredo, alunoId);
+    await this.gravarDestino(partida, segredo, habitante, setorId, {
+      ultimosMover,
+    });
+    return this.registrarConfirmacao(partida, segredo, alunoId);
+  }
+
+  /**
+   * O rate limit da troca de destino (026 §2.2): cada troca agora escreve no
+   * doc público, que todos os celulares leem por `onSnapshot`. Devolve a lista
+   * atualizada para entrar no commit do movimento.
+   */
+  private limitarTroca(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): Array<{ alunoId: string; em: string }> {
+    const agora = Date.now();
+    const lista = segredo.ultimosMover ?? [];
+    const ultimo = lista.find((u) => u.alunoId === alunoId);
+    if (
+      ultimo &&
+      agora - Date.parse(ultimo.em) < ISOLATEUS.MOVER_INTERVALO_MS
+    ) {
+      throw new HttpException(
+        {
+          code: 'MOVER_RAPIDO',
+          message: 'Calma! Espere um instante antes de trocar de destino.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    return [
+      ...lista.filter((u) => u.alunoId !== alunoId),
+      { alunoId, em: new Date(agora).toISOString() },
+    ];
+  }
+
+  /**
+   * Grava o destino da noite no cofre (`posicoesNoite`, a fonte de verdade das
+   * validações) e o aviso de saída no doc público (`deslocamentosNoite`, o
+   * espelho que os colegas do setor veem), no MESMO commit. Voltar à origem
+   * desfaz os dois.
+   */
+  private async gravarDestino(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    habitante: Habitante,
+    setorId: string,
+    extraCofre: Partial<IsolateusSegredoEntity> = {},
+  ): Promise<void> {
+    const origem = habitante.setorId;
     const posicoes = (segredo.posicoesNoite ?? []).filter(
       (p) => p.habitanteId !== habitante.id,
     );
     if (setorId !== origem) {
       posicoes.push({ habitanteId: habitante.id, setorId });
     }
+    const avisos = aplicarAviso(
+      partida.deslocamentosNoite ?? [],
+      habitante.id,
+      setorId,
+      origem,
+    );
     segredo.posicoesNoite = posicoes;
-    await this.matches.commitPartida(partidaId, {}, { posicoesNoite: posicoes });
-    return this.registrarConfirmacao(partida, segredo, alunoId);
+    partida.deslocamentosNoite = avisos;
+    Object.assign(segredo, extraCofre);
+    await this.matches.commitPartida(
+      partida.id,
+      { deslocamentosNoite: avisos },
+      { posicoesNoite: posicoes, ...extraCofre },
+    );
   }
 
   /**
@@ -288,7 +351,11 @@ export class IsolateusGameService {
     );
   }
 
-  /** "Eu fico." Fecha a jogada da noite sem sair do lugar. */
+  /**
+   * "Eu fico." Fecha a jogada da noite sem sair do lugar. Só confirma: quem já
+   * andou e quer voltar usa `mover` com a origem, que retira o aviso (026
+   * §2.2.1).
+   */
   async confirmarPosicao(
     alunoId: string,
     partidaId: string,
