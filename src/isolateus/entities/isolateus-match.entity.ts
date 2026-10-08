@@ -86,6 +86,19 @@ export const ISOLATEUS = {
    * valor aproxima a taxa de movimentação humana observável.
    */
   CHANCE_MOVER_NPC: 0.45,
+  /**
+   * Faixa (ms desde a abertura da noite) dos avisos de saída dos NPCs (026
+   * §2.3). Concentrada no começo da janela, quando os reais decidem: um aviso
+   * "atrasado" só sai no fechamento, e lá ele se mistura ao último real.
+   */
+  NPC_AVISO_JANELA_MS: [1_500, 35_000] as const,
+  /**
+   * Chance de um NPC que vai andar ganhar um segundo aviso (outro vizinho ou
+   * desistir). Os reais podem mudar de ideia; NPC que nunca muda seria pista.
+   */
+  CHANCE_NPC_MUDAR_IDEIA: 0.15,
+  /** Intervalo mínimo entre duas trocas de destino do mesmo aluno (429). */
+  MOVER_INTERVALO_MS: 1_000,
   /** Margem de segurança ao revalidar o prazo disparado pelo projetor. */
   MARGEM_TEMPO_MS: 2_000,
 
@@ -138,6 +151,12 @@ export interface Habitante {
    * uma rodada de REST por movimento sem proteger segredo nenhum.
    */
   setorId: string;
+}
+
+/** Um aviso de saída da noite: o habitante escolheu ir para `para` (026 §2). */
+export interface Deslocamento {
+  habitanteId: string;
+  para: string;
 }
 
 /** Um dos 6 setores vitais. */
@@ -349,6 +368,22 @@ export class IsolateusMatchEntity {
    * em jogo na questão do dia (sem autor: o organizador é anônimo).
    */
   resgatePendente = false;
+  /**
+   * Os avisos de saída da noite em curso (026 §2): quem escolheu sair e para
+   * onde. A origem é o `setorId` público, que só muda no amanhecer. Reais e
+   * NPCs entram do mesmo jeito (os NPCs pela agenda do cofre), então o aviso
+   * não diz quem é real. O recorte "só o meu setor" é de UI, como as posições.
+   */
+  deslocamentosNoite: Deslocamento[] = [];
+  /**
+   * Quem trocou de setor no último amanhecer, para a animação de saídas e
+   * chegadas (026 §3). `null` quando houve Delírio na noite: casar nome antigo
+   * e novo pelo movimento desfaria a confusão do poder.
+   */
+  ultimosDeslocamentos: {
+    rodada: number;
+    movimentos: Array<{ habitanteId: string; de: string; para: string }>;
+  } | null = null;
   /** Quantos já votaram no resgate (contagem apenas — o voto é secreto). */
   votosResgateRecebidos = 0;
   /** Quem o último resgate trouxe de volta (o papel dele continua secreto). */

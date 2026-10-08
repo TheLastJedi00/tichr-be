@@ -114,6 +114,22 @@ export class IsolateusSegredoEntity {
     rodada: number;
   }>;
 
+  /**
+   * A agenda dos avisos de saída dos NPCs nesta noite (026 §2.3), sorteada na
+   * abertura e liberada aos poucos para o doc público. `para: null` = o NPC
+   * desistiu. O destino final de cada NPC é o do último aviso dele.
+   *
+   * `undefined` = partida aberta antes da 026: os NPCs andam no fechamento,
+   * como antes.
+   */
+  agendaNpc?: Array<{ habitanteId: string; para: string | null; em: string }>;
+
+  /** O professor disparou um Delírio nesta noite: o amanhecer não anima (026 §3.2). */
+  delirioNaNoite?: boolean;
+
+  /** A última troca de destino de cada aluno nesta noite (rate limit do `mover`). */
+  ultimosMover?: Array<{ alunoId: string; em: string }>;
+
   /** Contágio escolhido, materializado no próximo fechamento da noite. */
   contagioPendente?: boolean;
 
