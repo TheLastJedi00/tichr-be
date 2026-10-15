@@ -46,6 +46,12 @@ export class PartidaEntity {
   /** ISO de quando a pergunta corrente foi ativada (para o cronômetro). */
   perguntaIniciadaEm?: string | null;
 
+  /**
+   * Quando o professor pausou a partida (ISO); `null`/ausente = rodando
+   * (028 §4). Pausada, só Retomar passa; os relógios das telas param.
+   */
+  pausadaEm?: string | null;
+
   /** Visão pública da pergunta corrente (sem a resposta). */
   perguntaPublica?: { enunciado: string; alternativas: string[] } | null;
   /** Correta revelada apenas no RANKING_PARCIAL. */

@@ -191,6 +191,12 @@ export class WorMatchEntity {
   /** Início do turno/rodada atual (ISO) — base do cronômetro de 1 min no cliente. */
   rodadaIniciadaEm?: string | null;
 
+  /**
+   * Quando o professor pausou a partida (ISO); `null`/ausente = rodando
+   * (028 §4). Pausada, só Retomar passa; os relógios das telas param.
+   */
+  pausadaEm?: string | null;
+
   /** Snapshot de todas as equipes (castelos) — todos leem da raiz, sem custo por equipe. */
   placar: PlacarEquipe[] = [];
   /** Resultado da última rodada resolvida (reveal + quem atacou). */

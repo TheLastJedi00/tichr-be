@@ -64,6 +64,18 @@ export class WorMatchController {
     return this.game.pularPalavra(uid, id);
   }
 
+  /** Pausa a batalha em andamento: todo comando responde 409 até retomar. */
+  @Post('matches/:id/pausar')
+  pausar(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.game.pausar(uid, id);
+  }
+
+  /** Retoma: a rodada volta com o tempo que faltava. */
+  @Post('matches/:id/retomar')
+  retomar(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.game.retomar(uid, id);
+  }
+
   /** Cronômetro: encerra a rodada por tempo esgotado (projetor dispara ao zerar). */
   @Post('matches/:id/tempo')
   tempo(@ProfessorId() uid: string, @Param('id') id: string) {

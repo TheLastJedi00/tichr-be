@@ -143,7 +143,7 @@ export class XpService {
     turmaId: string,
     alunoId: string,
     pontos: number,
-    motivo: 'WOR_MODERACAO',
+    motivo: 'WOR_MODERACAO' | 'ISOLATEUS_MODERACAO',
   ): Promise<void> {
     const aluno = await this.alunoRepo.findById(alunoId);
     if (!aluno || aluno.turmaId !== turmaId || pontos <= 0) {
