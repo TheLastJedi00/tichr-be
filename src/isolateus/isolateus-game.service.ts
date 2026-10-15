@@ -1783,14 +1783,8 @@ export class IsolateusGameService {
     const resgate = this.resolverResgate(partida, votantes, respostas, questao);
     partes.push(resgate?.texto ?? null);
 
-    const pontos = { ...(segredo.pontos ?? {}) };
-    if (!acertou) {
-      // Cada Ameaça livre pontua pelo erro da turma — o único momento em que a
-      // vila disputou com ela e perdeu. A sabotagem, automática, não pontua.
-      for (const a of this.ameacasLivres(partida, segredo)) {
-        pontos[a] = (pontos[a] ?? 0) + ISOLATEUS.PONTOS_ACERTO;
-      }
-    }
+    // O erro da vila não pontua a Ameaça: Aldeões e Ameaças pontuam só pelo
+    // acerto, em `responder` (spec 027 §2).
 
     const dados: Partial<IsolateusMatchEntity> = {
       // Resgate conquistado: a turma vota quem volta antes da janela de decisão.
@@ -1819,12 +1813,10 @@ export class IsolateusGameService {
     const poderes = this.concederPoderes(partida, segredo, respostas);
 
     Object.assign(partida, dados);
-    segredo.pontos = pontos;
     segredo.acaoRodada = null;
     segredo.acoesRodada = [];
     segredo.poderes = poderes;
     await this.matches.commitPartida(partida.id, dados, {
-      pontos,
       acaoRodada: null,
       acoesRodada: [],
       poderes,
@@ -2591,7 +2583,8 @@ export class IsolateusGameService {
 
   /**
    * Encerra a partida, publica o placar (agora que o mistério acabou) e converte
-   * os pontos em XP do portal. O lado vencedor leva o bônus de Vitória de Partida.
+   * os pontos em XP do portal. Vencer não dá bônus: o placar é só o dos
+   * acertos (spec 027 §2).
    */
   private async encerrar(
     partida: IsolateusMatchEntity,
@@ -2599,16 +2592,6 @@ export class IsolateusGameService {
     veredito: { lado: 'VILA' | 'AMEACA'; motivo: string },
   ): Promise<IsolateusMatchEntity> {
     const pontos = { ...(segredo.pontos ?? {}) };
-    const alienVenceu = veredito.lado === 'AMEACA';
-
-    for (const vinculo of segredo.vinculos) {
-      if (!vinculo.alunoId) continue; // NPC não pontua
-      const ehAlien = segredo.ehAmeaca(vinculo.alunoId);
-      if (ehAlien === alienVenceu) {
-        pontos[vinculo.alunoId] =
-          (pontos[vinculo.alunoId] ?? 0) + ISOLATEUS.BONUS_VITORIA;
-      }
-    }
 
     const nomePorAluno = new Map(
       segredo.vinculos

@@ -289,9 +289,9 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.veredito?.lado).toBe('VILA');
     expect(partida.veredito?.motivo).toContain('trancaram o Alienígena');
 
-    // Aldeões levam o bônus de vitória; o Alien não.
+    // Vencer não dá bônus: o placar é só o dos acertos (spec 027 §2).
     const a2 = partida.rankingFinal.find((p) => p.alunoId === 'a2')!;
-    expect(a2.pontos).toBe(500 + ISOLATEUS.BONUS_VITORIA);
+    expect(a2.pontos).toBe(500);
     expect(creditar).toHaveBeenCalledWith(
       't1',
       expect.anything(),

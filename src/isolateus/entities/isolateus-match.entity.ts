@@ -22,8 +22,6 @@ export const ISOLATEUS = {
   /** Pontos por acerto + bônus máximo de rapidez (espelha o Qlick). */
   PONTOS_ACERTO: 1000,
   BONUS_RAPIDEZ: 500,
-  /** Bônus de "Vitória de Partida" para o lado vencedor (§7). */
-  BONUS_VITORIA: 1000,
 
   /** Mínimo de investigadores reais para iniciar (§2). */
   MIN_REAIS: 4,
