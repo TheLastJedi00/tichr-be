@@ -214,6 +214,113 @@ describe('PartidaService — fluxo CQRS', () => {
     expect(xp.creditarPartida).not.toHaveBeenCalled();
   });
 
+  describe('log de pontuação (spec 027 §1)', () => {
+    /** Duas perguntas: Ana acerta as duas, Bia só a segunda. */
+    async function partidaJogada(over: Partial<PartidaEntity> = {}) {
+      const partida = partidaBase({
+        inscritos: [
+          { alunoId: 'a1', nome: 'Ana' },
+          { alunoId: 'a2', nome: 'Bia' },
+        ],
+        ...over,
+      });
+      const repo = {
+        findById: jest.fn().mockResolvedValue(partida),
+        update: jest.fn((_id: string, dados: Partial<PartidaEntity>) => {
+          Object.assign(partida, dados);
+          return Promise.resolve();
+        }),
+      };
+      const xp = { creditarPartida: jest.fn() };
+      const service = new PartidaService(
+        repo as never,
+        qlickFake(),
+        {} as never,
+        {} as never,
+        {} as never,
+        firebaseFake(),
+        xp as never,
+      );
+      await service.iniciar('p1', 'pt1');
+      await service.responder('a1', 'pt1', 0); // P1: correta 0
+      await service.responder('a2', 'pt1', 1); // erra → apura
+      await service.proxima('p1', 'pt1');
+      await service.responder('a1', 'pt1', 1); // P2: correta 1
+      await service.responder('a2', 'pt1', 1); // → apura
+      return { partida, service, xp };
+    }
+
+    it('um item por pergunta acertada; a soma bate com o ranking e o crédito', async () => {
+      const { partida, service, xp } = await partidaJogada();
+      await service.encerrar('p1', 'pt1');
+
+      const log = partida.logPontuacao!;
+      const ana = log.find((l) => l.alunoId === 'a1')!;
+      const bia = log.find((l) => l.alunoId === 'a2')!;
+      expect(ana.itens.map((i) => i.rodada)).toEqual([1, 2]);
+      expect(bia.itens.map((i) => i.rodada)).toEqual([2]); // erro não gera item
+      expect(bia.itens[0].fonte).toBe('ACERTO');
+      expect(bia.itens[0].descricao).toMatch(/^Pergunta 2: acertou \(\+1\.000\)/);
+
+      for (const l of log) {
+        const soma = l.itens.reduce((s, i) => s + i.pontos, 0);
+        const ranking = partida.rankingFinal!.find((r) => r.alunoId === l.alunoId)!;
+        expect(soma).toBe(l.totalPartida);
+        expect(l.totalPartida).toBe(ranking.pontos);
+        const creditado = (
+          xp.creditarPartida.mock.calls[0][1] as Array<{ alunoId: string; pontos: number }>
+        ).find((c) => c.alunoId === l.alunoId)!.pontos;
+        expect(l.creditoRanking).toBe(creditado);
+      }
+    });
+
+    it('partida casual: log normal, crédito zero', async () => {
+      const { partida, service } = await partidaJogada({ valeRanking: false });
+      await service.encerrar('p1', 'pt1');
+      const ana = partida.logPontuacao!.find((l) => l.alunoId === 'a1')!;
+      expect(ana.totalPartida).toBeGreaterThan(0);
+      expect(ana.creditoRanking).toBe(0);
+    });
+
+    it('sem turma: crédito zero', async () => {
+      const { partida, service } = await partidaJogada({ turmaId: undefined });
+      await service.encerrar('p1', 'pt1');
+      expect(partida.logPontuacao!.every((l) => l.creditoRanking === 0)).toBe(true);
+    });
+
+    it('encerrar no meio de uma pergunta ignora as respostas não apuradas, como o placar', async () => {
+      const partida = partidaBase({
+        inscritos: [
+          { alunoId: 'a1', nome: 'Ana' },
+          { alunoId: 'a2', nome: 'Bia' },
+        ],
+      });
+      const repo = {
+        findById: jest.fn().mockResolvedValue(partida),
+        update: jest.fn((_id: string, dados: Partial<PartidaEntity>) => {
+          Object.assign(partida, dados);
+          return Promise.resolve();
+        }),
+      };
+      const service = new PartidaService(
+        repo as never,
+        qlickFake(),
+        {} as never,
+        {} as never,
+        {} as never,
+        firebaseFake(),
+        xpFake(),
+      );
+      await service.iniciar('p1', 'pt1');
+      await service.responder('a1', 'pt1', 0); // acertou, mas Bia não respondeu
+      await service.encerrar('p1', 'pt1'); // o sinal bateu: nada apurado
+
+      // Como o placar, o log não vê a pergunta não apurada.
+      expect(partida.rankingFinal).toEqual([]);
+      expect(partida.logPontuacao).toEqual([]);
+    });
+  });
+
   it('partidaDaTurma: retorna a partida ativa recém-criada (sem depender do relógio)', async () => {
     const agora = new Date().toISOString();
     const repo = {
