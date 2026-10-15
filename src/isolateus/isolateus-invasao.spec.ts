@@ -100,3 +100,47 @@ describe('Isolateus — declaração da invasão', () => {
     expect(await ctx.service.painel('a3', 'p1')).not.toHaveProperty('invasao');
   });
 });
+
+describe('Isolateus — a invasão é disputa e abre a questão', () => {
+  const ALERTA = 'Algo tenta romper a Quarentena!';
+
+  it('noite só com invasão abre a questão, com o alerta anônimo', async () => {
+    const ctx = comPresa();
+    await ctx.service.declararInvasao('a1', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.partida.alerta?.tipo).toBe('INVASAO');
+    expect(ctx.partida.alerta?.texto).toContain(ALERTA);
+    expect(ctx.partida.alerta?.texto).not.toContain('Real 1');
+  });
+
+  it('sem invasão, a noite calma continua sem questão', async () => {
+    const ctx = comPresa();
+    await ctx.service.pularFase('prof', 'p1');
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+  });
+
+  it('com abdução, a mesma questão decide tudo e o alerta ganha a linha', async () => {
+    const ctx = comPresa();
+    ctx.segredo.acoesRodada = [
+      { alunoId: 'a2', acao: { tipo: 'ABDUZIR', alvoId: 'h3' } },
+    ];
+    await ctx.service.declararInvasao('a1', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.partida.questaoIndex).toBe(0);
+    expect(ctx.partida.alerta?.tipo).toBe('ABDUCAO');
+    expect(ctx.partida.alerta?.texto).toContain('Abdução');
+    expect(ctx.partida.alerta?.texto).toContain(ALERTA);
+    expect(ctx.partida.alerta?.texto).not.toContain('Real 1');
+  });
+
+  it('o amanhecer não esquece a declaração antes da questão', async () => {
+    const ctx = comPresa();
+    await ctx.service.declararInvasao('a1', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+    expect(ctx.segredo.invasoesNoite).toEqual(['a1']);
+  });
+});

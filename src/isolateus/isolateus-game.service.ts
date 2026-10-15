@@ -52,6 +52,9 @@ import {
   vizinhosDe,
 } from './isolateus.data';
 
+/** A linha anônima do alerta quando uma Ameaça presa tenta fugir (028 §2.2). */
+const ALERTA_INVASAO = 'Algo tenta romper a Quarentena!';
+
 /** O que o aluno recebe sobre si mesmo — por REST, jamais pelo snapshot. */
 export interface PainelHabitante {
   papel: 'ALDEAO' | 'AMEACA';
@@ -851,7 +854,14 @@ export class IsolateusGameService {
     const temAbducao = segredo
       .acoesDaNoite()
       .some((j) => j.acao.tipo === 'ABDUZIR');
-    if (!temAbducao && !partida.reparoSetorId && !partida.resgatePendente) {
+    // A invasão declarada também é disputa (028 §2.2): sozinha, abre a questão.
+    const temInvasao = (segredo.invasoesNoite ?? []).length > 0;
+    if (
+      !temAbducao &&
+      !temInvasao &&
+      !partida.reparoSetorId &&
+      !partida.resgatePendente
+    ) {
       const resumo = this.resumoSemDisputa(partida, caidos);
       // A sabotagem já registrou o próprio evento; só a noite calma falta.
       if (!caidos.length) this.registrar(partida, 'ESPERA', resumo.texto);
@@ -1153,18 +1163,27 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): AlertaRodada {
+    // A invasão entra como uma linha a mais, sem nome (028 Decisão #8).
+    const invasao = (segredo.invasoesNoite ?? []).length > 0;
+    const comInvasao = (texto: string) =>
+      invasao ? `${texto} ${ALERTA_INVASAO}` : texto;
     if (segredo.acoesDaNoite().some((j) => j.acao.tipo === 'ABDUZIR')) {
       // Um só texto para presencial e às cegas: textos distintos contariam à
       // vila se a Ameaça agiu de perto ou de longe.
       return {
         tipo: 'ABDUCAO',
-        texto: 'ALERTA: Tentativa de Abdução na calada da noite!',
+        texto: comInvasao('ALERTA: Tentativa de Abdução na calada da noite!'),
       };
+    }
+    if (invasao && !partida.reparoSetorId) {
+      return { tipo: 'INVASAO', texto: `ALERTA: ${ALERTA_INVASAO}` };
     }
     const setor = partida.setores.find((s) => s.id === partida.reparoSetorId);
     return {
       tipo: 'SABOTAGEM',
-      texto: `ALERTA: a vila tenta reconstruir o ${setor?.nome ?? 'setor'}!`,
+      texto: comInvasao(
+        `ALERTA: a vila tenta reconstruir o ${setor?.nome ?? 'setor'}!`,
+      ),
     };
   }
 

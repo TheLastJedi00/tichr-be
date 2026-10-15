@@ -200,7 +200,8 @@ export interface MensagemDebate {
 
 /** O alerta global que abre a rodada. */
 export interface AlertaRodada {
-  tipo: 'SABOTAGEM' | 'ABDUCAO';
+  /** `INVASAO`: só uma Ameaça presa tentando fugir abriu a questão (028 §2). */
+  tipo: 'SABOTAGEM' | 'ABDUCAO' | 'INVASAO';
   texto: string;
 }
 
