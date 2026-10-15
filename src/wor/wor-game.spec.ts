@@ -297,6 +297,94 @@ describe('WorGameService — partida casual', () => {
   });
 });
 
+describe('WorGameService — log de pontuação (spec 027 §1)', () => {
+  it('cada ponto ganho vira item no log da equipe, no mesmo update', async () => {
+    const teams = [time('equipe-1', ['a1', 'a2']), time('equipe-2', ['b1'])];
+    const { service, match } = cenario(teams);
+    match.multiplicador = 2;
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'equipe-2');
+    await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'equipe-2'); // crítico
+
+    const item = teams[0].logPontos[0];
+    expect(item).toMatchObject({ fonte: 'CRITICO', pontos: 400, rodada: 1 });
+    expect(item.descricao).toContain('A1');
+    expect(item.descricao).toContain('A2');
+    expect(item.descricao).toContain('(×2)');
+    expect(teams[0].logPontos.reduce((s, i) => s + i.pontos, 0)).toBe(
+      teams[0].pontos,
+    );
+  });
+
+  it('arriscar e acertar com Catapulta registra o dano e o bônus, com o autor', async () => {
+    const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
+    const { service } = cenario(teams);
+    await service.arriscar('a1', 'm1', 'arte', {
+      efeito: 'CATAPULTA',
+      alvoEquipeId: 'equipe-2',
+    });
+    const fontes = teams[0].logPontos.map((i) => i.fonte);
+    expect(fontes).toEqual(['CATAPULTA', 'ARRISCAR']);
+    expect(teams[0].logPontos[1].descricao).toContain('A1');
+    expect(teams[0].logPontos.reduce((s, i) => s + i.pontos, 0)).toBe(
+      teams[0].pontos,
+    );
+  });
+
+  it('no fim: HP_FINAL, fator ×0,5 da não campeã e soma igual ao crédito', async () => {
+    const teams = [
+      time('equipe-1', ['a1'], 1000),
+      time('equipe-2', ['b1', 'b2'], 500),
+    ];
+    teams[1].pontos = 401;
+    teams[1].logPontos = [
+      { rodada: 1, fonte: 'DANO', descricao: 'x', pontos: 401 },
+    ];
+    const { service, match, creditos } = cenario(teams);
+    match.turmaId = 't1';
+    match.ondaIndex = 1;
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA'); // encerra
+
+    const log = match.logPontuacao!;
+    expect(log.map((l) => l.alunoId).sort()).toEqual(['a1', 'b1', 'b2']);
+    const b1 = log.find((l) => l.alunoId === 'b1')!;
+    const b2 = log.find((l) => l.alunoId === 'b2')!;
+    expect(b1.itens).toEqual(b2.itens); // todo membro recebe os mesmos itens
+    expect(b1.itens.map((i) => i.fonte)).toEqual([
+      'DANO',
+      'HP_FINAL',
+      'FATOR_COLOCACAO',
+    ]);
+    const semFator = b1.itens
+      .filter((i) => i.fonte !== 'FATOR_COLOCACAO')
+      .reduce((s, i) => s + i.pontos, 0);
+    expect(semFator).toBe(b1.totalPartida);
+    expect(b1.totalPartida).toBe(901);
+    const credito = creditos[0].pontos.find((c) => c.alunoId === 'b1')!.pontos;
+    expect(b1.creditoRanking).toBe(credito);
+    expect(b1.itens.reduce((s, i) => s + i.pontos, 0)).toBe(credito);
+
+    const a1 = log.find((l) => l.alunoId === 'a1')!; // campeã: sem fator
+    expect(a1.itens.map((i) => i.fonte)).toEqual(['HP_FINAL']);
+    expect(a1.creditoRanking).toBe(1000);
+  });
+
+  it('partida casual: log completo, crédito zero', async () => {
+    const teams = [time('equipe-1', ['a1'], 1000), time('equipe-2', ['b1'], 500)];
+    const { service, match } = cenario(teams);
+    match.turmaId = 't1';
+    match.valeRanking = false;
+    match.ondaIndex = 1;
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA');
+    const a1 = match.logPontuacao!.find((l) => l.alunoId === 'a1')!;
+    expect(a1.totalPartida).toBe(1000);
+    expect(a1.creditoRanking).toBe(0);
+  });
+});
+
 describe('WorGameService — multiplicador de pontos da partida', () => {
   it('o dano vira pontos multiplicados', async () => {
     const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];
