@@ -119,6 +119,11 @@ export const ISOLATEUS = {
    * Sinal Interceptado (028 §1). A mesma régua do `WOR.PENALIDADE_XP`.
    */
   PENALIDADE_XP: 1000,
+  /**
+   * Acertos da Ameaça original desde o último Contágio (ou o início) para o
+   * Contágio voltar a aparecer entre os poderes (028 §3).
+   */
+  ACERTOS_PARA_CONTAGIO: 2,
 } as const;
 
 export type StatusIsolateus =

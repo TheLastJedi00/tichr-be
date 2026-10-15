@@ -140,6 +140,13 @@ export class IsolateusSegredoEntity {
    */
   noiteFechada?: number;
 
+  /**
+   * Questões que a Ameaça original acertou desde o último Contágio (ou o
+   * início), livre ou presa (028 §3). O Contágio só aparece com
+   * `ACERTOS_PARA_CONTAGIO`; usá-lo zera a conta. Ausente = 0.
+   */
+  acertosDesdeContagio?: number;
+
   /** Contágio escolhido, materializado no próximo fechamento da noite. */
   contagioPendente?: boolean;
 

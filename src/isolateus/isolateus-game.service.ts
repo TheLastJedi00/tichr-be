@@ -69,6 +69,8 @@ export interface PainelHabitante {
   aliados?: string[];
   /** O poder ganho no acerto e o que ela pode escolher; `null` = sem poder. */
   poder?: Record<PoderAlienigena, boolean> | null;
+  /** Só para a original: a recarga do Contágio (028 §3.2). */
+  contagioAcertos?: { atual: number; necessario: number };
   /** O habitante sob Controle Mental nesta rodada, se houver. */
   controle?: { habitanteId: string; nome: string } | null;
   /** Quem está AGORA no setor de onde ela age (o dela ou o do controlado). */
@@ -185,6 +187,7 @@ export class IsolateusGameService {
     // contagiado: o celular faz polling daqui, e o doc público não muda.
     const temPoder = segredo.poderes?.some((p) => p.alunoId === alunoId);
     const origem = this.origemDaAmeaca(partida, segredo, alunoId);
+    const original = alunoId === segredo.alienAlunoId;
     return {
       ...base,
       aliados: segredo
@@ -199,11 +202,20 @@ export class IsolateusGameService {
         ? {
             CONTROLE: true,
             CONTAGIO:
-              alunoId === segredo.alienAlunoId &&
+              original &&
+              this.contagioCarregado(segredo) &&
               this.alvosDeContagio(partida, segredo).length > 0,
             DELIRIO: true,
           }
         : null,
+      ...(original
+        ? {
+            contagioAcertos: {
+              atual: segredo.acertosDesdeContagio ?? 0,
+              necessario: ISOLATEUS.ACERTOS_PARA_CONTAGIO,
+            },
+          }
+        : {}),
       controle: origem.controlado
         ? { habitanteId: origem.controlado.id, nome: origem.controlado.nome }
         : null,
@@ -240,6 +252,13 @@ export class IsolateusGameService {
     }
     const propria = this.habitanteDoAluno(partida, segredo, alunoId);
     return { setorId: this.posicaoDe(segredo, propria), controlado: null };
+  }
+
+  /** A original já somou os acertos que o Contágio pede (028 §3). */
+  private contagioCarregado(segredo: IsolateusSegredoEntity): boolean {
+    return (
+      (segredo.acertosDesdeContagio ?? 0) >= ISOLATEUS.ACERTOS_PARA_CONTAGIO
+    );
   }
 
   /** Aldeões reais, na vila, que ainda podem ser contagiados. */
@@ -1233,6 +1252,12 @@ export class IsolateusGameService {
           message: 'Só a Ameaça original pode contagiar.',
         });
       }
+      if (!this.contagioCarregado(segredo)) {
+        throw new BadRequestException({
+          code: 'CONTAGIO_RECARREGANDO',
+          message: `O Contágio pede ${ISOLATEUS.ACERTOS_PARA_CONTAGIO} acertos desde o último.`,
+        });
+      }
       if (!this.alvosDeContagio(partida, segredo).length) {
         throw new BadRequestException({
           code: 'SEM_ALVO',
@@ -1240,6 +1265,7 @@ export class IsolateusGameService {
         });
       }
       mudancas.contagioPendente = true;
+      mudancas.acertosDesdeContagio = 0;
     } else if (dto.poder === 'DELIRIO') {
       mudancas.delirioPendente = true;
     } else {
@@ -1903,15 +1929,24 @@ export class IsolateusGameService {
     };
 
     const poderes = this.concederPoderes(partida, segredo, respostas);
+    // A recarga do Contágio conta à parte dos poderes: o acerto da original
+    // soma livre OU presa (028 §3) — preso, o saldo fica para depois da fuga.
+    const acertosDesdeContagio =
+      (segredo.acertosDesdeContagio ?? 0) +
+      (respostas.find((r) => r.alunoId === segredo.alienAlunoId)?.correta
+        ? 1
+        : 0);
 
     Object.assign(partida, dados);
     segredo.acaoRodada = null;
     segredo.acoesRodada = [];
     segredo.poderes = poderes;
+    segredo.acertosDesdeContagio = acertosDesdeContagio;
     await this.matches.commitPartida(partida.id, dados, {
       acaoRodada: null,
       acoesRodada: [],
       poderes,
+      acertosDesdeContagio,
     });
 
     // A vila caiu? A Esperança zerada encerra a partida na hora.
