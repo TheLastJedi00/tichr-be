@@ -9,6 +9,11 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ModeracaoService } from '../moderacao/moderacao.service';
+import {
+  assertPausavel,
+  empurrar,
+  tempoPausado,
+} from '../common/pausa';
 import { embaralhar } from '../common/shuffle.util';
 import {
   creditoDe,
@@ -2400,6 +2405,57 @@ export class IsolateusGameService {
       segredo,
       this.vereditoPorEsgotamento(partida),
     );
+  }
+
+  // ===== A Pausa (028 §4) =====
+
+  /** O professor pausa a investigação em andamento (idempotente). */
+  async pausar(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.matches.buscar(partidaId);
+    if (!partida || partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    assertPausavel(partida.status);
+    if (partida.pausadaEm) return partida;
+    partida.pausadaEm = new Date(Date.now()).toISOString();
+    await this.matches.commitPartida(partidaId, {
+      pausadaEm: partida.pausadaEm,
+    });
+    return partida;
+  }
+
+  /**
+   * Retoma: o relógio da fase e os horários da agenda dos NPCs (026 §2.3) são
+   * empurrados pelo tempo pausado, no MESMO commit — numa transação, sobre a
+   * leitura fresca. Nenhuma fase fecha por ter ficado pausada.
+   */
+  async retomar(
+    professorId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const atual = await this.matches.buscar(partidaId);
+    if (!atual || atual.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    const agora = Date.now();
+    const fresco = await this.matches.transacao(partidaId, (p, s) => {
+      if (!p.pausadaEm) return null;
+      const pausa = tempoPausado(p.pausadaEm, agora);
+      const faseIniciadaEm = empurrar(p.faseIniciadaEm, pausa);
+      Object.assign(p, { pausadaEm: null, faseIniciadaEm });
+      if (!s.agendaNpc) {
+        return { publico: { pausadaEm: null, faseIniciadaEm } };
+      }
+      s.agendaNpc = s.agendaNpc.map((a) => ({ ...a, em: empurrar(a.em, pausa) }));
+      return {
+        publico: { pausadaEm: null, faseIniciadaEm },
+        segredo: { agendaNpc: s.agendaNpc },
+      };
+    });
+    return fresco?.partida ?? atual;
   }
 
   // ===== A Quarentena =====

@@ -334,6 +334,12 @@ export class IsolateusMatchEntity {
   /** Base do cronômetro no cliente (questão, debate ou votação). */
   faseIniciadaEm: string | null;
 
+  /**
+   * Quando o professor pausou a partida (ISO); `null`/ausente = rodando
+   * (028 §4). Pausada, só Retomar passa; os relógios das telas param.
+   */
+  pausadaEm?: string | null;
+
   questaoPublica: { enunciado: string; alternativas: string[] } | null;
   /** Só preenchido em `RESULTADO_RODADA` — nunca durante a questão. */
   corretaIndex: number | null;

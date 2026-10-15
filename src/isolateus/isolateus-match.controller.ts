@@ -95,6 +95,18 @@ export class IsolateusMatchController {
     return this.game.delirioDoProfessor(professorId, id);
   }
 
+  /** Pausa a investigação em andamento: todo comando responde 409 até retomar. */
+  @Post('matches/:id/pausar')
+  pausar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.pausar(professorId, id);
+  }
+
+  /** Retoma: cada relógio volta com o tempo que faltava. */
+  @Post('matches/:id/retomar')
+  retomar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.retomar(professorId, id);
+  }
+
   /** A próxima noite. Obsoleta: o telão usa `pular-fase`. */
   @Post('matches/:id/proxima')
   proxima(@ProfessorId() professorId: string, @Param('id') id: string) {

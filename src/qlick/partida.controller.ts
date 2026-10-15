@@ -51,6 +51,18 @@ export class PartidaController {
     return this.partidaService.proxima(professorId, id);
   }
 
+  /** Pausa a partida em andamento: todo comando responde 409 até retomar. */
+  @Post('partidas/:id/pausar')
+  pausar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.pausar(professorId, id);
+  }
+
+  /** Retoma: o relógio da pergunta volta com o tempo que faltava. */
+  @Post('partidas/:id/retomar')
+  retomar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.partidaService.retomar(professorId, id);
+  }
+
   @Post('partidas/:id/encerrar')
   encerrar(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.partidaService.encerrar(professorId, id);

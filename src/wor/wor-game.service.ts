@@ -11,6 +11,7 @@ import {
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
 import { valeRanking } from '../common/vale-ranking';
+import { assertPausavel, empurrar, tempoPausado } from '../common/pausa';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
@@ -686,6 +687,60 @@ export class WorGameService {
     return lider;
   }
 
+  // ===== Pausa (028 §4) =====
+
+  private assertDono(match: WorMatchEntity, professorId: string): void {
+    if (match.professorId !== professorId) {
+      throw new ForbiddenException('Essa partida não é sua.');
+    }
+  }
+
+  /** O mestre pausa a batalha em andamento. Pausar de novo não muda nada. */
+  async pausar(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    this.assertDono(match, professorId);
+    assertPausavel(match.status);
+    if (!match.pausadaEm) {
+      await this.matches.atualizar(matchId, {
+        pausadaEm: new Date(Date.now()).toISOString(),
+      });
+    }
+    return this.view(matchId);
+  }
+
+  /**
+   * Retoma: o relógio da rodada é empurrado pelo tempo pausado, e o Action
+   * Card que estava em cartaz também (na raiz e nas equipes) — senão ele
+   * sumiria no meio, já que o cliente o tira de cena por `em + duracaoMs`.
+   */
+  async retomar(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    this.assertDono(match, professorId);
+    if (!match.pausadaEm) return this.view(matchId);
+
+    const pausa = tempoPausado(match.pausadaEm);
+    const raiz: Partial<WorMatchEntity> = {
+      pausadaEm: null,
+      rodadaIniciadaEm: empurrar(match.rodadaIniciadaEm, pausa),
+    };
+    const card = match.lastGlobalAction;
+    const patches: Record<string, Partial<WorTeamEntity>> = {};
+    if (
+      card &&
+      Date.parse(card.em) + card.duracaoMs > Date.parse(match.pausadaEm)
+    ) {
+      const emCartaz = { ...card, em: empurrar(card.em, pausa) };
+      this.fanOut(
+        raiz,
+        patches,
+        await this.matches.listarTeams(matchId),
+        emCartaz,
+      );
+    }
+    await this.matches.commitPartida(matchId, raiz, patches);
+    return this.view(matchId);
+  }
+
   /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
   async pularPalavra(professorId: string, matchId: string): Promise<MatchView> {
     const match = await this.carregar(matchId);
@@ -839,7 +894,9 @@ export class WorGameService {
     if (item.pontos !== 0) {
       team.logPontos = [
         ...(team.logPontos ?? []),
-        mult > 1 ? { ...item, descricao: `${item.descricao} (×${mult})` } : item,
+        mult > 1
+          ? { ...item, descricao: `${item.descricao} (×${mult})` }
+          : item,
       ];
     }
     patches[team.id] = {
