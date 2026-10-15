@@ -117,6 +117,7 @@ describe('Smart PINs (2 dígitos)', () => {
         {} as never,
         {} as never,
         alunoRepo as never,
+        {} as never,
       );
 
       const res = await service.migrarPins('p1', 't1');
