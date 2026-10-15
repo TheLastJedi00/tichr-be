@@ -1,3 +1,4 @@
+import { ItemLogPontos } from '../../common/log-pontuacao';
 import { LastGlobalAction, WOR } from './wor-match.entity';
 
 export interface MembroTeam {
@@ -26,6 +27,11 @@ export class WorTeamEntity {
   isHorde = false;
   /** Pontos de combate acumulados (dano causado + bônus). Desempata e vira XP. */
   pontos = 0;
+  /**
+   * De onde vieram os pontos da equipe (spec 027 §1.3), gravado junto de cada
+   * `pontos`. No encerramento vira o `logPontuacao` de cada membro.
+   */
+  logPontos: ItemLogPontos[] = [];
   membros: MembroTeam[] = [];
   /**
    * Cópia do último Action Card (fan-out). Redundante com a raiz de propósito:

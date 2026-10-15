@@ -13,6 +13,19 @@ import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
+import {
+  creditoDe,
+  creditosDaPartida,
+  itemAcerto,
+  LogPontuacaoJogador,
+} from '../common/log-pontuacao';
+import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
+import {
+  assertNaoPausada,
+  assertPausavel,
+  empurrar,
+  tempoPausado,
+} from '../common/pausa';
 
 /** Pontos por acerto + bônus máximo de rapidez. */
 const PONTOS_ACERTO = 1000;
@@ -53,7 +66,8 @@ export class PartidaService {
     // A partida escolhe a turma no início (N:N). Sem escolha, cai na única
     // turma atribuída ao Qlick (compat) — ou nenhuma.
     const turmasDoQlick = qlick.turmas;
-    const escolhida = turmaId ?? (turmasDoQlick.length === 1 ? turmasDoQlick[0] : undefined);
+    const escolhida =
+      turmaId ?? (turmasDoQlick.length === 1 ? turmasDoQlick[0] : undefined);
     if (escolhida) {
       const turma = await this.turmaRepo.findById(escolhida);
       if (!turma || turma.professorId !== professorId) {
@@ -81,6 +95,7 @@ export class PartidaService {
         turmaId: escolhida,
         titulo: qlick.titulo,
         status: 'LOBBY',
+        valeRanking: true,
         criadaEm: new Date().toISOString(),
         perguntaAtual: -1,
         totalPerguntas: qlick.perguntas.length,
@@ -104,6 +119,19 @@ export class PartidaService {
       throw new NotFoundException('Partida nao encontrada.');
     }
     return p;
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
+  async definirValeRanking(
+    professorId: string,
+    partidaId: string,
+    vale: boolean,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyValeRanking(partida.status);
+    partida.valeRanking = vale;
+    await this.partidaRepo.update(partidaId, { valeRanking: vale });
+    return partida;
   }
 
   /** Inscreve o aluno no lobby (idempotente). Só durante o LOBBY. */
@@ -149,10 +177,46 @@ export class PartidaService {
       : null;
   }
 
+  // ===== Pausa (028 §4) =====
+
+  /** Professor: pausa a partida em andamento. Pausar de novo não muda nada. */
+  async pausar(professorId: string, partidaId: string): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertPausavel(partida.status);
+    if (partida.pausadaEm) return partida;
+    const dados = { pausadaEm: new Date(Date.now()).toISOString() };
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
+    return partida;
+  }
+
+  /**
+   * Professor: retoma. O relógio da pergunta é empurrado pelo tempo pausado:
+   * ela volta com o tempo que faltava, e o bônus de rapidez não conta a pausa.
+   */
+  async retomar(
+    professorId: string,
+    partidaId: string,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    if (!partida.pausadaEm) return partida;
+    const pausa = tempoPausado(partida.pausadaEm);
+    const dados: Partial<PartidaEntity> = {
+      pausadaEm: null,
+      perguntaIniciadaEm: empurrar(partida.perguntaIniciadaEm, pausa),
+    };
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
+    return partida;
+  }
+
   // ===== Fluxo da partida (CQRS) =====
 
   /** Professor: congela inscritos e ativa a pergunta 1. */
-  async iniciar(professorId: string, partidaId: string): Promise<PartidaEntity> {
+  async iniciar(
+    professorId: string,
+    partidaId: string,
+  ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     if (partida.status !== 'LOBBY') {
       throw new BadRequestException('A partida já começou.');
@@ -169,6 +233,7 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há pergunta ativa.');
     }
@@ -176,14 +241,20 @@ export class PartidaService {
   }
 
   /** Professor: avança para a próxima pergunta. */
-  async proxima(professorId: string, partidaId: string): Promise<PartidaEntity> {
+  async proxima(
+    professorId: string,
+    partidaId: string,
+  ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status !== 'RANKING_PARCIAL') {
       throw new BadRequestException('Aguarde a apuração da rodada.');
     }
     const proximo = partida.perguntaAtual + 1;
     if (proximo >= partida.totalPerguntas) {
-      throw new BadRequestException('Foi a última pergunta. Encerre a partida.');
+      throw new BadRequestException(
+        'Foi a última pergunta. Encerre a partida.',
+      );
     }
     return this.ativarPergunta(partida, proximo);
   }
@@ -194,27 +265,31 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status === 'ENCERRADO') {
       throw new BadRequestException('A partida já foi encerrada.');
     }
     const rankingFinal = [...partida.placar]
       .sort((a, b) => b.pontos - a.pontos)
       .map((p, i) => ({ posicao: i + 1, ...p }));
+    // Converte os pontos da partida em XP do portal (só faz sentido com turma,
+    // e não em partida casual).
+    const creditos = creditosDaPartida(
+      partida,
+      partida.placar.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
+    );
     const dados: Partial<PartidaEntity> = {
       status: 'ENCERRADO',
       rankingFinal,
+      logPontuacao: await this.montarLog(partida, rankingFinal, creditos),
       perguntaPublica: null,
       corretaIndex: null,
     };
     Object.assign(partida, dados);
     await this.partidaRepo.update(partidaId, dados);
 
-    // Converte os pontos da partida em XP do portal (só faz sentido com turma).
-    if (partida.turmaId) {
-      await this.xpService.creditarPartida(
-        partida.turmaId,
-        partida.placar.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
-      );
+    if (partida.turmaId && valeRanking(partida)) {
+      await this.xpService.creditarPartida(partida.turmaId, creditos);
     }
     return partida;
   }
@@ -229,6 +304,7 @@ export class PartidaService {
     if (!partida) {
       throw new NotFoundException('Partida nao encontrada.');
     }
+    assertNaoPausada(partida);
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há pergunta ativa.');
     }
@@ -238,7 +314,9 @@ export class PartidaService {
 
     const idx = partida.perguntaAtual;
     const docId = `${partidaId}_${idx}_${alunoId}`;
-    const ref = this.firebase.firestore.collection('qlick_respostas').doc(docId);
+    const ref = this.firebase.firestore
+      .collection('qlick_respostas')
+      .doc(docId);
     if ((await ref.get()).exists) {
       return { registrada: false }; // já respondeu esta pergunta
     }
@@ -249,7 +327,11 @@ export class PartidaService {
     const tempoMs = partida.perguntaIniciadaEm
       ? Date.now() - Date.parse(partida.perguntaIniciadaEm)
       : 0;
-    const pontos = this.computarPontos(correta, tempoMs, partida.duracaoSegundos);
+    const pontos = this.computarPontos(
+      correta,
+      tempoMs,
+      partida.duracaoSegundos,
+    );
 
     await ref.set({
       partidaId,
@@ -269,6 +351,37 @@ export class PartidaService {
   }
 
   // ===== helpers do fluxo =====
+
+  /**
+   * O log de pontuação (spec 027 §1.3): um item por pergunta acertada, das
+   * respostas já gravadas. Só as perguntas apuradas, como o placar — encerrar
+   * no meio de uma pergunta descarta as respostas dela.
+   */
+  private async montarLog(
+    partida: PartidaEntity,
+    ranking: PlacarItem[],
+    creditos: Array<{ alunoId: string; pontos: number }>,
+  ): Promise<LogPontuacaoJogador[]> {
+    const ultimaApurada =
+      partida.status === 'RANKING_PARCIAL'
+        ? partida.perguntaAtual
+        : partida.perguntaAtual - 1;
+    const respostas = (await this.lerTodasRespostas(partida.id))
+      .filter((r) => r.perguntaIndex <= ultimaApurada && r.pontos > 0)
+      .sort((a, b) => a.perguntaIndex - b.perguntaIndex);
+
+    return ranking.map((p) => ({
+      alunoId: p.alunoId,
+      nome: p.nome,
+      totalPartida: p.pontos,
+      creditoRanking: creditoDe(creditos, p.alunoId),
+      itens: respostas
+        .filter((r) => r.alunoId === p.alunoId)
+        .map((r) =>
+          itemAcerto(r.perguntaIndex + 1, 'Pergunta', r.pontos, PONTOS_ACERTO),
+        ),
+    }));
+  }
 
   private async ativarPergunta(
     partida: PartidaEntity,
@@ -298,7 +411,9 @@ export class PartidaService {
     const pergunta = qlick!.perguntas[idx];
     const respostas = await this.lerRespostas(partida.id, idx);
 
-    const nomePorId = new Map(partida.inscritos.map((i) => [i.alunoId, i.nome]));
+    const nomePorId = new Map(
+      partida.inscritos.map((i) => [i.alunoId, i.nome]),
+    );
     const placarMap = new Map<string, PlacarItem>(
       partida.placar.map((p) => [p.alunoId, { ...p }]),
     );
@@ -348,14 +463,28 @@ export class PartidaService {
     partidaId: string,
     idx: number,
   ): Promise<Array<{ alunoId: string; pontos: number }>> {
+    return (await this.lerTodasRespostas(partidaId))
+      .filter((r) => r.perguntaIndex === idx)
+      .map((r) => ({ alunoId: r.alunoId, pontos: r.pontos }));
+  }
+
+  /** Todas as respostas da partida (a query é só por partidaId). */
+  private async lerTodasRespostas(
+    partidaId: string,
+  ): Promise<
+    Array<{ alunoId: string; perguntaIndex: number; pontos: number }>
+  > {
     const snap = await this.firebase.firestore
       .collection('qlick_respostas')
       .where('partidaId', '==', partidaId)
       .get();
     return snap.docs
       .map((d) => d.data())
-      .filter((r) => r.perguntaIndex === idx)
-      .map((r) => ({ alunoId: r.alunoId as string, pontos: r.pontos as number }));
+      .map((r) => ({
+        alunoId: r.alunoId as string,
+        perguntaIndex: r.perguntaIndex as number,
+        pontos: r.pontos as number,
+      }));
   }
 
   private async contarRespostas(

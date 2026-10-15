@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 /** Constantes do motor da invasão. Fonte única dos números do jogo. */
 export const ISOLATEUS = {
   /** Barra de Esperança da vila. Zerou, a Ameaça venceu. */
@@ -22,8 +24,6 @@ export const ISOLATEUS = {
   /** Pontos por acerto + bônus máximo de rapidez (espelha o Qlick). */
   PONTOS_ACERTO: 1000,
   BONUS_RAPIDEZ: 500,
-  /** Bônus de "Vitória de Partida" para o lado vencedor (§7). */
-  BONUS_VITORIA: 1000,
 
   /** Mínimo de investigadores reais para iniciar (§2). */
   MIN_REAIS: 4,
@@ -114,6 +114,16 @@ export const ISOLATEUS = {
   RESGATE_VOTO_MS: 60_000,
   /** Esperança devolvida por um resgate concluído (teto 100). */
   BONUS_RESGATE: 10,
+  /**
+   * XP do ranking da turma que o falante perde por palavrão no debate ou no
+   * Sinal Interceptado (028 §1). A mesma régua do `WOR.PENALIDADE_XP`.
+   */
+  PENALIDADE_XP: 1000,
+  /**
+   * Acertos da Ameaça original desde o último Contágio (ou o início) para o
+   * Contágio voltar a aparecer entre os poderes (028 §3).
+   */
+  ACERTOS_PARA_CONTAGIO: 2,
 } as const;
 
 export type StatusIsolateus =
@@ -190,7 +200,8 @@ export interface MensagemDebate {
 
 /** O alerta global que abre a rodada. */
 export interface AlertaRodada {
-  tipo: 'SABOTAGEM' | 'ABDUCAO';
+  /** `INVASAO`: só uma Ameaça presa tentando fugir abriu a questão (028 §2). */
+  tipo: 'SABOTAGEM' | 'ABDUCAO' | 'INVASAO';
   texto: string;
 }
 
@@ -246,6 +257,8 @@ export type TipoAcontecimento =
   | 'BRILHO'
   /** O resgate pela Saúde: organizado, cancelado, fracassado ou concluído. */
   | 'RESGATE'
+  /** A invasão forçada da Ameaça presa: contida ou fuga (028 §2). */
+  | 'INVASAO'
   | 'VEREDITO'
   | 'FIM';
 
@@ -281,6 +294,12 @@ export class IsolateusMatchEntity {
   status: StatusIsolateus;
   criadaEm: string | null;
 
+  /**
+   * Desmarcado no lobby, a partida é casual: placar e log normais, sem crédito
+   * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
+   */
+  valeRanking?: boolean;
+
   /** Barra de Esperança (0..100). */
   esperanca: number;
   setores: Setor[];
@@ -314,6 +333,12 @@ export class IsolateusMatchEntity {
 
   /** Base do cronômetro no cliente (questão, debate ou votação). */
   faseIniciadaEm: string | null;
+
+  /**
+   * Quando o professor pausou a partida (ISO); `null`/ausente = rodando
+   * (028 §4). Pausada, só Retomar passa; os relógios das telas param.
+   */
+  pausadaEm?: string | null;
 
   questaoPublica: { enunciado: string; alternativas: string[] } | null;
   /** Só preenchido em `RESULTADO_RODADA` — nunca durante a questão. */
@@ -416,6 +441,12 @@ export class IsolateusMatchEntity {
 
   veredito: Veredito | null;
   rankingFinal: PlacarItem[];
+
+  /**
+   * De onde veio cada ponto (spec 027 §1). Só no encerramento: durante a
+   * partida, saber quem acertou cada noite ajudaria a deduzir papéis.
+   */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<IsolateusMatchEntity> = {}) {
     Object.assign(this, partial);

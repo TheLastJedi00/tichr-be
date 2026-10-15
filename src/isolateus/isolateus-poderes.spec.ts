@@ -106,6 +106,8 @@ describe('Isolateus — usar um poder', () => {
       { alunoId: 'a1', ganhoNaRodada: 0 },
       { alunoId: 'a2', ganhoNaRodada: 0 },
     ];
+    // O Contágio carregado (028 §3): a recarga tem suíte própria.
+    ctx.segredo.acertosDesdeContagio = ISOLATEUS.ACERTOS_PARA_CONTAGIO;
     return ctx;
   }
 
@@ -197,6 +199,7 @@ describe('Isolateus — usar um poder', () => {
 describe('Isolateus — o painel da Ameaça', () => {
   it('mostra o poder disponível e o que ela pode escolher', async () => {
     const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA' });
+    ctx.segredo.acertosDesdeContagio = ISOLATEUS.ACERTOS_PARA_CONTAGIO;
     ctx.segredo.poderes = [
       { alunoId: 'a1', ganhoNaRodada: 0 },
       { alunoId: 'a2', ganhoNaRodada: 0 },

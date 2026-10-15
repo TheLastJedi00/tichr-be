@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 export type StatusPartida =
   | 'LOBBY'
   | 'QUESTAO_ATIVA'
@@ -30,6 +32,11 @@ export class PartidaEntity {
   titulo: string;
 
   status: StatusPartida;
+  /**
+   * Desmarcado no lobby, a partida é casual: placar e log normais, sem crédito
+   * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
+   */
+  valeRanking?: boolean;
   /** ISO de quando a partida foi criada (lobby aberto). Filtra sessões velhas. */
   criadaEm?: string | null;
   /** Índice da pergunta corrente (0-based); -1 no lobby. */
@@ -38,6 +45,12 @@ export class PartidaEntity {
   duracaoSegundos: number;
   /** ISO de quando a pergunta corrente foi ativada (para o cronômetro). */
   perguntaIniciadaEm?: string | null;
+
+  /**
+   * Quando o professor pausou a partida (ISO); `null`/ausente = rodando
+   * (028 §4). Pausada, só Retomar passa; os relógios das telas param.
+   */
+  pausadaEm?: string | null;
 
   /** Visão pública da pergunta corrente (sem a resposta). */
   perguntaPublica?: { enunciado: string; alternativas: string[] } | null;
@@ -49,6 +62,8 @@ export class PartidaEntity {
   placar: PlacarItem[];
   rankingParcial?: PlacarItem[];
   rankingFinal?: Array<{ posicao: number } & PlacarItem>;
+  /** De onde veio cada ponto (spec 027 §1). Gravado só no encerramento. */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<PartidaEntity> = {}) {
     Object.assign(this, partial);

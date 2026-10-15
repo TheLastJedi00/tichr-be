@@ -4,6 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  creditoDe,
+  creditosDaPartida,
+  ItemLogPontos,
+  LogPontuacaoJogador,
+} from '../common/log-pontuacao';
+import { valeRanking } from '../common/vale-ranking';
+import {
+  assertNaoPausada,
+  assertPausavel,
+  empurrar,
+  tempoPausado,
+} from '../common/pausa';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
@@ -44,6 +57,16 @@ export class WorGameService {
   private async carregar(matchId: string): Promise<WorMatchEntity> {
     const match = await this.matches.buscar(matchId);
     if (!match) throw new NotFoundException('Partida não encontrada.');
+    return match;
+  }
+
+  /**
+   * A partida carregada para um COMANDO (de aluno ou do mestre): pausada,
+   * responde 409 (028 §4.2). As leituras usam `carregar` direto.
+   */
+  private async carregarParaComando(matchId: string): Promise<WorMatchEntity> {
+    const match = await this.carregar(matchId);
+    assertNaoPausada(match);
     return match;
   }
 
@@ -174,7 +197,7 @@ export class WorGameService {
     acao: VotoAcao,
     alvoEquipeId?: string,
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     this.assertEmAndamento(match);
     const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     if (team.isHorde) {
@@ -243,7 +266,7 @@ export class WorGameService {
     palpite: string,
     opcoes: { efeito?: EfeitoRisco; alvoEquipeId?: string } = {},
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     this.assertEmAndamento(match);
     const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     this.assertTurno(match, team);
@@ -259,6 +282,7 @@ export class WorGameService {
 
     const aluno = this.nomeMembro(team, alunoId);
     const patches: Record<string, Partial<WorTeamEntity>> = {};
+    const rodada = (match.resumoRodada?.seq ?? 0) + 1;
 
     if (acertou) {
       let card: LastGlobalAction;
@@ -281,8 +305,14 @@ export class WorGameService {
           hp: catapultaEm.hp,
           isHorde: catapultaEm.isHorde,
         };
-        team.pontos =
-          (team.pontos ?? 0) + this.pontos(match, dano * WOR.PONTOS_POR_DANO);
+        const ganho = this.pontos(match, dano * WOR.PONTOS_POR_DANO);
+        team.pontos = (team.pontos ?? 0) + ganho;
+        this.anotar(match, team, patches, {
+          rodada,
+          fonte: 'CATAPULTA',
+          descricao: `Rodada ${rodada}: ${aluno} disparou a Catapulta no castelo da ${catapultaEm.nome}, ${dano} de dano`,
+          pontos: ganho,
+        });
         card = this.montarCard(
           match,
           'CATAPULTA',
@@ -298,8 +328,14 @@ export class WorGameService {
         );
       }
       // Arriscar tudo e acertar rende pontos extras (desempate + ranking).
-      team.pontos = (team.pontos ?? 0) + this.pontos(match, WOR.BONUS_ARRISCAR);
-      patches[team.id] = { ...(patches[team.id] ?? {}), pontos: team.pontos };
+      const bonus = this.pontos(match, WOR.BONUS_ARRISCAR);
+      team.pontos = (team.pontos ?? 0) + bonus;
+      this.anotar(match, team, patches, {
+        rodada,
+        fonte: 'ARRISCAR',
+        descricao: `Rodada ${rodada}: ${aluno} arriscou a palavra inteira e acertou`,
+        pontos: bonus,
+      });
 
       const raiz: Partial<WorMatchEntity> = { acoesRodada: [] };
       this.fanOut(raiz, patches, teams, card);
@@ -509,12 +545,18 @@ export class WorGameService {
           alvo.aplicarDano(dano);
           patches[alvo.id] = { hp: alvo.hp, isHorde: alvo.isHorde };
           // O dano causado vira pontos da equipe atacante (desempate + ranking).
-          team.pontos =
-            (team.pontos ?? 0) + this.pontos(match, dano * WOR.PONTOS_POR_DANO);
-          patches[team.id] = {
-            ...(patches[team.id] ?? {}),
-            pontos: team.pontos,
-          };
+          const ganho = this.pontos(match, dano * WOR.PONTOS_POR_DANO);
+          team.pontos = (team.pontos ?? 0) + ganho;
+          const quem = acertadores
+            .map((a) => this.nomeMembro(team, a.alunoId))
+            .join(', ');
+          const n = acertadores.length;
+          this.anotar(match, team, patches, {
+            rodada: resumo.seq,
+            fonte: critico ? 'CRITICO' : 'DANO',
+            descricao: `Rodada ${resumo.seq}: a equipe acertou ${n} ${n === 1 ? 'letra' : 'letras'} (${quem}) e ${critico ? 'deu um ataque crítico no' : 'atacou o'} castelo da ${alvo.nome}, ${dano} de dano`,
+            pontos: ganho,
+          });
           resumo.acao = 'ATACAR';
           resumo.alvoEquipeId = alvo.id;
           resumo.alvoNome = alvo.nome;
@@ -522,8 +564,8 @@ export class WorGameService {
           resumo.critico = critico;
 
           // O ataque é da EQUIPE: o dano nasce da votação da rodada inteira, não
-          // de um aluno — narrar um nome só seria dar crédito a quem votou.
-          const n = acertadores.length;
+          // de um aluno — narrar um nome só seria dar crédito a quem votou. (O
+          // log de fim de partida lista quem acertou letra, não quem votou.)
           card = this.montarCard(
             match,
             'ATAQUE',
@@ -579,7 +621,7 @@ export class WorGameService {
     professorId: string,
     matchId: string,
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }
@@ -660,9 +702,63 @@ export class WorGameService {
     return lider;
   }
 
+  // ===== Pausa (028 §4) =====
+
+  private assertDono(match: WorMatchEntity, professorId: string): void {
+    if (match.professorId !== professorId) {
+      throw new ForbiddenException('Essa partida não é sua.');
+    }
+  }
+
+  /** O mestre pausa a batalha em andamento. Pausar de novo não muda nada. */
+  async pausar(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    this.assertDono(match, professorId);
+    assertPausavel(match.status);
+    if (!match.pausadaEm) {
+      await this.matches.atualizar(matchId, {
+        pausadaEm: new Date(Date.now()).toISOString(),
+      });
+    }
+    return this.view(matchId);
+  }
+
+  /**
+   * Retoma: o relógio da rodada é empurrado pelo tempo pausado, e o Action
+   * Card que estava em cartaz também (na raiz e nas equipes) — senão ele
+   * sumiria no meio, já que o cliente o tira de cena por `em + duracaoMs`.
+   */
+  async retomar(professorId: string, matchId: string): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    this.assertDono(match, professorId);
+    if (!match.pausadaEm) return this.view(matchId);
+
+    const pausa = tempoPausado(match.pausadaEm);
+    const raiz: Partial<WorMatchEntity> = {
+      pausadaEm: null,
+      rodadaIniciadaEm: empurrar(match.rodadaIniciadaEm, pausa),
+    };
+    const card = match.lastGlobalAction;
+    const patches: Record<string, Partial<WorTeamEntity>> = {};
+    if (
+      card &&
+      Date.parse(card.em) + card.duracaoMs > Date.parse(match.pausadaEm)
+    ) {
+      const emCartaz = { ...card, em: empurrar(card.em, pausa) };
+      this.fanOut(
+        raiz,
+        patches,
+        await this.matches.listarTeams(matchId),
+        emCartaz,
+      );
+    }
+    await this.matches.commitPartida(matchId, raiz, patches);
+    return this.view(matchId);
+  }
+
   /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
   async pularPalavra(professorId: string, matchId: string): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }
@@ -720,10 +816,18 @@ export class WorGameService {
     const teams = await this.matches.listarTeams(matchId);
 
     // Bônus de fim: terminar intacto rende pontos (reforça o desempate).
+    const rodada = (match.resumoRodada?.seq ?? 0) + 1;
     for (const t of teams) {
-      t.pontos =
-        (t.pontos ?? 0) + this.pontos(match, t.hp * WOR.BONUS_HP_FATOR);
-      await this.matches.atualizarTeam(matchId, t.id, { pontos: t.pontos });
+      const patches: Record<string, Partial<WorTeamEntity>> = {};
+      const bonus = this.pontos(match, t.hp * WOR.BONUS_HP_FATOR);
+      t.pontos = (t.pontos ?? 0) + bonus;
+      this.anotar(match, t, patches, {
+        rodada,
+        fonte: 'HP_FINAL',
+        descricao: `Fim da batalha: castelo de pé com ${t.hp} de HP`,
+        pontos: bonus,
+      });
+      await this.matches.atualizarTeam(matchId, t.id, patches[t.id]);
     }
 
     // Vencedor = maior HP; empate desempatado por pontos (reduz empates ~a zero).
@@ -731,27 +835,96 @@ export class WorGameService {
       (a, b) => b.hp - a.hp || (b.pontos ?? 0) - (a.pontos ?? 0),
     )[0];
 
+    // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick), exceto
+    // em partida casual.
+    const ganhos: Array<{ alunoId: string; pontos: number }> = [];
+    for (const t of teams) {
+      const ganho = this.ganhoDaEquipe(t, vencedor?.id);
+      if (ganho <= 0) continue;
+      for (const m of t.membros) {
+        ganhos.push({ alunoId: m.alunoId, pontos: ganho });
+      }
+    }
+    const creditos = vencedor ? creditosDaPartida(match, ganhos) : [];
+
     await this.matches.atualizar(matchId, {
       status: 'ENCERRADO',
       vencedorEquipeId: vencedor?.id ?? null,
       acoesRodada: [],
       rodadaIniciadaEm: null,
+      logPontuacao: this.montarLog(teams, vencedor?.id, creditos, rodada),
     });
     await this.refletirPlacar(matchId);
 
-    // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick).
-    if (match.turmaId && vencedor) {
-      const creditos: Array<{ alunoId: string; pontos: number }> = [];
-      for (const t of teams) {
-        const fator = t.id === vencedor.id ? 1 : 0.5;
-        const ganho = Math.round((t.pontos ?? 0) * WOR.XP_POR_PONTO * fator);
-        if (ganho <= 0) continue;
-        for (const m of t.membros) {
-          creditos.push({ alunoId: m.alunoId, pontos: ganho });
-        }
-      }
+    if (match.turmaId && vencedor && valeRanking(match)) {
       await this.xp.creditarPartida(match.turmaId, creditos, 'WOR');
     }
+  }
+
+  /**
+   * O log de cada aluno (spec 027 §1.3): os pontos são da equipe, então todo
+   * membro recebe os mesmos itens. A não campeã ganha o item do fator ×0,5,
+   * para a soma bater com o crédito real.
+   */
+  private montarLog(
+    teams: WorTeamEntity[],
+    vencedorId: string | undefined,
+    creditos: Array<{ alunoId: string; pontos: number }>,
+    rodada: number,
+  ): LogPontuacaoJogador[] {
+    return teams.flatMap((t) => {
+      const total = t.pontos ?? 0;
+      const corte = this.ganhoDaEquipe(t, vencedorId) - total;
+      const itens: ItemLogPontos[] = [...(t.logPontos ?? [])];
+      if (corte !== 0) {
+        itens.push({
+          rodada,
+          fonte: 'FATOR_COLOCACAO',
+          descricao: 'Equipe não campeã: ×0,5 no ranking',
+          pontos: corte,
+        });
+      }
+      return t.membros.map((m) => ({
+        alunoId: m.alunoId,
+        nome: m.nome,
+        totalPartida: total,
+        creditoRanking: creditoDe(creditos, m.alunoId),
+        itens,
+      }));
+    });
+  }
+
+  /**
+   * Registra no log da equipe o ponto que acabou de entrar em `team.pontos`,
+   * no mesmo patch (spec 027 §1.3). O multiplicador já está no valor e vai na
+   * descrição quando passa de 1x.
+   */
+  private anotar(
+    match: WorMatchEntity,
+    team: WorTeamEntity,
+    patches: Record<string, Partial<WorTeamEntity>>,
+    item: ItemLogPontos,
+  ): void {
+    const mult = match.multiplicador ?? 1;
+    if (item.pontos !== 0) {
+      team.logPontos = [
+        ...(team.logPontos ?? []),
+        mult > 1
+          ? { ...item, descricao: `${item.descricao} (×${mult})` }
+          : item,
+      ];
+    }
+    patches[team.id] = {
+      ...(patches[team.id] ?? {}),
+      pontos: team.pontos,
+      logPontos: team.logPontos ?? [],
+    };
+  }
+
+  /** Pontos da equipe → XP do ranking (campeã ×1, demais ×0,5). */
+  private ganhoDaEquipe(team: WorTeamEntity, vencedorId?: string): number {
+    const fator = team.id === vencedorId ? 1 : 0.5;
+    return Math.round((team.pontos ?? 0) * WOR.XP_POR_PONTO * fator);
   }
 
   /**

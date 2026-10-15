@@ -1,3 +1,5 @@
+import { ItemLogPontos } from '../../common/log-pontuacao';
+
 /**
  * A jogada do Alienígena na noite corrente (só o servidor conhece).
  *
@@ -138,6 +140,13 @@ export class IsolateusSegredoEntity {
    */
   noiteFechada?: number;
 
+  /**
+   * Questões que a Ameaça original acertou desde o último Contágio (ou o
+   * início), livre ou presa (028 §3). O Contágio só aparece com
+   * `ACERTOS_PARA_CONTAGIO`; usá-lo zera a conta. Ausente = 0.
+   */
+  acertosDesdeContagio?: number;
+
   /** Contágio escolhido, materializado no próximo fechamento da noite. */
   contagioPendente?: boolean;
 
@@ -150,8 +159,22 @@ export class IsolateusSegredoEntity {
    */
   resgateNoite?: { alunoId: string } | null;
 
+  /**
+   * Ameaças presas (alunoIds) que declararam a invasão nesta noite (028 §2).
+   * Decidida pela questão do dia e zerada na resolução dela. Fica no cofre: o
+   * alerta público é anônimo ("Algo tenta romper a Quarentena!").
+   */
+  invasoesNoite?: string[];
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
+
+  /**
+   * De onde veio cada ponto, por aluno (spec 027 §1.3). Fica no cofre: o log
+   * mostra quem acertou cada noite e ajudaria a deduzir papéis. Só vira
+   * público no encerramento, como `logPontuacao`.
+   */
+  logPontos?: Record<string, ItemLogPontos[]>;
 
   constructor(partial: Partial<IsolateusSegredoEntity> = {}) {
     Object.assign(this, partial);

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ProfessorModule } from '../professor/professor.module';
+import { InstituicaoModule } from '../instituicao/instituicao.module';
 import { AlunoRepository } from './repositories/aluno.repository';
 import { CargoRepository } from './repositories/cargo.repository';
 import { EquipeRepository } from './repositories/equipe.repository';
@@ -27,7 +28,7 @@ import { TurmaService } from './turma.service';
 import { XpService } from './xp.service';
 
 @Module({
-  imports: [ProfessorModule],
+  imports: [ProfessorModule, InstituicaoModule],
   controllers: [
     TurmaController,
     FeriasController,

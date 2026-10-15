@@ -156,8 +156,8 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(false);
     expect(partida.resumoRodada?.texto).toContain('foi abduzido');
     expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_ABDUCAO);
-    // A Ameaça pontua pelo erro da turma — nunca pela sabotagem, que é automática.
-    expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);
+    // O erro da turma não pontua a Ameaça: só o acerto pontua (spec 027 §2).
+    expect(segredo.pontos['a1']).toBeUndefined();
   });
 
   it('abdução às cegas em setor vazio dá o MESMO texto de repelida', async () => {
@@ -210,7 +210,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     expect(partida.reparoSetorId).toBeNull();
   });
 
-  it('a reconstrução: errar deixa o setor em ruínas e pontua a Ameaça', async () => {
+  it('a reconstrução: errar deixa o setor em ruínas e não pontua ninguém', async () => {
     const { service, partida, segredo } = cenario({ reais: 4 });
     segredo.acaoRodada = null;
     partida.setores.find((s) => s.id === 'energia')!.intacto = false;
@@ -222,7 +222,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     expect(partida.setores.find((s) => s.id === 'energia')!.intacto).toBe(false);
     expect(partida.esperanca).toBe(85); // fracassar nao custa Esperanca extra
     expect(partida.resumoRodada?.texto).toContain('fracassou');
-    expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);
+    expect(segredo.pontos).toEqual({});
   });
 
   it('abdução e reparo na mesma noite: UMA questão resolve os dois', async () => {
@@ -402,18 +402,78 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
     await service.proxima('prof', 'p1'); // esgota → Vila vence (tudo intacto)
 
     expect(partida.veredito?.lado).toBe('VILA');
-    // Aldeões vencedores levam o bônus; o Alien (a1) não.
+    // Vencer não dá bônus: o placar é só o dos acertos (spec 027 §2).
     const a2 = partida.rankingFinal.find((p) => p.alunoId === 'a2')!;
-    const a1 = partida.rankingFinal.find((p) => p.alunoId === 'a1')!;
-    expect(a2.pontos).toBe(1000 + ISOLATEUS.BONUS_VITORIA);
-    expect(a1.pontos).toBe(0);
+    const a3 = partida.rankingFinal.find((p) => p.alunoId === 'a3')!;
+    expect(a2.pontos).toBe(1000);
+    expect(a3.pontos).toBe(0);
     expect(a2.posicao).toBe(1);
 
     expect(creditar).toHaveBeenCalledWith(
       't1',
-      expect.arrayContaining([{ alunoId: 'a2', pontos: 2000 }]),
+      expect.arrayContaining([{ alunoId: 'a2', pontos: 1000 }]),
       'ISOLATEUS',
     );
+  });
+
+  it('log de pontuação: um item por noite acertada, publicado só no fim', async () => {
+    const { service, partida, segredo, creditar } = cenario({ reais: 4 });
+    partida.rodada = 1; // segunda noite
+    await todosRespondem(service, 4, 1, { a4: 0 }); // a4 erra
+
+    // Durante a partida, o log fica no cofre.
+    expect(partida.logPontuacao).toBeUndefined();
+    expect(JSON.stringify(partida)).not.toContain('Noite 2');
+    expect(segredo.logPontos!['a2'][0]).toMatchObject({
+      rodada: 2,
+      fonte: 'ACERTO',
+    });
+    expect(segredo.logPontos!['a4']).toBeUndefined();
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    const log = partida.logPontuacao!;
+    expect(log).toHaveLength(4); // só reais, NPC não entra
+    const creditos = creditar.mock.calls[0][1] as Array<{
+      alunoId: string;
+      pontos: number;
+    }>;
+    for (const l of log) {
+      const ranking = partida.rankingFinal.find((r) => r.alunoId === l.alunoId)!;
+      expect(l.itens.reduce((s, i) => s + i.pontos, 0)).toBe(l.totalPartida);
+      expect(l.totalPartida).toBe(ranking.pontos);
+      const credito = creditos.find((c) => c.alunoId === l.alunoId)!.pontos;
+      expect(l.creditoRanking).toBe(Math.max(0, credito));
+    }
+    const a1 = log.find((l) => l.alunoId === 'a1')!; // a Ameaça
+    expect(a1.itens[0].descricao).toMatch(/^Noite 2: acertou \(\+1\.000\)/);
+    expect(log.find((l) => l.alunoId === 'a4')!.itens).toEqual([]);
+  });
+
+  it('log de pontuação: partida casual zera o crédito, não o log', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.valeRanking = false;
+    await todosRespondem(service, 4, 1);
+    await service.encerrarPeloProfessor('prof', 'p1');
+    const a2 = partida.logPontuacao!.find((l) => l.alunoId === 'a2')!;
+    expect(a2.totalPartida).toBeGreaterThan(0);
+    expect(a2.creditoRanking).toBe(0);
+  });
+
+  it('Ameaça e Aldeão que acertam no mesmo instante pontuam igual', async () => {
+    const { service, segredo } = cenario({ reais: 4 });
+    const agora = Date.now();
+    jest.spyOn(Date, 'now').mockReturnValue(agora);
+    try {
+      await service.responder('a1', 'p1', 1); // a Ameaça
+      await service.responder('a2', 'p1', 1); // um Aldeão
+    } finally {
+      jest.restoreAllMocks();
+    }
+    expect(segredo.pontos['a1']).toBeGreaterThanOrEqual(
+      ISOLATEUS.PONTOS_ACERTO,
+    );
+    expect(segredo.pontos['a1']).toBe(segredo.pontos['a2']);
   });
 
   it('o placar só existe no fim — durante o jogo ele não denuncia quem é real', async () => {
@@ -457,6 +517,18 @@ describe('Isolateus — o professor encerra no meio do jogo', () => {
 
     await service.encerrarPeloProfessor('prof', 'p1');
     expect(partida.veredito?.lado).toBe('AMEACA');
+  });
+
+  it('partida casual: placar publicado, mas nada creditado no ranking', async () => {
+    const { service, partida, creditar } = cenario({ reais: 4 });
+    partida.valeRanking = false;
+    await todosRespondem(service, 4, 1);
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    expect(partida.status).toBe('ENCERRADO');
+    expect(partida.rankingFinal.some((p) => p.pontos > 0)).toBe(true);
+    expect(creditar).not.toHaveBeenCalled();
   });
 
   it('encerrar duas vezes nao dobra o XP', async () => {

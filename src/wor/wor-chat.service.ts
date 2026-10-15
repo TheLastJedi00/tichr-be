@@ -6,6 +6,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { assertNaoPausada } from '../common/pausa';
 import { ModeracaoService } from '../moderacao/moderacao.service';
 import { WorChatRepository } from './wor-chat.repository';
 import { WorGameService } from './wor-game.service';
@@ -58,6 +59,8 @@ export class WorChatService {
     texto: string,
   ): Promise<MensagemChat> {
     const { match, team, teams } = await this.contexto(matchId, alunoId);
+    // Pausada, nem o chat passa (028 §4.2).
+    assertNaoPausada(match);
     if (match.status !== 'EM_ANDAMENTO') {
       throw new BadRequestException(
         'O chat só funciona com a batalha em andamento.',

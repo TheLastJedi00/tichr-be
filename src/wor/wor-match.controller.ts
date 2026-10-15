@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
 import { DefinirMultiplicadorDto } from './dto/definir-multiplicador.dto';
 import { WorGameService } from './wor-game.service';
@@ -42,6 +43,16 @@ export class WorMatchController {
     return this.service.definirMultiplicador(uid, id, dto.multiplicador);
   }
 
+  /** Lobby: a partida vale para o ranking da turma ou é casual. */
+  @Post('matches/:id/vale-ranking')
+  valeRanking(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirValeRankingDto,
+  ) {
+    return this.service.definirValeRanking(uid, id, dto.valeRanking);
+  }
+
   @Post('matches/:id/iniciar')
   iniciar(@ProfessorId() uid: string, @Param('id') id: string) {
     return this.service.iniciar(uid, id);
@@ -51,6 +62,18 @@ export class WorMatchController {
   @Post('matches/:id/pular')
   pular(@ProfessorId() uid: string, @Param('id') id: string) {
     return this.game.pularPalavra(uid, id);
+  }
+
+  /** Pausa a batalha em andamento: todo comando responde 409 até retomar. */
+  @Post('matches/:id/pausar')
+  pausar(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.game.pausar(uid, id);
+  }
+
+  /** Retoma: a rodada volta com o tempo que faltava. */
+  @Post('matches/:id/retomar')
+  retomar(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.game.retomar(uid, id);
   }
 
   /** Cronômetro: encerra a rodada por tempo esgotado (projetor dispara ao zerar). */

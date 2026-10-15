@@ -110,6 +110,18 @@ export class AlunoIsolateusController {
     return this.game.usarPoder(aluno.alunoId, id, dto);
   }
 
+  /**
+   * A invasão forçada (028 §2): a Ameaça presa declara, de noite, que vai
+   * romper a Quarentena. A questão do dia decide a fuga.
+   */
+  @Post(':id/invasao')
+  invasao(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+  ) {
+    return this.game.declararInvasao(aluno.alunoId, id);
+  }
+
   /** A Defesa: o voto na solução do problema. */
   @Post(':id/resposta')
   responder(

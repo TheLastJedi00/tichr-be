@@ -23,6 +23,7 @@ describe('Hall da Fama — encerramento e read-only', () => {
         {} as never,
         {} as never,
         {} as never,
+        {} as never,
       );
 
       const res = await service.encerrar('p1', 't1');

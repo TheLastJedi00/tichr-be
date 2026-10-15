@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { PularFaseDto } from './dto/pular-fase.dto';
 import {
   CriarPartidaIsolateusDto,
@@ -38,6 +39,16 @@ export class IsolateusMatchController {
     @Param('alunoId') alunoId: string,
   ) {
     return this.matches.removerInscrito(professorId, id, alunoId);
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual. */
+  @Post('matches/:id/vale-ranking')
+  valeRanking(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirValeRankingDto,
+  ) {
+    return this.matches.definirValeRanking(professorId, id, dto.valeRanking);
   }
 
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */
@@ -82,6 +93,18 @@ export class IsolateusMatchController {
   @Post('matches/:id/delirio')
   delirio(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.game.delirioDoProfessor(professorId, id);
+  }
+
+  /** Pausa a investigação em andamento: todo comando responde 409 até retomar. */
+  @Post('matches/:id/pausar')
+  pausar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.pausar(professorId, id);
+  }
+
+  /** Retoma: cada relógio volta com o tempo que faltava. */
+  @Post('matches/:id/retomar')
+  retomar(@ProfessorId() professorId: string, @Param('id') id: string) {
+    return this.game.retomar(professorId, id);
   }
 
   /** A próxima noite. Obsoleta: o telão usa `pular-fase`. */

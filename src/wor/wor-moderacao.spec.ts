@@ -91,6 +91,22 @@ describe('Tichr Wor — penalidade de moderação (Task 4)', () => {
     );
   });
 
+  it('em partida casual a penalidade continua debitando o ranking', async () => {
+    const teams = [
+      time('e1', 'Dragões', ['ana']),
+      time('e2', 'Grifos', ['bia']),
+    ];
+    const { service, match, penalizar } = cenario(teams);
+    match.valeRanking = false;
+    await service.penalizarModeracao('m1', 'ana');
+    expect(penalizar).toHaveBeenCalledWith(
+      't1',
+      'ana',
+      WOR.PENALIDADE_XP,
+      'WOR_MODERACAO',
+    );
+  });
+
   it('o alerta com o nome do aluno vai ao telão e à equipe infratora — não às rivais', async () => {
     const teams = [
       time('e1', 'Dragões', ['ana']),

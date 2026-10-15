@@ -122,9 +122,9 @@ describe('Isolateus — várias Ameaças: a questão', () => {
     expect(partida.habitantes.find((h) => h.id === 'h4')!.vivo).toBe(false);
     expect(partida.esperanca).toBe(100 - 2 * ISOLATEUS.DANO_ABDUCAO);
     expect(partida.questaoIndex).toBe(1); // uma questão só
-    // As duas Ameaças pontuam pelo erro da vila.
-    expect(segredo.pontos['a1']).toBe(ISOLATEUS.PONTOS_ACERTO);
-    expect(segredo.pontos['a2']).toBe(ISOLATEUS.PONTOS_ACERTO);
+    // O erro da vila não pontua as Ameaças: só o acerto pontua (spec 027 §2).
+    expect(segredo.pontos['a1']).toBeUndefined();
+    expect(segredo.pontos['a2']).toBeUndefined();
   });
 
   it('duas abduções: acertar repele as duas, com UM card de repelida', async () => {
@@ -199,16 +199,17 @@ describe('Isolateus — várias Ameaças: a Quarentena', () => {
     expect(ctx.partida.veredito?.lado).toBe('VILA');
   });
 
-  it('vitória da Ameaça credita o bônus a TODAS as Ameaças', async () => {
+  it('vitória da Ameaça não dá bônus: o placar é só o dos acertos', async () => {
     const ctx = vilaComAmeacas({ reais: 5 });
+    ctx.segredo.pontos = { a2: 1200, a3: 1000 };
     ctx.partida.esperanca = ISOLATEUS.DANO_INOCENTE;
     await prender(ctx, 'h3', ['a1', 'a2', 'a3', 'a4', 'a5']); // inocente
 
     expect(ctx.partida.veredito?.lado).toBe('AMEACA');
     const pts = (a: string) =>
       ctx.partida.rankingFinal.find((p) => p.alunoId === a)!.pontos;
-    expect(pts('a1')).toBe(ISOLATEUS.BONUS_VITORIA);
-    expect(pts('a2')).toBe(ISOLATEUS.BONUS_VITORIA);
-    expect(pts('a3')).toBe(0);
+    expect(pts('a1')).toBe(0);
+    expect(pts('a2')).toBe(1200);
+    expect(pts('a3')).toBe(1000);
   });
 });

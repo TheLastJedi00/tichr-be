@@ -29,6 +29,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
   - [Painel Administrativo e feedback](#painel-administrativo-backoffice-e-cupons)
+- [Log de pontuação e partida casual](#log-de-pontuação-e-partida-casual-spec-027-todos-os-jogos)
 - [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
 - [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
 
@@ -361,7 +362,7 @@ Registro (event sourcing) de cada distribuição de pontos.
 |---|---|---|
 | `id` / `alunoId` / `turmaId` | string | |
 | `pontos` | number | delta aplicado (pode ser negativo) |
-| `motivo` | string? | `BASE` (aula concluída), `QLICK` (partida) ou livre (pontuação manual) |
+| `motivo` | string? | `BASE` (aula concluída), `QLICK` / `WOR` / `ISOLATEUS` (partida; nada em partida casual), `WOR_MODERACAO` (penalidade) ou livre (pontuação manual) |
 | `data` | string | ISO datetime |
 
 ### `qlicks`
@@ -548,6 +549,11 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 | `POST` | `/turmas/:id/encerrar` | — | `TurmaEntity` — encerra a turma (**somente-leitura**; sai do pool de PINs e vai para o Hall da Fama) |
 | `PUT` | `/turmas/:id` | `UpdateTurmaDto` | `{ turma, sessoes }` — **reprojeta**; aceita `encerradaManualmente` |
 
+**Turma × instituição (spec 027):** turma **livre ou regular** pode nascer (ou ser movida) ligada
+a uma instituição via `instituicaoId`. Ela precisa ser do professor: senão **404
+`INSTITUICAO_NAO_ENCONTRADA`** (no `POST` e no `PUT` que troca a instituição). `instituicaoId`
+vazio = sem instituição.
+
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
 `totalAulas?` (obrigatório se módulo), `cor?` (`#RRGGBB`), `disciplina?`,
 `horaInicio?`/`horaFim?` (`HH:mm`), a **config de pontuação** `pontuacaoAtiva?`,
@@ -657,10 +663,13 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 | `PUT` | `/qlicks/:id/turmas` | `{ turmaIds: string[] }` | atribui (substitui) as turmas do Qlick — relação **N:N** |
 | `POST` | `/qlicks/:qlickId/partida` | `{ turmaId? }` | `PartidaEntity` em `LOBBY` — a partida **escolhe a turma** (N:N); 400 `TURMA_NAO_ATRIBUIDA`/`TURMA_ENCERRADA` |
 | `GET` | `/partidas/:id` | — | `PartidaEntity` (dona do professor) |
+| `POST` | `/partidas/:id/vale-ranking` | `{ valeRanking: boolean }` | **só no `LOBBY`** (400 `PARTIDA_INICIADA`): desmarcado, a partida é **casual** |
 | `POST` | `/partidas/:id/iniciar` | — | congela inscritos, ativa a pergunta 1 (400 se sem inscritos) |
 | `POST` | `/partidas/:id/apurar` | — | revela a resposta e o ranking da rodada |
 | `POST` | `/partidas/:id/proxima` | — | avança (400 se ainda não apurou ou se era a última) |
-| `POST` | `/partidas/:id/encerrar` | — | monta o pódio e **credita o XP** (400 se já encerrada) |
+| `POST` | `/partidas/:id/pausar` | — | **pausa** (fora de `LOBBY`/`ENCERRADO`, senão 400 `PARTIDA_NAO_PAUSAVEL`; idempotente). Ver *Pausa da partida* |
+| `POST` | `/partidas/:id/retomar` | — | retoma, empurrando `perguntaIniciadaEm` pelo tempo pausado |
+| `POST` | `/partidas/:id/encerrar` | — | monta o pódio e o `logPontuacao` e **credita o XP** (exceto casual; 400 se já encerrada) |
 
 ### Tichr Qlick (aluno — `@Roles('STUDENT')`)
 | Método | Rota | Corpo | Resposta |
@@ -1021,6 +1030,62 @@ abre confiando. O que é gravado, esse sim, não é sanitizado: o relato vale pe
 
 ---
 
+## Log de pontuação e partida casual (spec 027, todos os jogos)
+
+**Log de pontuação.** No encerramento, Qlick (`qlick_partidas`), Wor (`matches`) e Isolateus
+(`isolateus_partidas`) gravam, no **mesmo commit** do `ENCERRADO`, o campo público
+`logPontuacao: LogPontuacaoJogador[]` (tipos em `src/common/log-pontuacao.ts`):
+
+| Campo | Observação |
+|---|---|
+| `alunoId` / `nome` | o `nome` é o do ranking final (codinome no Isolateus) |
+| `totalPartida` | pontos de jogo = `rankingFinal[i].pontos` (no Wor, os pontos da equipe) |
+| `creditoRanking` | XP que de fato entrou no `xp_logs` (0 se casual ou sem turma) |
+| `itens[]` | `{ rodada, fonte, descricao, pontos }`, `rodada` 1-based (pergunta, rodada ou noite) |
+
+- **Fontes:** Qlick e Isolateus `ACERTO` (base + rapidez na descrição); Wor `DANO`, `CRITICO`,
+  `CATAPULTA`, `ARRISCAR` (com quem acertou letra/arriscou e o multiplicador quando > 1x),
+  `HP_FINAL` e `FATOR_COLOCACAO` (negativo, a metade cortada da equipe não campeã: a soma dos
+  itens bate com o crédito).
+- **Onde nasce:** Qlick deriva das `qlick_respostas` apuradas; Isolateus acumula no cofre
+  (`logPontos`, nunca público antes do fim: revelaria quem acertou cada noite); Wor acumula em
+  `matches/{id}/teams/{teamId}.logPontos` no mesmo patch de `pontos`.
+- `creditosDaPartida()` é a fonte única do crédito **e** do `creditoRanking`.
+- A penalidade de moderação do Wor (`WOR_MODERACAO`) é debitada na hora e **não** entra no log.
+- Partidas encerradas antes do deploy não têm o campo.
+
+**Partida casual.** Campo público `valeRanking` (ausente = `true`) nas três partidas, definido
+no lobby pelas rotas `.../vale-ranking` (Qlick `POST /partidas/:id/vale-ranking`, Wor e
+Isolateus `POST /<jogo>/matches/:id/vale-ranking`), body `{ valeRanking: boolean }`, só no
+`LOBBY` (400 `PARTIDA_INICIADA`). Com `false`, o encerramento **não chama**
+`XpService.creditarPartida`: placar e log saem normais. A penalidade de moderação do Wor
+continua debitando.
+
+## Pausa da partida (spec 028, todos os jogos)
+
+O professor pausa qualquer partida **em andamento** (fora de `LOBBY` e `ENCERRADO`; senão 400
+`PARTIDA_NAO_PAUSAVEL`). Campo público novo `pausadaEm: string | null` (ISO; ausente = rodando)
+em `qlick_partidas`, `matches` e `isolateus_partidas`. Helper comum em `src/common/pausa.ts`.
+
+| Jogo | Pausar | Retomar | Marcos empurrados ao retomar |
+|---|---|---|---|
+| Qlick | `POST /partidas/:id/pausar` | `POST /partidas/:id/retomar` | `perguntaIniciadaEm` |
+| Wor | `POST /wor/matches/:id/pausar` | `POST /wor/matches/:id/retomar` | `rodadaIniciadaEm` e o `em` do `lastGlobalAction` ainda em cartaz (raiz + equipes) |
+| Isolateus | `POST /isolateus/matches/:id/pausar` | `POST /isolateus/matches/:id/retomar` | `faseIniciadaEm` e os horários da `agendaNpc` do cofre (numa transação) |
+
+- Só o professor dono (404 no Qlick e no Isolateus, 403 no Wor). Pausar duas vezes e retomar
+  sem pausa não mudam nada.
+- **Retomar devolve o tempo que faltava:** o servidor empurra os marcos pelo intervalo pausado
+  (`agora - pausadaEm`) no mesmo commit em que zera `pausadaEm`. Nenhuma fase fecha por ter
+  ficado pausada, e o bônus de rapidez (Qlick e Isolateus) não conta o tempo pausado.
+- **Pausada, todo comando responde 409 `PARTIDA_PAUSADA`**, de aluno ou de professor, exceto
+  Retomar: respostas, letras, arriscar, chat do Wor, mover, ação da Ameaça, poder, invasão,
+  debate, sinal, votos, pular-fase, delírio, apurar, próxima, `/tempo` (o pulso) e encerrar.
+  Para encerrar, retoma-se antes. Leituras (`GET` da partida, painel) seguem valendo.
+- A checagem fica num ponto por jogo: Qlick nos comandos do `PartidaService`; Wor no
+  `carregarParaComando` (+ `WorChatService.enviar`); Isolateus no `carregarParaComando` de
+  toda rota de comando e dentro das transações do `mover` e do pulso.
+
 ## Tichr Wor (guerra de castelos, PvP em tempo real)
 
 Releitura competitiva da forca: equipes decifram palavras defendendo o **HP** de
@@ -1071,8 +1136,11 @@ seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
 | `GET` | `/wor/matches/:id` | estado (raiz + times) |
 | `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
 | `POST` | `/wor/matches/:id/multiplicador` `{ multiplicador }` | **só no lobby**: quanto valem os pontos da partida, inteiro de **1 a 10** (400 fora da faixa ou depois do início; 403 se a partida não é do professor). Público em `multiplicador` (ausente = 1) |
+| `POST` | `/wor/matches/:id/vale-ranking` `{ valeRanking }` | **só no lobby** (400 `PARTIDA_INICIADA`; 403 se a partida não é do professor): desmarcado, a partida é **casual** |
 | `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
 | `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
+| `POST` | `/wor/matches/:id/pausar` | **pausa** a batalha em andamento (400 `PARTIDA_NAO_PAUSAVEL` no lobby/encerrada; 403 se não é do professor; idempotente) |
+| `POST` | `/wor/matches/:id/retomar` | retoma, empurrando `rodadaIniciadaEm` e o `em` do Action Card em cartaz (raiz e equipes) |
 | `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo) |
 
 ### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick)
@@ -1218,7 +1286,10 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`,
   **`agendaNpc[]`** (`{ habitanteId, para | null, em }`, os avisos de saída dos NPCs da noite;
   ausente = partida anterior à 026), **`delirioNaNoite`**, **`ultimosMover[]`** (`{ alunoId, em }`,
-  rate limit do `mover`) e **`noiteFechada`** (a última `rodada` cujo fechamento foi reivindicado).
+  rate limit do `mover`), **`noiteFechada`** (a última `rodada` cujo fechamento foi reivindicado),
+  **`acertosDesdeContagio`** (acertos da original desde o último Contágio; ausente = 0) e
+  **`invasoesNoite[]`** (alunoIds das Ameaças presas que declararam a invasão; zerado na resolução
+  da questão).
   Partidas antigas com o campo único `acaoRodada` são lidas por `acoesDaNoite()`, e as sem
   `ameacas` por `ameacasIds()` (= a original).
   > **Listas, não mapas:** o cofre é gravado com `set(..., { merge: true })`, e gravar um mapa
@@ -1263,6 +1334,9 @@ abdução ou reparo; senão o dia vai direto ao card.
 ### Endpoints — Partida (professor / telão)
 - `POST /isolateus/jogos/:jogoId/partida` — cria no `LOBBY`.
 - `GET /isolateus/matches/:id`
+- `POST /isolateus/matches/:id/vale-ranking` `{ valeRanking: boolean }` — **só no `LOBBY`**
+  (400 `PARTIDA_INICIADA`): desmarcado, a partida é **casual** (ver *Log de pontuação e partida
+  casual*).
 - `POST /isolateus/matches/:id/remover/:alunoId` — tira do lobby quem entrou por engano.
   **Só no `LOBBY`.** (Não há mais vetar/renomear: ninguém digita nome.)
 - `POST /isolateus/matches/:id/iniciar` `{ debateHabilitado? }` — **o Despertar**: sorteia os
@@ -1285,6 +1359,8 @@ abdução ou reparo; senão o dia vai direto ao card.
   mesmo texto anônimo no Diário. Remapeia também posições da noite, votos pendentes
   (`remapearVotos`), convocador, bloqueio e resultado do resgate. Não consome o Delírio
   pendente de uma Ameaça.
+- `POST /isolateus/matches/:id/pausar` · `POST /isolateus/matches/:id/retomar` — a pausa (ver
+  *Pausa da partida*). Retomar empurra `faseIniciadaEm` e a `agendaNpc` do cofre.
 - `POST /isolateus/matches/:id/proxima` — **obsoleta** (o telão usa `pular-fase`); mantida para
   clientes em cache. Só na janela de decisão.
 - `POST /isolateus/matches/:id/encerrar` — encerra a investigação **no meio do jogo** (o sinal
@@ -1306,7 +1382,9 @@ abdução ou reparo; senão o dia vai direto ao card.
   `habitanteId` e o **`setorId` atual** (durante a noite, o destino guardado no cofre). **Só para a
   Ameaça**: `aliados[]` (codinomes das outras Ameaças livres), `poder` (as opções do poder ganho, ou
   `null`), `controle` e a `fileira` **ao vivo** do setor de onde ela age. **Não traz mais o
-  gabarito nem a lista de NPCs.** É também o canal do Contágio e do Delírio: o celular faz
+  gabarito nem a lista de NPCs.** A original recebe também `contagioAcertos: { atual, necessario }`
+  (a recarga do Contágio) e a Ameaça **presa** recebe `invasao: { disponivel, declarada }`. É
+  também o canal do Contágio e do Delírio: o celular faz
   **polling** daqui — nada disso passa pelo doc público.
 - `POST /aluno/isolateus/:id/mover` `{ setorId }` — anda **um** setor pelas estradas, contado de
   onde a noite começou (trocar de ideia vale, encadear dois passos não; voltar à origem desfaz).
@@ -1329,10 +1407,19 @@ abdução ou reparo; senão o dia vai direto ao card.
   sufixo `_resgate` e `tipo: 'RESGATE'` (a apuração da Quarentena ignora esses docs).
 - `POST /aluno/isolateus/:id/poder` `{ poder: 'CONTROLE' | 'CONTAGIO' | 'DELIRIO', alvoId? }` —
   gasta o Poder Alienígena. **Não escreve nada no doc público**; devolve o painel. 403 se não for
-  Ameaça livre; 400 `SEM_PODER`, `SO_ORIGINAL` (Contágio por contagiada), `SEM_ALVO`, ou alvo
+  Ameaça livre; 400 `SEM_PODER`, `SO_ORIGINAL` (Contágio por contagiada), `CONTAGIO_RECARREGANDO` (menos de
+  2 acertos desde o último Contágio), `SEM_ALVO`, ou alvo
   inválido no Controle.
+- `POST /aluno/isolateus/:id/invasao` — **invasão forçada** (spec 028): a Ameaça **presa** declara,
+  de noite, que vai romper a Quarentena. Grava `invasoesNoite` no cofre (nada no doc público);
+  repetir é idempotente. Não entra em `confirmacoesNoite` (o preso não é esperado para fechar a
+  noite). Aldeão: 403; Ameaça livre: 400 `NAO_PRESA`; fora da noite: 400.
 - `POST /aluno/isolateus/:id/resposta` — a questão. **Abduzidos e presos continuam pontuando.**
 - `POST /aluno/isolateus/:id/sinal` · `/quarentena` · `/debate` · `/pular-debate` · `/suspeito` —
+  `/sinal` e `/debate` passam pela **moderação** (`ModeracaoService`, a mesma do Wor): palavrão →
+  **422 `MENSAGEM_BLOQUEADA`**, nada é gravado e o falante perde **1000 XP**
+  (`XpService.penalizarJogo`, motivo `ISOLATEUS_MODERACAO`, também em partida casual; sem turma
+  não há débito). A penalidade é **silenciosa**: sem card, Diário ou Esperança.
   `/quarentena` exige estar **vivo, no Setor de Comunicação e com ele de pé** e não estar
   bloqueado (403 `CONVOCADOR_BLOQUEADO`). **Não há mais
   exceção para o professor.** A rota `/rumor` (rumor forjado) **foi removida**.
@@ -1422,15 +1509,31 @@ sob nome de NPC, e o tipo `FORJADO` era público) e as falas automáticas do deb
 | Poder | Quem | Efeito |
 |---|---|---|
 | **Controle Mental** | qualquer Ameaça | na rodada do controle (a noite escolhida e o dia dela), as jogadas partem do setor do controlado (real ou NPC), que não recebe aviso. Preso na Quarentena, conta como inocente. |
-| **Contágio** | só a original | no amanhecer, um aldeão real livre **sorteado pelo servidor** entra em `ameacas` (jogada própria toda noite, conhece as aliadas pelo painel) e a Esperança cai `DANO_CONTAGIO` (10), no mesmo commit da sabotagem, **sem card nem Diário**. Original presa antes do amanhecer = contágio cancelado. |
+| **Contágio** | só a original, a cada **2 acertos** dela | no amanhecer, um aldeão real livre **sorteado pelo servidor** entra em `ameacas` (jogada própria toda noite, conhece as aliadas pelo painel) e a Esperança cai `DANO_CONTAGIO` (10), no mesmo commit da sabotagem, **sem card nem Diário**. Original presa antes do amanhecer = contágio cancelado. |
 | **Delírio Coletivo** | qualquer Ameaça | no amanhecer, todos trocam de codinome entre si (permutação sem ponto fixo) e **os `habitanteId` são regerados** (vínculos, controles e jogadas remapeados), no mesmo commit das posições. O Diário registra `DELIRIO`, sem autor. Substitui a antiga Metamorfose, que só renomeando a Ameaça a denunciaria. |
+
+**Recarga do Contágio (spec 028):** `acertosDesdeContagio` soma 1 a cada questão que a original
+**acerta** (na resolução da rodada, livre **ou presa**) e zera ao usar o Contágio. O Contágio só
+aparece entre os poderes com `ACERTOS_PARA_CONTAGIO` (2), inclusive o primeiro da partida. Os
+outros poderes não mudam.
+
+**Invasão forçada (spec 028):** com mais de uma Ameaça (depois de um Contágio), a presa declara a
+invasão de noite (`/invasao`). No amanhecer ela é **disputa** como abdução, reparo e resgate:
+sozinha abre a questão (alerta `tipo: 'INVASAO'`), e com outra disputa a mesma questão decide
+tudo; o alerta ganha a linha anônima *"Algo tenta romper a Quarentena!"*. O avanço rápido da
+questão também espera a resposta de quem tentou fugir. Na resolução, **depois** de abdução,
+reparo e resgate (os poderes saem antes da fuga): errou → contida; acertou e a maioria das
+respostas dos aldeões reais na vila acertou (o critério do resgate) → contida; senão → **fuga**
+(`preso = false`, `vivo = true`, setor sorteado entre os 6). Card/Diário `INVASAO`: fuga
+*"{codinome} rompeu a Quarentena e voltou à vila!"*; contida, um texto só para os dois casos
+(*"A Quarentena resistiu: a vila conteve a invasão."*). Resgate e fuga usam o mesmo critério e
+são excludentes na mesma questão.
 
 **Várias Ameaças:** a noite só fecha cedo com a jogada de **todas** as livres (a carência vale
 enquanto faltar qualquer uma); cada sabotagem derruba seu setor; várias abduções continuam
 resolvidas por **uma** questão (um acerto repele todas, com um card só; a sorte às cegas nunca
-cai numa Ameaça); cada Ameaça livre pontua pelo erro da vila; prender uma, restando outra, mantém
-a partida (*"…Mas a invasão não acabou…"*, sem dizer quantas restam); a Vila vence quando não há
-Ameaça livre; a vitória da Ameaça credita todas.
+cai numa Ameaça); prender uma, restando outra, mantém a partida (*"…Mas a invasão não
+acabou…"*, sem dizer quantas restam); a Vila vence quando não há Ameaça livre.
 
 ### Quem convoca, o brilho e o resgate (spec 025)
 
@@ -1498,10 +1601,14 @@ veredito que não encerra a partida, a janela de decisão **reabre com relógio*
 população **ou** destruiu mais de 3 setores); só então a Vila. Sem critério batido, vence a
 Vila por resistência. O veredito carrega o **motivo técnico** exibido no card.
 
-**Economia de XP:** acerto **1000** + bônus de rapidez até **500**; **erro da turma** (defesa
-ou Perícia) credita **1000 à Ameaça** — a sabotagem em si não pontua, porque sendo automática
-seria ponto de graça toda noite; o lado vencedor leva **+1000**. Os pontos ficam no cofre e
-viram XP **1:1** no encerramento (`XpService.creditarPartida`, motivo `ISOLATEUS`).
+**Constantes da spec 028:** `PENALIDADE_XP` = 1000 (palavrão no debate ou no sinal) e
+`ACERTOS_PARA_CONTAGIO` = 2.
+
+**Economia de XP (spec 027):** só a **resposta certa** pontua: **1000** + bônus de rapidez até
+**500**, igual para Aldeões e Ameaças (inclusive na tela hackeada de quem saiu da vila). **Não
+há** bônus de vitória nem crédito à Ameaça pelo erro da vila (`ISOLATEUS.BONUS_VITORIA` saiu).
+Os pontos e o log (`logPontos`) ficam no cofre e viram XP **1:1** no encerramento
+(`XpService.creditarPartida`, motivo `ISOLATEUS`), exceto em partida casual.
 
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração das 10 questões (sem ela, escrita manual).
