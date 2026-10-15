@@ -416,6 +416,50 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
     );
   });
 
+  it('log de pontuação: um item por noite acertada, publicado só no fim', async () => {
+    const { service, partida, segredo, creditar } = cenario({ reais: 4 });
+    partida.rodada = 1; // segunda noite
+    await todosRespondem(service, 4, 1, { a4: 0 }); // a4 erra
+
+    // Durante a partida, o log fica no cofre.
+    expect(partida.logPontuacao).toBeUndefined();
+    expect(JSON.stringify(partida)).not.toContain('Noite 2');
+    expect(segredo.logPontos!['a2'][0]).toMatchObject({
+      rodada: 2,
+      fonte: 'ACERTO',
+    });
+    expect(segredo.logPontos!['a4']).toBeUndefined();
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    const log = partida.logPontuacao!;
+    expect(log).toHaveLength(4); // só reais, NPC não entra
+    const creditos = creditar.mock.calls[0][1] as Array<{
+      alunoId: string;
+      pontos: number;
+    }>;
+    for (const l of log) {
+      const ranking = partida.rankingFinal.find((r) => r.alunoId === l.alunoId)!;
+      expect(l.itens.reduce((s, i) => s + i.pontos, 0)).toBe(l.totalPartida);
+      expect(l.totalPartida).toBe(ranking.pontos);
+      const credito = creditos.find((c) => c.alunoId === l.alunoId)!.pontos;
+      expect(l.creditoRanking).toBe(Math.max(0, credito));
+    }
+    const a1 = log.find((l) => l.alunoId === 'a1')!; // a Ameaça
+    expect(a1.itens[0].descricao).toMatch(/^Noite 2: acertou \(\+1\.000\)/);
+    expect(log.find((l) => l.alunoId === 'a4')!.itens).toEqual([]);
+  });
+
+  it('log de pontuação: partida casual zera o crédito, não o log', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.valeRanking = false;
+    await todosRespondem(service, 4, 1);
+    await service.encerrarPeloProfessor('prof', 'p1');
+    const a2 = partida.logPontuacao!.find((l) => l.alunoId === 'a2')!;
+    expect(a2.totalPartida).toBeGreaterThan(0);
+    expect(a2.creditoRanking).toBe(0);
+  });
+
   it('Ameaça e Aldeão que acertam no mesmo instante pontuam igual', async () => {
     const { service, segredo } = cenario({ reais: 4 });
     const agora = Date.now();
