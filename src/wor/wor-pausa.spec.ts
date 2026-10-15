@@ -166,3 +166,34 @@ describe('WorGameService — pausa', () => {
     );
   });
 });
+
+describe('WorGameService — pausada, comando dá 409', () => {
+  const pausada = () =>
+    cenarioWorPausa({ pausadaEm: new Date().toISOString() });
+
+  it('aluno (letra, arriscar) e professor (tempo, pular): 409 PARTIDA_PAUSADA', async () => {
+    const { service } = pausada();
+    const comandos = [
+      () => service.chutarLetra('a1', 'm1', 'O', 'DICA'),
+      () => service.arriscar('a1', 'm1', 'OI', {}),
+      () => service.resolverPorTempo('p1', 'm1'),
+      () => service.pularPalavra('p1', 'm1'),
+    ];
+    for (const cmd of comandos) {
+      await expect(cmd()).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PARTIDA_PAUSADA' },
+      });
+    }
+  });
+
+  it('o /tempo pausado não fecha a rodada', async () => {
+    const ctx = pausada();
+    ctx.match.rodadaIniciadaEm = new Date(
+      Date.now() - 10 * 60_000,
+    ).toISOString();
+    await ctx.service.resolverPorTempo('p1', 'm1').catch(() => null);
+    expect(ctx.match.turnoEquipeId).toBe('e1');
+    expect(ctx.matches.commitPartida).not.toHaveBeenCalled();
+  });
+});

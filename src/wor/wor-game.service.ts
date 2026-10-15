@@ -11,7 +11,12 @@ import {
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
 import { valeRanking } from '../common/vale-ranking';
-import { assertPausavel, empurrar, tempoPausado } from '../common/pausa';
+import {
+  assertNaoPausada,
+  assertPausavel,
+  empurrar,
+  tempoPausado,
+} from '../common/pausa';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
@@ -52,6 +57,16 @@ export class WorGameService {
   private async carregar(matchId: string): Promise<WorMatchEntity> {
     const match = await this.matches.buscar(matchId);
     if (!match) throw new NotFoundException('Partida não encontrada.');
+    return match;
+  }
+
+  /**
+   * A partida carregada para um COMANDO (de aluno ou do mestre): pausada,
+   * responde 409 (028 §4.2). As leituras usam `carregar` direto.
+   */
+  private async carregarParaComando(matchId: string): Promise<WorMatchEntity> {
+    const match = await this.carregar(matchId);
+    assertNaoPausada(match);
     return match;
   }
 
@@ -182,7 +197,7 @@ export class WorGameService {
     acao: VotoAcao,
     alvoEquipeId?: string,
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     this.assertEmAndamento(match);
     const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     if (team.isHorde) {
@@ -251,7 +266,7 @@ export class WorGameService {
     palpite: string,
     opcoes: { efeito?: EfeitoRisco; alvoEquipeId?: string } = {},
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     this.assertEmAndamento(match);
     const { team, teams } = await this.equipeDoAluno(matchId, alunoId);
     this.assertTurno(match, team);
@@ -606,7 +621,7 @@ export class WorGameService {
     professorId: string,
     matchId: string,
   ): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }
@@ -743,7 +758,7 @@ export class WorGameService {
 
   /** Controle do mestre: pula a palavra atual (avança a onda). Valida posse. */
   async pularPalavra(professorId: string, matchId: string): Promise<MatchView> {
-    const match = await this.carregar(matchId);
+    const match = await this.carregarParaComando(matchId);
     if (match.professorId !== professorId) {
       throw new ForbiddenException('Essa partida não é sua.');
     }

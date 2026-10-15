@@ -20,7 +20,12 @@ import {
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
 import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
-import { assertPausavel, empurrar, tempoPausado } from '../common/pausa';
+import {
+  assertNaoPausada,
+  assertPausavel,
+  empurrar,
+  tempoPausado,
+} from '../common/pausa';
 
 /** Pontos por acerto + bônus máximo de rapidez. */
 const PONTOS_ACERTO = 1000;
@@ -228,6 +233,7 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há pergunta ativa.');
     }
@@ -240,6 +246,7 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status !== 'RANKING_PARCIAL') {
       throw new BadRequestException('Aguarde a apuração da rodada.');
     }
@@ -258,6 +265,7 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertNaoPausada(partida);
     if (partida.status === 'ENCERRADO') {
       throw new BadRequestException('A partida já foi encerrada.');
     }
@@ -296,6 +304,7 @@ export class PartidaService {
     if (!partida) {
       throw new NotFoundException('Partida nao encontrada.');
     }
+    assertNaoPausada(partida);
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há pergunta ativa.');
     }

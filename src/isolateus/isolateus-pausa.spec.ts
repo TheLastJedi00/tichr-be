@@ -75,3 +75,72 @@ describe('Isolateus — pausa', () => {
     );
   });
 });
+
+describe('Isolateus — pausada, comando dá 409', () => {
+  const pausada = (status: Parameters<typeof vilaComAmeacas>[0]['status']) => {
+    const ctx = vilaComAmeacas({ status });
+    ctx.partida.pausadaEm = new Date().toISOString();
+    return ctx;
+  };
+  const PAUSADA = { status: 409, response: { code: 'PARTIDA_PAUSADA' } };
+
+  it('comandos de aluno: 409', async () => {
+    const noite = pausada('DESLOCAMENTO');
+    await expect(
+      noite.service.mover('a3', 'p1', 'seguranca'),
+    ).rejects.toMatchObject(PAUSADA);
+    await expect(
+      noite.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' }),
+    ).rejects.toMatchObject(PAUSADA);
+    await expect(
+      noite.service.confirmarPosicao('a3', 'p1'),
+    ).rejects.toMatchObject(PAUSADA);
+
+    const questao = pausada('QUESTAO_ATIVA');
+    await expect(
+      questao.service.responder('a3', 'p1', 1),
+    ).rejects.toMatchObject(PAUSADA);
+
+    const debate = pausada('QUARENTENA_DEBATE');
+    await expect(
+      debate.service.debater('a3', 'p1', 'oi'),
+    ).rejects.toMatchObject(PAUSADA);
+
+    const presa = pausada('DESLOCAMENTO');
+    presa.partida.habitantes.find((h) => h.id === 'h1')!.preso = true;
+    await expect(
+      presa.service.declararInvasao('a1', 'p1'),
+    ).rejects.toMatchObject(PAUSADA);
+  });
+
+  it('comandos do professor: 409 (encerrar inclusive)', async () => {
+    const ctx = pausada('DESLOCAMENTO');
+    await expect(ctx.service.pularFase('prof', 'p1')).rejects.toMatchObject(
+      PAUSADA,
+    );
+    await expect(
+      ctx.service.delirioDoProfessor('prof', 'p1'),
+    ).rejects.toMatchObject(PAUSADA);
+    await expect(
+      ctx.service.encerrarPeloProfessor('prof', 'p1'),
+    ).rejects.toMatchObject(PAUSADA);
+  });
+
+  it('o /tempo pausado não fecha a fase, nem com o prazo vencido', async () => {
+    const ctx = pausada('DESLOCAMENTO');
+    ctx.partida.faseIniciadaEm = new Date(
+      Date.now() - 10 * 60_000,
+    ).toISOString();
+    await expect(
+      ctx.service.resolverPorTempo('p1', { alunoId: 'a3' }),
+    ).rejects.toMatchObject(PAUSADA);
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+  });
+
+  it('a leitura (painel) continua valendo', async () => {
+    const ctx = pausada('DESLOCAMENTO');
+    await expect(ctx.service.painel('a3', 'p1')).resolves.toMatchObject({
+      papel: 'ALDEAO',
+    });
+  });
+});

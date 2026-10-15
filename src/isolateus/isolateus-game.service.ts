@@ -10,6 +10,7 @@ import {
 import { randomUUID } from 'crypto';
 import { ModeracaoService } from '../moderacao/moderacao.service';
 import {
+  assertNaoPausada,
   assertPausavel,
   empurrar,
   tempoPausado,
@@ -147,6 +148,20 @@ export class IsolateusGameService {
       throw new NotFoundException('Partida nao encontrada.');
     }
     return { partida, segredo };
+  }
+
+  /**
+   * A partida carregada para um COMANDO (de aluno ou do professor, o `/tempo`
+   * inclusive): pausada, responde 409 (028 §4.2). Só o painel lê por
+   * `carregar` direto.
+   */
+  private async carregarParaComando(partidaId: string): Promise<{
+    partida: IsolateusMatchEntity;
+    segredo: IsolateusSegredoEntity;
+  }> {
+    const carregada = await this.carregar(partidaId);
+    assertNaoPausada(carregada.partida);
+    return carregada;
   }
 
   /**
@@ -295,7 +310,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
     if (!segredo.ehAmeaca(alunoId)) {
       throw new ForbiddenException('Só uma Ameaça pode romper a Quarentena.');
@@ -383,7 +398,7 @@ export class IsolateusGameService {
     partidaId: string,
     setorId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
@@ -449,6 +464,8 @@ export class IsolateusGameService {
     alunoId: string,
   ): Promise<void> {
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
+      // Pausada entre a leitura e a transação: o movimento não escapa.
+      assertNaoPausada(p);
       if (p.status !== 'DESLOCAMENTO') {
         throw new BadRequestException('A noite não está aberta.');
       }
@@ -514,7 +531,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     this.habitanteDaNoite(partida, segredo, alunoId);
     return this.registrarConfirmacao(partida, segredo, alunoId);
@@ -539,7 +556,7 @@ export class IsolateusGameService {
       return;
     }
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
-      if (p.status !== 'DESLOCAMENTO') return null;
+      if (p.status !== 'DESLOCAMENTO' || p.pausadaEm) return null;
       if (!this.liberarAgenda(p, s, agora)) return null;
       return {
         publico: { deslocamentosNoite: p.deslocamentosNoite },
@@ -1035,7 +1052,7 @@ export class IsolateusGameService {
     professorId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
@@ -1261,7 +1278,7 @@ export class IsolateusGameService {
     partidaId: string,
     dto: AcaoAmeacaDto,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     if (!segredo.ehAmeaca(alunoId)) {
       throw new ForbiddenException('Você é um Aldeão.');
@@ -1306,7 +1323,7 @@ export class IsolateusGameService {
     partidaId: string,
     dto: UsarPoderDto,
   ): Promise<PainelHabitante> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (!segredo.ehAmeaca(alunoId)) {
       throw new ForbiddenException('Você é um Aldeão.');
     }
@@ -1491,7 +1508,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
@@ -1544,7 +1561,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
 
@@ -1670,7 +1687,7 @@ export class IsolateusGameService {
     partidaId: string,
     alternativaIndex: number,
   ): Promise<{ registrada: boolean }> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há problema em aberto.');
     }
@@ -1782,7 +1799,7 @@ export class IsolateusGameService {
     partidaId: string,
     texto: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
     if (habitante.vivo && !habitante.preso) {
       throw new BadRequestException('Você ainda está na vila.');
@@ -1833,7 +1850,7 @@ export class IsolateusGameService {
     partidaId: string,
     quem: { professorId?: string; alunoId?: string },
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (quem.professorId && partida.professorId !== quem.professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
@@ -1870,7 +1887,7 @@ export class IsolateusGameService {
     partidaId: string,
     statusExibido?: StatusIsolateus,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
@@ -2288,7 +2305,7 @@ export class IsolateusGameService {
     professorId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
@@ -2383,7 +2400,7 @@ export class IsolateusGameService {
     professorId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
@@ -2449,7 +2466,10 @@ export class IsolateusGameService {
       if (!s.agendaNpc) {
         return { publico: { pausadaEm: null, faseIniciadaEm } };
       }
-      s.agendaNpc = s.agendaNpc.map((a) => ({ ...a, em: empurrar(a.em, pausa) }));
+      s.agendaNpc = s.agendaNpc.map((a) => ({
+        ...a,
+        em: empurrar(a.em, pausa),
+      }));
       return {
         publico: { pausadaEm: null, faseIniciadaEm },
         segredo: { agendaNpc: s.agendaNpc },
@@ -2479,7 +2499,7 @@ export class IsolateusGameService {
     partidaId: string,
     alunoId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
 
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
     if (!habitante.vivo || habitante.preso) {
@@ -2559,7 +2579,7 @@ export class IsolateusGameService {
     partidaId: string,
     texto: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.status !== 'QUARENTENA_DEBATE') {
       throw new BadRequestException('O debate não está aberto.');
     }
@@ -2594,7 +2614,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
   ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.status !== 'QUARENTENA_DEBATE') {
       throw new BadRequestException('O debate não está aberto.');
     }
@@ -2637,7 +2657,7 @@ export class IsolateusGameService {
     partidaId: string,
     suspeitoId: string,
   ): Promise<{ registrado: boolean }> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.status !== 'QUARENTENA_VOTO') {
       throw new BadRequestException('A votação não está aberta.');
     }
@@ -2794,7 +2814,7 @@ export class IsolateusGameService {
     partidaId: string,
     habitanteId: string,
   ): Promise<{ registrado: boolean }> {
-    const { partida, segredo } = await this.carregar(partidaId);
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
     if (partida.status !== 'RESGATE_VOTO') {
       throw new BadRequestException('A votação do resgate não está aberta.');
     }

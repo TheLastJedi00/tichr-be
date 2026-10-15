@@ -117,3 +117,58 @@ describe('PartidaService — pausa', () => {
     );
   });
 });
+
+describe('PartidaService — pausada, comando dá 409', () => {
+  const pausada = () =>
+    new PartidaEntity({
+      id: 'pt1',
+      qlickId: 'q1',
+      professorId: 'p1',
+      titulo: 'Quiz',
+      status: 'QUESTAO_ATIVA',
+      perguntaAtual: 0,
+      totalPerguntas: 2,
+      duracaoSegundos: 20,
+      perguntaIniciadaEm: new Date().toISOString(),
+      pausadaEm: new Date().toISOString(),
+      inscritos: [{ alunoId: 'a1', nome: 'Ana' }],
+      placar: [],
+    });
+
+  function servico(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
+    return new PartidaService(
+      repo as never,
+      { findById: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { firestore: {} } as never,
+      { creditarPartida: jest.fn() } as never,
+    );
+  }
+
+  it('aluno responder e professor apurar/próxima/encerrar: 409 PARTIDA_PAUSADA', async () => {
+    const service = servico(pausada());
+    const comandos = [
+      () => service.responder('a1', 'pt1', 0),
+      () => service.apurarComando('p1', 'pt1'),
+      () => service.proxima('p1', 'pt1'),
+      () => service.encerrar('p1', 'pt1'),
+    ];
+    for (const cmd of comandos) {
+      await expect(cmd()).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PARTIDA_PAUSADA' },
+      });
+    }
+  });
+
+  it('a leitura continua valendo', async () => {
+    const service = servico(pausada());
+    await expect(service.obterDoProfessor('p1', 'pt1')).resolves.toBeDefined();
+  });
+});
