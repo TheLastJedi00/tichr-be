@@ -194,7 +194,11 @@ export function vilaComAmeacas(
     findById: jest.fn(async () => ({ id: 'j1', questoes: QUESTOES })),
   } as unknown as IsolateusJogoRepository;
   const creditar = jest.fn().mockResolvedValue(undefined);
-  const xp = { creditarPartida: creditar } as unknown as XpService;
+  const penalizar = jest.fn().mockResolvedValue(undefined);
+  const xp = {
+    creditarPartida: creditar,
+    penalizarJogo: penalizar,
+  } as unknown as XpService;
 
   const setorDe = (id: string) =>
     partida.habitantes.find((h) => h.id === id)!.setorId;
@@ -204,5 +208,7 @@ export function vilaComAmeacas(
     segredo,
     setorDe,
     repo,
+    creditar,
+    penalizar,
   };
 }

@@ -114,6 +114,11 @@ export const ISOLATEUS = {
   RESGATE_VOTO_MS: 60_000,
   /** Esperança devolvida por um resgate concluído (teto 100). */
   BONUS_RESGATE: 10,
+  /**
+   * XP do ranking da turma que o falante perde por palavrão no debate ou no
+   * Sinal Interceptado (028 §1). A mesma régua do `WOR.PENALIDADE_XP`.
+   */
+  PENALIDADE_XP: 1000,
 } as const;
 
 export type StatusIsolateus =

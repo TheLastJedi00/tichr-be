@@ -5,8 +5,10 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { ModeracaoService } from '../moderacao/moderacao.service';
 import { embaralhar } from '../common/shuffle.util';
 import {
   creditoDe,
@@ -70,7 +72,10 @@ export interface PainelHabitante {
   /** O habitante sob Controle Mental nesta rodada, se houver. */
   controle?: { habitanteId: string; nome: string } | null;
   /** Quem está AGORA no setor de onde ela age (o dela ou o do controlado). */
-  fileira?: { setorId: string; habitantes: Array<{ id: string; nome: string }> };
+  fileira?: {
+    setorId: string;
+    habitantes: Array<{ id: string; nome: string }>;
+  };
 }
 
 /**
@@ -88,12 +93,42 @@ export class IsolateusGameService {
     private readonly matches: IsolateusMatchRepository,
     private readonly jogos: IsolateusJogoRepository,
     private readonly xp: XpService,
+    // Padrão para as suítes que montam o serviço à mão; no Nest, vem do DI.
+    private readonly moderacao: ModeracaoService = new ModeracaoService(),
   ) {}
 
+  /**
+   * Barra o palavrão de um texto livre (debate ou Sinal Interceptado) antes de
+   * gravar (028 §1). A penalidade é **silenciosa**: só o falante perde XP e só
+   * o celular dele recebe o 422. Anunciar o infrator quebraria o segredo — o
+   * Sinal é anônimo, e o nome diria quem está fora da vila.
+   */
+  private async moderar(
+    partida: IsolateusMatchEntity,
+    alunoId: string,
+    texto: string,
+  ): Promise<void> {
+    if (!this.moderacao.contemPalavrao(texto)) return;
+    // Vale também em partida casual (028 Decisão #13), como no Wor.
+    if (partida.turmaId) {
+      await this.xp.penalizarJogo(
+        partida.turmaId,
+        alunoId,
+        ISOLATEUS.PENALIDADE_XP,
+        'ISOLATEUS_MODERACAO',
+      );
+    }
+    throw new UnprocessableEntityException({
+      code: 'MENSAGEM_BLOQUEADA',
+      message: `Mensagem bloqueada por linguagem imprópria. Você perdeu ${ISOLATEUS.PENALIDADE_XP} XP.`,
+    });
+  }
+
   /** Carrega a partida e o cofre juntos (nunca se usa um sem o outro). */
-  private async carregar(
-    partidaId: string,
-  ): Promise<{ partida: IsolateusMatchEntity; segredo: IsolateusSegredoEntity }> {
+  private async carregar(partidaId: string): Promise<{
+    partida: IsolateusMatchEntity;
+    segredo: IsolateusSegredoEntity;
+  }> {
     const partida = await this.matches.buscar(partidaId);
     const segredo = await this.matches.buscarSegredo(partidaId);
     if (!partida || !segredo) {
@@ -155,7 +190,9 @@ export class IsolateusGameService {
       aliados: segredo
         .ameacasIds()
         .filter((a) => a !== alunoId)
-        .map((a) => partida.habitantes.find((h) => h.id === segredo.habitanteDe(a)))
+        .map((a) =>
+          partida.habitantes.find((h) => h.id === segredo.habitanteDe(a)),
+        )
         .filter((h): h is Habitante => !!h && h.vivo && !h.preso)
         .map((h) => h.nome),
       poder: temPoder
@@ -492,8 +529,13 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<void> {
-    if (partida.status !== 'DESLOCAMENTO' || this.ameacasJogaram(partida, segredo)) return;
-    if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm) return;
+    if (
+      partida.status !== 'DESLOCAMENTO' ||
+      this.ameacasJogaram(partida, segredo)
+    )
+      return;
+    if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm)
+      return;
 
     const fim =
       Date.parse(partida.faseIniciadaEm) + ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
@@ -739,7 +781,11 @@ export class IsolateusGameService {
       if (!caidos.length) this.registrar(partida, 'ESPERA', resumo.texto);
       return this.abrirJanelaDeDecisao(partida, resumo);
     }
-    return this.ativarQuestao(partida, segredo, this.alertaDaNoite(partida, segredo));
+    return this.ativarQuestao(
+      partida,
+      segredo,
+      this.alertaDaNoite(partida, segredo),
+    );
   }
 
   /**
@@ -846,7 +892,9 @@ export class IsolateusGameService {
     }));
     segredo.acoesRodada = segredo.acoesDaNoite().map((j) => ({
       ...j,
-      acao: j.acao.alvoId ? { ...j.acao, alvoId: trocar(j.acao.alvoId) } : j.acao,
+      acao: j.acao.alvoId
+        ? { ...j.acao, alvoId: trocar(j.acao.alvoId) }
+        : j.acao,
     }));
     segredo.acaoRodada = null;
     segredo.posicoesNoite = (segredo.posicoesNoite ?? []).map((p) => ({
@@ -1196,7 +1244,11 @@ export class IsolateusGameService {
       mudancas.delirioPendente = true;
     } else {
       const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
-      if (!alvo || alvo.id === eu.id || segredo.ehAmeaca(segredo.alunoDe(alvo.id))) {
+      if (
+        !alvo ||
+        alvo.id === eu.id ||
+        segredo.ehAmeaca(segredo.alunoDe(alvo.id))
+      ) {
         throw new BadRequestException(
           'Escolha um habitante na vila que não seja uma Ameaça.',
         );
@@ -1311,7 +1363,10 @@ export class IsolateusGameService {
       reparoSetorId: null,
     };
     Object.assign(partida, dados);
-    await this.matches.commitPartida(partida.id, dados, { acaoRodada: null, acoesRodada: [] });
+    await this.matches.commitPartida(partida.id, dados, {
+      acaoRodada: null,
+      acoesRodada: [],
+    });
     partida.reparoSetorId = null;
     return partida;
   }
@@ -1414,7 +1469,11 @@ export class IsolateusGameService {
     }
 
     segredo.resgateNoite = { alunoId };
-    await this.matches.commitPartida(partidaId, {}, { resgateNoite: { alunoId } });
+    await this.matches.commitPartida(
+      partidaId,
+      {},
+      { resgateNoite: { alunoId } },
+    );
     // Como no reparo, organizar também fecha a jogada da noite.
     return this.registrarConfirmacao(partida, segredo, alunoId);
   }
@@ -1468,7 +1527,11 @@ export class IsolateusGameService {
     if (!questao) {
       // O banco acabou no meio da noite: encerra pelo critério de esgotamento em
       // vez de deixar a turma numa fase sem pergunta.
-      return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+      return this.encerrar(
+        partida,
+        segredo,
+        this.vereditoPorEsgotamento(partida),
+      );
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
@@ -1532,7 +1595,10 @@ export class IsolateusGameService {
 
     // Avanço rápido: resolvido assim que todos os habitantes reais AINDA NA VILA
     // tiverem votado (quem está fora responde por XP, mas não trava a rodada).
-    const respostas = await this.matches.lerRespostas(partidaId, partida.rodada);
+    const respostas = await this.matches.lerRespostas(
+      partidaId,
+      partida.rodada,
+    );
     const votantes = this.reaisNaVila(partida, segredo);
     const votaram = respostas.filter((r) =>
       votantes.some((v) => v.alunoId === r.alunoId),
@@ -1563,7 +1629,9 @@ export class IsolateusGameService {
   ): Array<{ alunoId: string; habitanteId: string }> {
     return partida.vivos
       .map((h) => ({ habitanteId: h.id, alunoId: segredo.alunoDe(h.id) }))
-      .filter((v): v is { alunoId: string; habitanteId: string } => !!v.alunoId);
+      .filter(
+        (v): v is { alunoId: string; habitanteId: string } => !!v.alunoId,
+      );
   }
 
   /**
@@ -1613,11 +1681,13 @@ export class IsolateusGameService {
     if (partida.status !== 'QUESTAO_ATIVA') {
       throw new BadRequestException('Não há transmissão em aberto.');
     }
+    const limpo = texto.trim().slice(0, 240);
+    await this.moderar(partida, alunoId, limpo);
 
     const rumor: Rumor = {
       id: randomUUID(),
       autorNome: 'Sinal Interceptado',
-      texto: texto.trim().slice(0, 240),
+      texto: limpo,
       tipo: 'SINAL',
     };
     return this.publicarRumor(partida, rumor);
@@ -1782,7 +1852,9 @@ export class IsolateusGameService {
     }
 
     // Os NPCs decidem randomicamente (Névoa de Guerra).
-    const npcsVivos = partida.vivos.filter((h) => !segredo.alunoDe(h.id)).length;
+    const npcsVivos = partida.vivos.filter(
+      (h) => !segredo.alunoDe(h.id),
+    ).length;
     const votosTotais = [...votosReais];
     for (let i = 0; i < npcsVivos; i++) {
       votosTotais[Math.floor(Math.random() * total)]++;
@@ -2056,7 +2128,11 @@ export class IsolateusGameService {
     const proxima = partida.rodada + 1;
     const semQuestoes = partida.questaoIndex >= partida.totalRodadas;
     if (semQuestoes || proxima >= ISOLATEUS.TETO_NOITES) {
-      return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+      return this.encerrar(
+        partida,
+        segredo,
+        this.vereditoPorEsgotamento(partida),
+      );
     }
 
     const dados: Partial<IsolateusMatchEntity> = {
@@ -2137,7 +2213,11 @@ export class IsolateusGameService {
       'FIM',
       'O professor encerrou a investigação. O veredito sai pelo estado da vila neste momento.',
     );
-    return this.encerrar(partida, segredo, this.vereditoPorEsgotamento(partida));
+    return this.encerrar(
+      partida,
+      segredo,
+      this.vereditoPorEsgotamento(partida),
+    );
   }
 
   // ===== A Quarentena =====
@@ -2249,13 +2329,15 @@ export class IsolateusGameService {
     if (!habitante.vivo || habitante.preso) {
       throw new ForbiddenException('Quem saiu da vila não debate.');
     }
+    const limpo = texto.trim().slice(0, 240);
+    await this.moderar(partida, alunoId, limpo);
 
     const debate = [
       ...partida.debate,
       {
         id: randomUUID(),
         autorNome: habitante.nome, // o pseudônimo, nunca o nome real
-        texto: texto.trim().slice(0, 240),
+        texto: limpo,
       },
     ].slice(-60);
     partida.debate = debate;
@@ -2527,7 +2609,10 @@ export class IsolateusGameService {
       return partida;
     }
 
-    const votos = await this.matches.lerVotosResgate(partida.id, partida.rodada);
+    const votos = await this.matches.lerVotosResgate(
+      partida.id,
+      partida.rodada,
+    );
     const contagem = candidatos.map(
       (h) => votos.filter((v) => v.suspeitoId === h.id).length,
     );
