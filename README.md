@@ -29,6 +29,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Portal do aluno (@username + PIN)](#portal-do-aluno-username--pin-da-turma)
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
   - [Painel Administrativo e feedback](#painel-administrativo-backoffice-e-cupons)
+- [Log de pontuação e partida casual](#log-de-pontuação-e-partida-casual-spec-027-todos-os-jogos)
 - [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
 - [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
 
@@ -361,7 +362,7 @@ Registro (event sourcing) de cada distribuição de pontos.
 |---|---|---|
 | `id` / `alunoId` / `turmaId` | string | |
 | `pontos` | number | delta aplicado (pode ser negativo) |
-| `motivo` | string? | `BASE` (aula concluída), `QLICK` (partida) ou livre (pontuação manual) |
+| `motivo` | string? | `BASE` (aula concluída), `QLICK` / `WOR` / `ISOLATEUS` (partida; nada em partida casual), `WOR_MODERACAO` (penalidade) ou livre (pontuação manual) |
 | `data` | string | ISO datetime |
 
 ### `qlicks`
@@ -548,6 +549,11 @@ Todas exigem que **`professores/{uid}.isAdmin === true`** no Firestore (fonte de
 | `POST` | `/turmas/:id/encerrar` | — | `TurmaEntity` — encerra a turma (**somente-leitura**; sai do pool de PINs e vai para o Hall da Fama) |
 | `PUT` | `/turmas/:id` | `UpdateTurmaDto` | `{ turma, sessoes }` — **reprojeta**; aceita `encerradaManualmente` |
 
+**Turma × instituição (spec 027):** turma **livre ou regular** pode nascer (ou ser movida) ligada
+a uma instituição via `instituicaoId`. Ela precisa ser do professor: senão **404
+`INSTITUICAO_NAO_ENCONTRADA`** (no `POST` e no `PUT` que troca a instituição). `instituicaoId`
+vazio = sem instituição.
+
 `CreateTurmaDto`: `nome`, `tipoModalidade`, `diasSemana[]`, `dataInicio`,
 `totalAulas?` (obrigatório se módulo), `cor?` (`#RRGGBB`), `disciplina?`,
 `horaInicio?`/`horaFim?` (`HH:mm`), a **config de pontuação** `pontuacaoAtiva?`,
@@ -657,10 +663,11 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 | `PUT` | `/qlicks/:id/turmas` | `{ turmaIds: string[] }` | atribui (substitui) as turmas do Qlick — relação **N:N** |
 | `POST` | `/qlicks/:qlickId/partida` | `{ turmaId? }` | `PartidaEntity` em `LOBBY` — a partida **escolhe a turma** (N:N); 400 `TURMA_NAO_ATRIBUIDA`/`TURMA_ENCERRADA` |
 | `GET` | `/partidas/:id` | — | `PartidaEntity` (dona do professor) |
+| `POST` | `/partidas/:id/vale-ranking` | `{ valeRanking: boolean }` | **só no `LOBBY`** (400 `PARTIDA_INICIADA`): desmarcado, a partida é **casual** |
 | `POST` | `/partidas/:id/iniciar` | — | congela inscritos, ativa a pergunta 1 (400 se sem inscritos) |
 | `POST` | `/partidas/:id/apurar` | — | revela a resposta e o ranking da rodada |
 | `POST` | `/partidas/:id/proxima` | — | avança (400 se ainda não apurou ou se era a última) |
-| `POST` | `/partidas/:id/encerrar` | — | monta o pódio e **credita o XP** (400 se já encerrada) |
+| `POST` | `/partidas/:id/encerrar` | — | monta o pódio e o `logPontuacao` e **credita o XP** (exceto casual; 400 se já encerrada) |
 
 ### Tichr Qlick (aluno — `@Roles('STUDENT')`)
 | Método | Rota | Corpo | Resposta |
@@ -1021,6 +1028,37 @@ abre confiando. O que é gravado, esse sim, não é sanitizado: o relato vale pe
 
 ---
 
+## Log de pontuação e partida casual (spec 027, todos os jogos)
+
+**Log de pontuação.** No encerramento, Qlick (`qlick_partidas`), Wor (`matches`) e Isolateus
+(`isolateus_partidas`) gravam, no **mesmo commit** do `ENCERRADO`, o campo público
+`logPontuacao: LogPontuacaoJogador[]` (tipos em `src/common/log-pontuacao.ts`):
+
+| Campo | Observação |
+|---|---|
+| `alunoId` / `nome` | o `nome` é o do ranking final (codinome no Isolateus) |
+| `totalPartida` | pontos de jogo = `rankingFinal[i].pontos` (no Wor, os pontos da equipe) |
+| `creditoRanking` | XP que de fato entrou no `xp_logs` (0 se casual ou sem turma) |
+| `itens[]` | `{ rodada, fonte, descricao, pontos }`, `rodada` 1-based (pergunta, rodada ou noite) |
+
+- **Fontes:** Qlick e Isolateus `ACERTO` (base + rapidez na descrição); Wor `DANO`, `CRITICO`,
+  `CATAPULTA`, `ARRISCAR` (com quem acertou letra/arriscou e o multiplicador quando > 1x),
+  `HP_FINAL` e `FATOR_COLOCACAO` (negativo, a metade cortada da equipe não campeã: a soma dos
+  itens bate com o crédito).
+- **Onde nasce:** Qlick deriva das `qlick_respostas` apuradas; Isolateus acumula no cofre
+  (`logPontos`, nunca público antes do fim: revelaria quem acertou cada noite); Wor acumula em
+  `matches/{id}/teams/{teamId}.logPontos` no mesmo patch de `pontos`.
+- `creditosDaPartida()` é a fonte única do crédito **e** do `creditoRanking`.
+- A penalidade de moderação do Wor (`WOR_MODERACAO`) é debitada na hora e **não** entra no log.
+- Partidas encerradas antes do deploy não têm o campo.
+
+**Partida casual.** Campo público `valeRanking` (ausente = `true`) nas três partidas, definido
+no lobby pelas rotas `.../vale-ranking` (Qlick `POST /partidas/:id/vale-ranking`, Wor e
+Isolateus `POST /<jogo>/matches/:id/vale-ranking`), body `{ valeRanking: boolean }`, só no
+`LOBBY` (400 `PARTIDA_INICIADA`). Com `false`, o encerramento **não chama**
+`XpService.creditarPartida`: placar e log saem normais. A penalidade de moderação do Wor
+continua debitando.
+
 ## Tichr Wor (guerra de castelos, PvP em tempo real)
 
 Releitura competitiva da forca: equipes decifram palavras defendendo o **HP** de
@@ -1071,6 +1109,7 @@ seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
 | `GET` | `/wor/matches/:id` | estado (raiz + times) |
 | `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
 | `POST` | `/wor/matches/:id/multiplicador` `{ multiplicador }` | **só no lobby**: quanto valem os pontos da partida, inteiro de **1 a 10** (400 fora da faixa ou depois do início; 403 se a partida não é do professor). Público em `multiplicador` (ausente = 1) |
+| `POST` | `/wor/matches/:id/vale-ranking` `{ valeRanking }` | **só no lobby** (400 `PARTIDA_INICIADA`; 403 se a partida não é do professor): desmarcado, a partida é **casual** |
 | `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
 | `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
 | `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo) |
@@ -1263,6 +1302,9 @@ abdução ou reparo; senão o dia vai direto ao card.
 ### Endpoints — Partida (professor / telão)
 - `POST /isolateus/jogos/:jogoId/partida` — cria no `LOBBY`.
 - `GET /isolateus/matches/:id`
+- `POST /isolateus/matches/:id/vale-ranking` `{ valeRanking: boolean }` — **só no `LOBBY`**
+  (400 `PARTIDA_INICIADA`): desmarcado, a partida é **casual** (ver *Log de pontuação e partida
+  casual*).
 - `POST /isolateus/matches/:id/remover/:alunoId` — tira do lobby quem entrou por engano.
   **Só no `LOBBY`.** (Não há mais vetar/renomear: ninguém digita nome.)
 - `POST /isolateus/matches/:id/iniciar` `{ debateHabilitado? }` — **o Despertar**: sorteia os
@@ -1428,9 +1470,8 @@ sob nome de NPC, e o tipo `FORJADO` era público) e as falas automáticas do deb
 **Várias Ameaças:** a noite só fecha cedo com a jogada de **todas** as livres (a carência vale
 enquanto faltar qualquer uma); cada sabotagem derruba seu setor; várias abduções continuam
 resolvidas por **uma** questão (um acerto repele todas, com um card só; a sorte às cegas nunca
-cai numa Ameaça); cada Ameaça livre pontua pelo erro da vila; prender uma, restando outra, mantém
-a partida (*"…Mas a invasão não acabou…"*, sem dizer quantas restam); a Vila vence quando não há
-Ameaça livre; a vitória da Ameaça credita todas.
+cai numa Ameaça); prender uma, restando outra, mantém a partida (*"…Mas a invasão não
+acabou…"*, sem dizer quantas restam); a Vila vence quando não há Ameaça livre.
 
 ### Quem convoca, o brilho e o resgate (spec 025)
 
@@ -1498,10 +1539,11 @@ veredito que não encerra a partida, a janela de decisão **reabre com relógio*
 população **ou** destruiu mais de 3 setores); só então a Vila. Sem critério batido, vence a
 Vila por resistência. O veredito carrega o **motivo técnico** exibido no card.
 
-**Economia de XP:** acerto **1000** + bônus de rapidez até **500**; **erro da turma** (defesa
-ou Perícia) credita **1000 à Ameaça** — a sabotagem em si não pontua, porque sendo automática
-seria ponto de graça toda noite; o lado vencedor leva **+1000**. Os pontos ficam no cofre e
-viram XP **1:1** no encerramento (`XpService.creditarPartida`, motivo `ISOLATEUS`).
+**Economia de XP (spec 027):** só a **resposta certa** pontua: **1000** + bônus de rapidez até
+**500**, igual para Aldeões e Ameaças (inclusive na tela hackeada de quem saiu da vila). **Não
+há** bônus de vitória nem crédito à Ameaça pelo erro da vila (`ISOLATEUS.BONUS_VITORIA` saiu).
+Os pontos e o log (`logPontos`) ficam no cofre e viram XP **1:1** no encerramento
+(`XpService.creditarPartida`, motivo `ISOLATEUS`), exceto em partida casual.
 
 ### Env & rules
 - **`GEMINI_API_KEY`** (Vercel): habilita a geração das 10 questões (sem ela, escrita manual).
