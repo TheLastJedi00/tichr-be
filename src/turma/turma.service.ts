@@ -29,6 +29,7 @@ import { ExcecaoRepository } from './repositories/excecao.repository';
 import { FeriasRepository } from './repositories/ferias.repository';
 import { SessaoRepository } from './repositories/sessao.repository';
 import { TurmaRepository } from './repositories/turma.repository';
+import { InstituicaoRepository } from '../instituicao/repositories/instituicao.repository';
 
 @Injectable()
 export class TurmaService {
@@ -38,7 +39,26 @@ export class TurmaService {
     private readonly excecaoRepo: ExcecaoRepository,
     private readonly feriasRepo: FeriasRepository,
     private readonly alunoRepo: AlunoRepository,
+    private readonly instituicaoRepo: InstituicaoRepository,
   ) {}
+
+  /**
+   * A turma só se liga a uma instituição do próprio professor. Vazio = sem
+   * instituição (o painel "Sem instituição" move a turma para lá assim).
+   */
+  private async assertInstituicaoDoProfessor(
+    professorId: string,
+    instituicaoId?: string,
+  ): Promise<void> {
+    if (!instituicaoId) return;
+    const inst = await this.instituicaoRepo.findById(instituicaoId);
+    if (!inst || inst.professorId !== professorId) {
+      throw new NotFoundException({
+        code: 'INSTITUICAO_NAO_ENCONTRADA',
+        message: 'Instituição não encontrada.',
+      });
+    }
+  }
 
   listarFerias(professorId: string): Promise<FeriasEntity[]> {
     return this.feriasRepo.findByProfessor(professorId);
@@ -75,6 +95,7 @@ export class TurmaService {
     professorId: string,
     dto: CreateTurmaDto,
   ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
+    await this.assertInstituicaoDoProfessor(professorId, dto.instituicaoId);
     const existentes = await this.turmaRepo.findByProfessor(professorId);
     const hoje = hojeISO();
     const ativas = existentes.filter((t) => t.contaComoAtiva(hoje));
@@ -217,6 +238,9 @@ export class TurmaService {
     dto: UpdateTurmaDto,
   ): Promise<{ turma: TurmaEntity; sessoes: SessaoAulaEntity[] }> {
     const turma = await this.buscarTurma(professorId, turmaId);
+    if (dto.instituicaoId && dto.instituicaoId !== turma.instituicaoId) {
+      await this.assertInstituicaoDoProfessor(professorId, dto.instituicaoId);
+    }
 
     const ensinoRegular = dto.ensinoRegular ?? turma.ensinoRegular ?? false;
     const gradeHoraria = dto.gradeHoraria

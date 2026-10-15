@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { PartidaService } from './partida.service';
 
 /** Controle da partida pelo professor (comandos via REST). */
@@ -19,6 +20,20 @@ export class PartidaController {
   @Get('partidas/:id')
   obter(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.partidaService.obterDoProfessor(professorId, id);
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual. */
+  @Post('partidas/:id/vale-ranking')
+  valeRanking(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirValeRankingDto,
+  ) {
+    return this.partidaService.definirValeRanking(
+      professorId,
+      id,
+      dto.valeRanking,
+    );
   }
 
   @Post('partidas/:id/iniciar')

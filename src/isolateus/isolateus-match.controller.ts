@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { PularFaseDto } from './dto/pular-fase.dto';
 import {
   CriarPartidaIsolateusDto,
@@ -38,6 +39,16 @@ export class IsolateusMatchController {
     @Param('alunoId') alunoId: string,
   ) {
     return this.matches.removerInscrito(professorId, id, alunoId);
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual. */
+  @Post('matches/:id/vale-ranking')
+  valeRanking(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirValeRankingDto,
+  ) {
+    return this.matches.definirValeRanking(professorId, id, dto.valeRanking);
   }
 
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
 import { DefinirMultiplicadorDto } from './dto/definir-multiplicador.dto';
 import { WorGameService } from './wor-game.service';
@@ -40,6 +41,16 @@ export class WorMatchController {
     @Body() dto: DefinirMultiplicadorDto,
   ) {
     return this.service.definirMultiplicador(uid, id, dto.multiplicador);
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual. */
+  @Post('matches/:id/vale-ranking')
+  valeRanking(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirValeRankingDto,
+  ) {
+    return this.service.definirValeRanking(uid, id, dto.valeRanking);
   }
 
   @Post('matches/:id/iniciar')

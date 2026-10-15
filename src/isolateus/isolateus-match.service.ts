@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import { assertLobbyValeRanking } from '../common/vale-ranking';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -65,6 +66,7 @@ export class IsolateusMatchService {
         turmaId: escolhida,
         nome: jogo.nome,
         status: 'LOBBY',
+        valeRanking: true,
         criadaEm: new Date().toISOString(),
         esperanca: ISOLATEUS.ESPERANCA_INICIAL,
         // Sem `vizinhos`: a malha é imutável e vive no banco estático. Copiá-la
@@ -148,6 +150,19 @@ export class IsolateusMatchService {
     if (!partida || partida.professorId !== professorId) {
       throw new NotFoundException('Partida nao encontrada.');
     }
+    return partida;
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
+  async definirValeRanking(
+    professorId: string,
+    partidaId: string,
+    vale: boolean,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyValeRanking(partida.status);
+    partida.valeRanking = vale;
+    await this.matches.commitPartida(partidaId, { valeRanking: vale });
     return partida;
   }
 

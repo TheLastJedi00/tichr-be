@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 /** Constantes do motor da invasão. Fonte única dos números do jogo. */
 export const ISOLATEUS = {
   /** Barra de Esperança da vila. Zerou, a Ameaça venceu. */
@@ -22,8 +24,6 @@ export const ISOLATEUS = {
   /** Pontos por acerto + bônus máximo de rapidez (espelha o Qlick). */
   PONTOS_ACERTO: 1000,
   BONUS_RAPIDEZ: 500,
-  /** Bônus de "Vitória de Partida" para o lado vencedor (§7). */
-  BONUS_VITORIA: 1000,
 
   /** Mínimo de investigadores reais para iniciar (§2). */
   MIN_REAIS: 4,
@@ -281,6 +281,12 @@ export class IsolateusMatchEntity {
   status: StatusIsolateus;
   criadaEm: string | null;
 
+  /**
+   * Desmarcado no lobby, a partida é casual: placar e log normais, sem crédito
+   * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
+   */
+  valeRanking?: boolean;
+
   /** Barra de Esperança (0..100). */
   esperanca: number;
   setores: Setor[];
@@ -416,6 +422,12 @@ export class IsolateusMatchEntity {
 
   veredito: Veredito | null;
   rankingFinal: PlacarItem[];
+
+  /**
+   * De onde veio cada ponto (spec 027 §1). Só no encerramento: durante a
+   * partida, saber quem acertou cada noite ajudaria a deduzir papéis.
+   */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<IsolateusMatchEntity> = {}) {
     Object.assign(this, partial);

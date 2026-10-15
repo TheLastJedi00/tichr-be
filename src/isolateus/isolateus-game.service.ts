@@ -8,6 +8,13 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import {
+  creditoDe,
+  creditosDaPartida,
+  itemAcerto,
+  LogPontuacaoJogador,
+} from '../common/log-pontuacao';
+import { valeRanking } from '../common/vale-ranking';
 import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { PoderAlienigena, UsarPoderDto } from './dto/usar-poder.dto';
@@ -1521,7 +1528,7 @@ export class IsolateusGameService {
     if (!registrada) {
       return { registrada: false }; // já havia respondido esta rodada
     }
-    await this.creditarPontos(segredo, alunoId, pontos);
+    await this.creditarPontos(segredo, alunoId, pontos, partida.rodada + 1);
 
     // Avanço rápido: resolvido assim que todos os habitantes reais AINDA NA VILA
     // tiverem votado (quem está fora responde por XP, mas não trava a rodada).
@@ -1559,17 +1566,31 @@ export class IsolateusGameService {
       .filter((v): v is { alunoId: string; habitanteId: string } => !!v.alunoId);
   }
 
-  /** Acumula pontos no cofre (o placar só vira público no encerramento). */
+  /**
+   * Acumula pontos e o item do log no cofre (placar e log só viram públicos no
+   * encerramento: saber quem acertou cada noite ajudaria a deduzir papéis).
+   */
   private async creditarPontos(
     segredo: IsolateusSegredoEntity,
     alunoId: string,
     pontos: number,
+    noite: number,
   ): Promise<void> {
     if (pontos <= 0) return;
     const atual = segredo.pontos ?? {};
     atual[alunoId] = (atual[alunoId] ?? 0) + pontos;
     segredo.pontos = atual;
-    await this.matches.commitPartida(segredo.partidaId, {}, { pontos: atual });
+    const log = segredo.logPontos ?? {};
+    log[alunoId] = [
+      ...(log[alunoId] ?? []),
+      itemAcerto(noite, 'Noite', pontos, ISOLATEUS.PONTOS_ACERTO),
+    ];
+    segredo.logPontos = log;
+    await this.matches.commitPartida(
+      segredo.partidaId,
+      {},
+      { pontos: atual, logPontos: log },
+    );
   }
 
   // ===== A Guerra de Frequências =====
@@ -1782,14 +1803,8 @@ export class IsolateusGameService {
     const resgate = this.resolverResgate(partida, votantes, respostas, questao);
     partes.push(resgate?.texto ?? null);
 
-    const pontos = { ...(segredo.pontos ?? {}) };
-    if (!acertou) {
-      // Cada Ameaça livre pontua pelo erro da turma — o único momento em que a
-      // vila disputou com ela e perdeu. A sabotagem, automática, não pontua.
-      for (const a of this.ameacasLivres(partida, segredo)) {
-        pontos[a] = (pontos[a] ?? 0) + ISOLATEUS.PONTOS_ACERTO;
-      }
-    }
+    // O erro da vila não pontua a Ameaça: Aldeões e Ameaças pontuam só pelo
+    // acerto, em `responder` (spec 027 §2).
 
     const dados: Partial<IsolateusMatchEntity> = {
       // Resgate conquistado: a turma vota quem volta antes da janela de decisão.
@@ -1818,12 +1833,10 @@ export class IsolateusGameService {
     const poderes = this.concederPoderes(partida, segredo, respostas);
 
     Object.assign(partida, dados);
-    segredo.pontos = pontos;
     segredo.acaoRodada = null;
     segredo.acoesRodada = [];
     segredo.poderes = poderes;
     await this.matches.commitPartida(partida.id, dados, {
-      pontos,
       acaoRodada: null,
       acoesRodada: [],
       poderes,
@@ -2590,7 +2603,8 @@ export class IsolateusGameService {
 
   /**
    * Encerra a partida, publica o placar (agora que o mistério acabou) e converte
-   * os pontos em XP do portal. O lado vencedor leva o bônus de Vitória de Partida.
+   * os pontos em XP do portal. Vencer não dá bônus: o placar é só o dos
+   * acertos (spec 027 §2).
    */
   private async encerrar(
     partida: IsolateusMatchEntity,
@@ -2598,16 +2612,6 @@ export class IsolateusGameService {
     veredito: { lado: 'VILA' | 'AMEACA'; motivo: string },
   ): Promise<IsolateusMatchEntity> {
     const pontos = { ...(segredo.pontos ?? {}) };
-    const alienVenceu = veredito.lado === 'AMEACA';
-
-    for (const vinculo of segredo.vinculos) {
-      if (!vinculo.alunoId) continue; // NPC não pontua
-      const ehAlien = segredo.ehAmeaca(vinculo.alunoId);
-      if (ehAlien === alienVenceu) {
-        pontos[vinculo.alunoId] =
-          (pontos[vinculo.alunoId] ?? 0) + ISOLATEUS.BONUS_VITORIA;
-      }
-    }
 
     const nomePorAluno = new Map(
       segredo.vinculos
@@ -2627,10 +2631,24 @@ export class IsolateusGameService {
       .sort((a, b) => b.pontos - a.pontos)
       .map((p, i) => ({ posicao: i + 1, ...p }));
 
+    const creditos = creditosDaPartida(
+      partida,
+      rankingFinal.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
+    );
+    // O mistério acabou: o log sai do cofre junto do placar (spec 027 §1.3).
+    const logPontuacao: LogPontuacaoJogador[] = rankingFinal.map((p) => ({
+      alunoId: p.alunoId,
+      nome: p.nome,
+      totalPartida: p.pontos,
+      creditoRanking: creditoDe(creditos, p.alunoId),
+      itens: segredo.logPontos?.[p.alunoId] ?? [],
+    }));
+
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'ENCERRADO',
       veredito,
       rankingFinal,
+      logPontuacao,
       questaoPublica: null,
       faseIniciadaEm: null,
       acontecimentos: this.registrar(partida, 'FIM', veredito.motivo),
@@ -2639,12 +2657,8 @@ export class IsolateusGameService {
     segredo.pontos = pontos;
     await this.matches.commitPartida(partida.id, dados, { pontos });
 
-    if (partida.turmaId) {
-      await this.xp.creditarPartida(
-        partida.turmaId,
-        rankingFinal.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
-        'ISOLATEUS',
-      );
+    if (partida.turmaId && valeRanking(partida)) {
+      await this.xp.creditarPartida(partida.turmaId, creditos, 'ISOLATEUS');
     }
     return partida;
   }

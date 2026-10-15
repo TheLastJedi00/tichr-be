@@ -1,3 +1,5 @@
+import { ItemLogPontos } from '../../common/log-pontuacao';
+
 /**
  * A jogada do Alienígena na noite corrente (só o servidor conhece).
  *
@@ -152,6 +154,13 @@ export class IsolateusSegredoEntity {
 
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
+
+  /**
+   * De onde veio cada ponto, por aluno (spec 027 §1.3). Fica no cofre: o log
+   * mostra quem acertou cada noite e ajudaria a deduzir papéis. Só vira
+   * público no encerramento, como `logPontuacao`.
+   */
+  logPontos?: Record<string, ItemLogPontos[]>;
 
   constructor(partial: Partial<IsolateusSegredoEntity> = {}) {
     Object.assign(this, partial);
