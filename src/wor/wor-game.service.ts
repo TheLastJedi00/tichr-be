@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { creditosDaPartida } from '../common/log-pontuacao';
 import { valeRanking } from '../common/vale-ranking';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
@@ -742,18 +743,24 @@ export class WorGameService {
 
     // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick), exceto
     // em partida casual.
-    if (match.turmaId && vencedor && valeRanking(match)) {
-      const creditos: Array<{ alunoId: string; pontos: number }> = [];
-      for (const t of teams) {
-        const fator = t.id === vencedor.id ? 1 : 0.5;
-        const ganho = Math.round((t.pontos ?? 0) * WOR.XP_POR_PONTO * fator);
-        if (ganho <= 0) continue;
-        for (const m of t.membros) {
-          creditos.push({ alunoId: m.alunoId, pontos: ganho });
-        }
+    const ganhos: Array<{ alunoId: string; pontos: number }> = [];
+    for (const t of teams) {
+      const ganho = this.ganhoDaEquipe(t, vencedor?.id);
+      if (ganho <= 0) continue;
+      for (const m of t.membros) {
+        ganhos.push({ alunoId: m.alunoId, pontos: ganho });
       }
+    }
+    const creditos = creditosDaPartida(match, ganhos);
+    if (match.turmaId && vencedor && valeRanking(match)) {
       await this.xp.creditarPartida(match.turmaId, creditos, 'WOR');
     }
+  }
+
+  /** Pontos da equipe → XP do ranking (campeã ×1, demais ×0,5). */
+  private ganhoDaEquipe(team: WorTeamEntity, vencedorId?: string): number {
+    const fator = team.id === vencedorId ? 1 : 0.5;
+    return Math.round((team.pontos ?? 0) * WOR.XP_POR_PONTO * fator);
   }
 
   /**

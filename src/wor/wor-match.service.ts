@@ -210,6 +210,7 @@ export class WorMatchService {
         hp: WOR.HP_INICIAL,
         isHorde: false,
         pontos: 0,
+        logPontos: [],
         membros: membrosPorEquipe[i],
       });
     }

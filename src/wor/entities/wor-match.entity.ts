@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 /** Constantes de balanceamento. Centralizadas para tuning posterior. */
 export const WOR = {
   HP_INICIAL: 1000,
@@ -198,6 +200,9 @@ export class WorMatchEntity {
 
   inscritos: InscritoWor[] = [];
   vencedorEquipeId?: string | null;
+
+  /** De onde veio cada ponto, por aluno (spec 027 §1). Só no encerramento. */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<WorMatchEntity> = {}) {
     Object.assign(this, partial);

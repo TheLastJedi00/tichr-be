@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 /** Constantes do motor da invasão. Fonte única dos números do jogo. */
 export const ISOLATEUS = {
   /** Barra de Esperança da vila. Zerou, a Ameaça venceu. */
@@ -420,6 +422,12 @@ export class IsolateusMatchEntity {
 
   veredito: Veredito | null;
   rankingFinal: PlacarItem[];
+
+  /**
+   * De onde veio cada ponto (spec 027 §1). Só no encerramento: durante a
+   * partida, saber quem acertou cada noite ajudaria a deduzir papéis.
+   */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<IsolateusMatchEntity> = {}) {
     Object.assign(this, partial);

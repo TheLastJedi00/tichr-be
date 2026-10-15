@@ -1,3 +1,5 @@
+import { LogPontuacaoJogador } from '../../common/log-pontuacao';
+
 export type StatusPartida =
   | 'LOBBY'
   | 'QUESTAO_ATIVA'
@@ -54,6 +56,8 @@ export class PartidaEntity {
   placar: PlacarItem[];
   rankingParcial?: PlacarItem[];
   rankingFinal?: Array<{ posicao: number } & PlacarItem>;
+  /** De onde veio cada ponto (spec 027 §1). Gravado só no encerramento. */
+  logPontuacao?: LogPontuacaoJogador[];
 
   constructor(partial: Partial<PartidaEntity> = {}) {
     Object.assign(this, partial);
