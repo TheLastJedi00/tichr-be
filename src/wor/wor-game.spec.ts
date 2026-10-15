@@ -278,6 +278,25 @@ describe('WorGameService — rodada por membros', () => {
   });
 });
 
+describe('WorGameService — partida casual', () => {
+  it('não credita no ranking, mas o placar e o vencedor saem normais', async () => {
+    const teams = [time('equipe-1', ['a1'], 1000), time('equipe-2', ['b1'], 500)];
+    teams[0].pontos = 1000;
+    const { service, match, creditos } = cenario(teams);
+    match.turmaId = 't1';
+    match.valeRanking = false;
+    match.ondaIndex = 1;
+    match.mascara = ['R', 'E', '_'];
+    match.letrasTentadas = ['R', 'E'];
+    await service.chutarLetra('a1', 'm1', 'I', 'DICA'); // completa REI → encerra
+
+    expect(match.status).toBe('ENCERRADO');
+    expect(match.vencedorEquipeId).toBe('equipe-1');
+    expect(teams[0].pontos).toBe(2000); // bônus de HP aplicado igual
+    expect(creditos).toHaveLength(0);
+  });
+});
+
 describe('WorGameService — multiplicador de pontos da partida', () => {
   it('o dano vira pontos multiplicados', async () => {
     const teams = [time('equipe-1', ['a1']), time('equipe-2', ['b1'])];

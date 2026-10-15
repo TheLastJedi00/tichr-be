@@ -459,6 +459,18 @@ describe('Isolateus — o professor encerra no meio do jogo', () => {
     expect(partida.veredito?.lado).toBe('AMEACA');
   });
 
+  it('partida casual: placar publicado, mas nada creditado no ranking', async () => {
+    const { service, partida, creditar } = cenario({ reais: 4 });
+    partida.valeRanking = false;
+    await todosRespondem(service, 4, 1);
+
+    await service.encerrarPeloProfessor('prof', 'p1');
+
+    expect(partida.status).toBe('ENCERRADO');
+    expect(partida.rankingFinal.some((p) => p.pontos > 0)).toBe(true);
+    expect(creditar).not.toHaveBeenCalled();
+  });
+
   it('encerrar duas vezes nao dobra o XP', async () => {
     const { service, partida, creditar } = cenario({ reais: 4 });
     await service.encerrarPeloProfessor('prof', 'p1');

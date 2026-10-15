@@ -13,7 +13,7 @@ import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
-import { assertLobbyValeRanking } from '../common/vale-ranking';
+import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
 
 /** Pontos por acerto + bônus máximo de rapidez. */
 const PONTOS_ACERTO = 1000;
@@ -224,8 +224,9 @@ export class PartidaService {
     Object.assign(partida, dados);
     await this.partidaRepo.update(partidaId, dados);
 
-    // Converte os pontos da partida em XP do portal (só faz sentido com turma).
-    if (partida.turmaId) {
+    // Converte os pontos da partida em XP do portal (só faz sentido com turma,
+    // e não em partida casual).
+    if (partida.turmaId && valeRanking(partida)) {
       await this.xpService.creditarPartida(
         partida.turmaId,
         partida.placar.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),

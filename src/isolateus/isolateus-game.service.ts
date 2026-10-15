@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import { valeRanking } from '../common/vale-ranking';
 import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { PoderAlienigena, UsarPoderDto } from './dto/usar-poder.dto';
@@ -2639,7 +2640,7 @@ export class IsolateusGameService {
     segredo.pontos = pontos;
     await this.matches.commitPartida(partida.id, dados, { pontos });
 
-    if (partida.turmaId) {
+    if (partida.turmaId && valeRanking(partida)) {
       await this.xp.creditarPartida(
         partida.turmaId,
         rankingFinal.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),

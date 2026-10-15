@@ -192,6 +192,28 @@ describe('PartidaService — fluxo CQRS', () => {
     ]);
   });
 
+  it('encerrar: partida casual monta o ranking, mas não credita XP', async () => {
+    const partida = partidaBase({
+      status: 'RANKING_PARCIAL',
+      valeRanking: false,
+      placar: [{ alunoId: 'a1', nome: 'Ana', pontos: 800 }],
+    });
+    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const xp = { creditarPartida: jest.fn() };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xp as never,
+    );
+    const r = await service.encerrar('p1', 'pt1');
+    expect(r.rankingFinal?.[0]).toMatchObject({ posicao: 1, pontos: 800 });
+    expect(xp.creditarPartida).not.toHaveBeenCalled();
+  });
+
   it('partidaDaTurma: retorna a partida ativa recém-criada (sem depender do relógio)', async () => {
     const agora = new Date().toISOString();
     const repo = {

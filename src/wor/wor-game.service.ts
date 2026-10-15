@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { valeRanking } from '../common/vale-ranking';
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
@@ -739,8 +740,9 @@ export class WorGameService {
     });
     await this.refletirPlacar(matchId);
 
-    // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick).
-    if (match.turmaId && vencedor) {
+    // Pontos do jogo → XP do ranking da sala (mesmo caminho do Qlick), exceto
+    // em partida casual.
+    if (match.turmaId && vencedor && valeRanking(match)) {
       const creditos: Array<{ alunoId: string; pontos: number }> = [];
       for (const t of teams) {
         const fator = t.id === vencedor.id ? 1 : 0.5;
