@@ -159,6 +159,12 @@ export class WorMatchEntity {
    */
   multiplicador = 1;
 
+  /**
+   * Desmarcado no lobby, a partida é casual: placar e log normais, sem crédito
+   * no ranking da turma (spec 027 §3). Partidas antigas valem.
+   */
+  valeRanking = true;
+
   /** Índice da onda (palavra) atual no baralho e total de ondas. */
   ondaIndex = 0;
   totalOndas = 0;

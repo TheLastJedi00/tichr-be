@@ -13,6 +13,7 @@ import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
+import { assertLobbyValeRanking } from '../common/vale-ranking';
 
 /** Pontos por acerto + bônus máximo de rapidez. */
 const PONTOS_ACERTO = 1000;
@@ -81,6 +82,7 @@ export class PartidaService {
         turmaId: escolhida,
         titulo: qlick.titulo,
         status: 'LOBBY',
+        valeRanking: true,
         criadaEm: new Date().toISOString(),
         perguntaAtual: -1,
         totalPerguntas: qlick.perguntas.length,
@@ -104,6 +106,19 @@ export class PartidaService {
       throw new NotFoundException('Partida nao encontrada.');
     }
     return p;
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
+  async definirValeRanking(
+    professorId: string,
+    partidaId: string,
+    vale: boolean,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyValeRanking(partida.status);
+    partida.valeRanking = vale;
+    await this.partidaRepo.update(partidaId, { valeRanking: vale });
+    return partida;
   }
 
   /** Inscreve o aluno no lobby (idempotente). Só durante o LOBBY. */

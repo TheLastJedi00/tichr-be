@@ -281,6 +281,12 @@ export class IsolateusMatchEntity {
   status: StatusIsolateus;
   criadaEm: string | null;
 
+  /**
+   * Desmarcado no lobby, a partida é casual: placar e log normais, sem crédito
+   * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
+   */
+  valeRanking?: boolean;
+
   /** Barra de Esperança (0..100). */
   esperanca: number;
   setores: Setor[];

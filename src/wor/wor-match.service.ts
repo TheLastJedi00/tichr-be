@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { embaralhar } from '../common/shuffle.util';
+import { assertLobbyValeRanking } from '../common/vale-ranking';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -77,6 +78,7 @@ export class WorMatchService {
       nome: jogo.nome,
       status: 'LOBBY',
       multiplicador: 1,
+      valeRanking: true,
       criadaEm: new Date().toISOString(),
       ondaIndex: 0,
       totalOndas: jogo.palavras.length,
@@ -240,6 +242,18 @@ export class WorMatchService {
       );
     }
     await this.matches.atualizar(matchId, { multiplicador });
+    return this.view(matchId);
+  }
+
+  /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
+  async definirValeRanking(
+    professorId: string,
+    matchId: string,
+    vale: boolean,
+  ): Promise<MatchView> {
+    const match = await this.assertProfessor(matchId, professorId);
+    assertLobbyValeRanking(match.status);
+    await this.matches.atualizar(matchId, { valeRanking: vale });
     return this.view(matchId);
   }
 
