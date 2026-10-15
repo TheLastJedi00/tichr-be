@@ -69,6 +69,8 @@ export interface PainelHabitante {
   aliados?: string[];
   /** O poder ganho no acerto e o que ela pode escolher; `null` = sem poder. */
   poder?: Record<PoderAlienigena, boolean> | null;
+  /** Só para a Ameaça presa: a invasão forçada desta noite (028 §2.4). */
+  invasao?: { disponivel: boolean; declarada: boolean };
   /** Só para a original: a recarga do Contágio (028 §3.2). */
   contagioAcertos?: { atual: number; necessario: number };
   /** O habitante sob Controle Mental nesta rodada, se houver. */
@@ -216,6 +218,9 @@ export class IsolateusGameService {
             },
           }
         : {}),
+      ...(habitante.preso
+        ? { invasao: this.estadoDaInvasao(partida, segredo, alunoId) }
+        : {}),
       controle: origem.controlado
         ? { habitanteId: origem.controlado.id, nome: origem.controlado.nome }
         : null,
@@ -252,6 +257,58 @@ export class IsolateusGameService {
     }
     const propria = this.habitanteDoAluno(partida, segredo, alunoId);
     return { setorId: this.posicaoDe(segredo, propria), controlado: null };
+  }
+
+  // ===== A Invasão forçada (028 §2) =====
+
+  private estadoDaInvasao(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): { disponivel: boolean; declarada: boolean } {
+    const declarada = (segredo.invasoesNoite ?? []).includes(alunoId);
+    return {
+      disponivel: partida.status === 'DESLOCAMENTO' && !declarada,
+      declarada,
+    };
+  }
+
+  /**
+   * A Ameaça presa declara, de noite, que vai romper a Quarentena. A tentativa
+   * fica no cofre e vira disputa no amanhecer (abre a questão); quem decide a
+   * fuga é a questão do dia, em `resolverInvasoes`.
+   *
+   * Não entra em `confirmacoesNoite`: o preso não é esperado para fechar a
+   * noite (só os reais na vila são), e somá-lo inflaria o contador público —
+   * fechando a noite antes de um aldeão e contando à vila que alguém de fora
+   * agiu.
+   */
+  async declararInvasao(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!segredo.ehAmeaca(alunoId)) {
+      throw new ForbiddenException('Só uma Ameaça pode romper a Quarentena.');
+    }
+    if (!habitante.preso) {
+      throw new BadRequestException({
+        code: 'NAO_PRESA',
+        message: 'Você está livre na vila: não há Quarentena a romper.',
+      });
+    }
+    if (partida.status !== 'DESLOCAMENTO') {
+      throw new BadRequestException('A invasão só pode ser declarada à noite.');
+    }
+    // Uma tentativa por noite; repetir não muda nada (e mudar de ideia também
+    // não desfaz: a tentativa declarada vale).
+    if ((segredo.invasoesNoite ?? []).includes(alunoId)) return partida;
+
+    const invasoesNoite = [...(segredo.invasoesNoite ?? []), alunoId];
+    segredo.invasoesNoite = invasoesNoite;
+    await this.matches.commitPartida(partidaId, {}, { invasoesNoite });
+    return partida;
   }
 
   /** A original já somou os acertos que o Contágio pede (028 §3). */

@@ -159,6 +159,13 @@ export class IsolateusSegredoEntity {
    */
   resgateNoite?: { alunoId: string } | null;
 
+  /**
+   * Ameaças presas (alunoIds) que declararam a invasão nesta noite (028 §2).
+   * Decidida pela questão do dia e zerada na resolução dela. Fica no cofre: o
+   * alerta público é anônimo ("Algo tenta romper a Quarentena!").
+   */
+  invasoesNoite?: string[];
+
   /** Pontos acumulados por aluno (só viram ranking público no encerramento). */
   pontos: Record<string, number>;
 
