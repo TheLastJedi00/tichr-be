@@ -1701,11 +1701,13 @@ export class IsolateusGameService {
       partidaId,
       partida.rodada,
     );
-    const votantes = this.reaisNaVila(partida, segredo);
-    const votaram = respostas.filter((r) =>
-      votantes.some((v) => v.alunoId === r.alunoId),
-    );
-    if (votaram.length >= votantes.length) {
+    // Quem tentou romper a Quarentena também é esperado: a fuga depende da
+    // resposta dela, e fechar a questão antes anularia a tentativa (028 §2).
+    const esperados = new Set([
+      ...this.reaisNaVila(partida, segredo).map((v) => v.alunoId),
+      ...(segredo.invasoesNoite ?? []),
+    ]);
+    if ([...esperados].every((a) => respostas.some((r) => r.alunoId === a))) {
       await this.resolverRodada(partida, segredo);
     }
     return { registrada: true };
@@ -1977,6 +1979,15 @@ export class IsolateusGameService {
     const resgate = this.resolverResgate(partida, votantes, respostas, questao);
     partes.push(resgate?.texto ?? null);
 
+    // Os poderes saem ANTES da fuga: quem foge nesta questão não ganha poder
+    // por ela (ainda estava presa ao responder).
+    const poderes = this.concederPoderes(partida, segredo, respostas);
+    // A invasão é a última (028 §2.3): quem foge não salva nem é salvo nesta
+    // mesma questão.
+    partes.push(
+      ...this.resolverInvasoes(partida, segredo, votantes, respostas, questao),
+    );
+
     // O erro da vila não pontua a Ameaça: Aldeões e Ameaças pontuam só pelo
     // acerto, em `responder` (spec 027 §2).
 
@@ -2004,7 +2015,6 @@ export class IsolateusGameService {
       },
     };
 
-    const poderes = this.concederPoderes(partida, segredo, respostas);
     // A recarga do Contágio conta à parte dos poderes: o acerto da original
     // soma livre OU presa (028 §3) — preso, o saldo fica para depois da fuga.
     const acertosDesdeContagio =
@@ -2018,11 +2028,13 @@ export class IsolateusGameService {
     segredo.acoesRodada = [];
     segredo.poderes = poderes;
     segredo.acertosDesdeContagio = acertosDesdeContagio;
+    segredo.invasoesNoite = [];
     await this.matches.commitPartida(partida.id, dados, {
       acaoRodada: null,
       acoesRodada: [],
       poderes,
       acertosDesdeContagio,
+      invasoesNoite: [],
     });
 
     // A vila caiu? A Esperança zerada encerra a partida na hora.
@@ -2134,18 +2146,77 @@ export class IsolateusGameService {
     questao: { corretaIndex: number },
   ): { sucesso: boolean; texto: string } | null {
     if (!partida.resgatePendente) return null;
+    const sucesso = this.maioriaDosAldeoesAcertou(aldeoes, respostas, questao);
+    const texto = sucesso
+      ? 'O resgate deu certo: a vila vai escolher quem volta.'
+      : 'O resgate fracassou.';
+    this.registrar(partida, 'RESGATE', texto);
+    return { sucesso, texto };
+  }
+
+  /**
+   * Mais da metade das respostas dos aldeões reais na vila está certa. O
+   * critério do resgate (025 §6.3) e da defesa contra a invasão (028 §2):
+   * NPCs e Ameaças não contam, e zero respostas = não.
+   */
+  private maioriaDosAldeoesAcertou(
+    aldeoes: Array<{ alunoId: string }>,
+    respostas: Array<{ alunoId: string; alternativaIndex: number }>,
+    questao: { corretaIndex: number },
+  ): boolean {
     const dosAldeoes = respostas.filter((r) =>
       aldeoes.some((a) => a.alunoId === r.alunoId),
     );
     const certas = dosAldeoes.filter(
       (r) => r.alternativaIndex === questao.corretaIndex,
     ).length;
-    const sucesso = certas * 2 > dosAldeoes.length;
-    const texto = sucesso
-      ? 'O resgate deu certo: a vila vai escolher quem volta.'
-      : 'O resgate fracassou.';
-    this.registrar(partida, 'RESGATE', texto);
-    return { sucesso, texto };
+    return certas * 2 > dosAldeoes.length;
+  }
+
+  /**
+   * A invasão forçada, decidida pela questão (028 §2.2). Para cada Ameaça
+   * presa que tentou: errou → contida; acertou e a maioria dos aldeões reais
+   * na vila acertou → contida; senão → foge, livre, num setor sorteado.
+   *
+   * "Contida" tem um texto só para os dois casos: a vila não sabe se acertou
+   * ou se a invasora errou. A fuga é pública e diz o nome (Decisão #8).
+   */
+  private resolverInvasoes(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    aldeoes: Array<{ alunoId: string }>,
+    respostas: Array<{
+      alunoId: string;
+      alternativaIndex: number;
+      correta: boolean;
+    }>,
+    questao: { corretaIndex: number },
+  ): string[] {
+    const textos: string[] = [];
+    for (const alunoId of segredo.invasoesNoite ?? []) {
+      const presa = partida.habitantes.find(
+        (h) => h.id === segredo.habitanteDe(alunoId),
+      );
+      if (!presa?.preso) continue;
+      const acertou = !!respostas.find((r) => r.alunoId === alunoId)?.correta;
+      const foge =
+        acertou && !this.maioriaDosAldeoesAcertou(aldeoes, respostas, questao);
+      if (!foge) {
+        const texto = 'A Quarentena resistiu: a vila conteve a invasão.';
+        this.registrar(partida, 'INVASAO', texto);
+        textos.push(texto);
+        continue;
+      }
+      presa.preso = false;
+      presa.vivo = true;
+      // Sorteado, e não o da Quarentena: voltar sempre ao mesmo lugar seria
+      // uma emboscada garantida (Decisão #9).
+      presa.setorId = SETOR_IDS[Math.floor(Math.random() * SETOR_IDS.length)];
+      const texto = `${presa.nome} rompeu a Quarentena e voltou à vila!`;
+      this.registrar(partida, 'INVASAO', texto);
+      textos.push(texto);
+    }
+    return textos;
   }
 
   /** A Perícia do reparo. `null` se ninguém declarou reparo nesta noite. */

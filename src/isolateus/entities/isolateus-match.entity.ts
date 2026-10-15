@@ -257,6 +257,8 @@ export type TipoAcontecimento =
   | 'BRILHO'
   /** O resgate pela Saúde: organizado, cancelado, fracassado ou concluído. */
   | 'RESGATE'
+  /** A invasão forçada da Ameaça presa: contida ou fuga (028 §2). */
+  | 'INVASAO'
   | 'VEREDITO'
   | 'FIM';
 

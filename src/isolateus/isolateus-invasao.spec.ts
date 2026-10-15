@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { SETOR_IDS } from './isolateus.data';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /**
@@ -142,5 +143,136 @@ describe('Isolateus — a invasão é disputa e abre a questão', () => {
     await ctx.service.declararInvasao('a1', 'p1');
     await ctx.service.pularFase('prof', 'p1');
     expect(ctx.segredo.invasoesNoite).toEqual(['a1']);
+  });
+});
+
+describe('Isolateus — resolução da invasão e fuga', () => {
+  const CONTIDA = 'A Quarentena resistiu: a vila conteve a invasão.';
+  const FUGA = 'Real 1 rompeu a Quarentena e voltou à vila!';
+
+  afterEach(() => jest.restoreAllMocks());
+
+  /** Presa declara, a noite fecha e a questão abre (correta = 1). */
+  async function invasaoNoAr(opts: Parameters<typeof comPresa>[0] = {}) {
+    const ctx = comPresa(opts);
+    await ctx.service.declararInvasao('a1', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    return ctx;
+  }
+
+  async function responder(
+    ctx: ReturnType<typeof comPresa>,
+    respostas: Record<string, number>,
+  ) {
+    for (const [alunoId, alt] of Object.entries(respostas)) {
+      await ctx.service.responder(alunoId, 'p1', alt);
+    }
+  }
+
+  const h1 = (ctx: ReturnType<typeof comPresa>) =>
+    ctx.partida.habitantes.find((h) => h.id === 'h1')!;
+  const textos = (ctx: ReturnType<typeof comPresa>) =>
+    ctx.partida.acontecimentos.map((a) => a.texto);
+
+  it('a Ameaça errou: contida, com o mesmo texto da vila protegida', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 });
+
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(h1(ctx).preso).toBe(true);
+    expect(textos(ctx)).toContain(CONTIDA);
+    expect(ctx.partida.resumoRodada?.texto).toContain(CONTIDA);
+  });
+
+  it('a Ameaça acertou e a maioria da vila acertou: contida', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a1: 1, a2: 0, a3: 1, a4: 1, a5: 0 });
+
+    expect(h1(ctx).preso).toBe(true);
+    expect(textos(ctx)).toContain(CONTIDA);
+    expect(textos(ctx)).not.toContain(FUGA);
+  });
+
+  it('a Ameaça acertou e a maioria da vila errou: fuga para um setor sorteado', async () => {
+    const ctx = await invasaoNoAr();
+    jest.spyOn(Math, 'random').mockReturnValue(0.999);
+    await responder(ctx, { a1: 1, a2: 1, a3: 1, a4: 0, a5: 0 });
+
+    expect(h1(ctx)).toMatchObject({
+      preso: false,
+      vivo: true,
+      setorId: SETOR_IDS[SETOR_IDS.length - 1],
+    });
+    expect(ctx.partida.acontecimentos.at(-1)).toMatchObject({
+      tipo: 'INVASAO',
+      texto: FUGA,
+    });
+    expect(ctx.partida.resumoRodada?.texto).toContain(FUGA);
+  });
+
+  it('sem aldeão real na vila, a Ameaça que acerta foge', async () => {
+    const ctx = await invasaoNoAr({ reais: 3 });
+    ctx.partida.habitantes.find((h) => h.id === 'h3')!.vivo = false;
+    await responder(ctx, { a1: 1, a2: 0 });
+    expect(h1(ctx).preso).toBe(false);
+  });
+
+  it('a questão espera a resposta de quem tentou fugir', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a2: 1, a3: 0, a4: 0, a5: 0 });
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    await responder(ctx, { a1: 1 });
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+  });
+
+  it('invasoesNoite é zerado na resolução', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 });
+    expect(ctx.segredo.invasoesNoite).toEqual([]);
+  });
+
+  it('a fugitiva volta a ser Ameaça livre: aliada, age e ganha poder', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a1: 1, a2: 1, a3: 0, a4: 0, a5: 0 });
+    expect(h1(ctx).preso).toBe(false);
+
+    // Aliada da outra Ameaça, sem o campo de invasão.
+    expect((await ctx.service.painel('a2', 'p1')).aliados).toContain('Real 1');
+    expect(await ctx.service.painel('a1', 'p1')).not.toHaveProperty('invasao');
+
+    // Age na noite seguinte.
+    ctx.partida.status = 'DESLOCAMENTO';
+    ctx.partida.rodada = 1;
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    expect(ctx.segredo.acoesRodada?.some((j) => j.alunoId === 'a1')).toBe(true);
+
+    // Acertando a próxima questão, ganha poder como antes de ser presa.
+    ctx.partida.status = 'QUESTAO_ATIVA';
+    await responder(ctx, { a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 });
+    expect(ctx.segredo.poderes?.some((p) => p.alunoId === 'a1')).toBe(true);
+  });
+
+  it('a fugitiva conta no veredito: prendê-la de novo não encerra a partida se outra está livre', async () => {
+    const ctx = await invasaoNoAr();
+    await responder(ctx, { a1: 1, a2: 1, a3: 0, a4: 0, a5: 0 });
+    // Agora são duas livres: prender a contagiada não encerra mais.
+    ctx.partida.habitantes.find((h) => h.id === 'h2')!.preso = true;
+    expect(ctx.partida.status).not.toBe('ENCERRADO');
+    expect(h1(ctx).preso).toBe(false);
+  });
+
+  it('fuga e resgate na mesma questão: vale a fuga, o resgate falha sem ser consumido por ela', async () => {
+    const ctx = comPresa();
+    ctx.partida.resgatePendente = true;
+    await ctx.service.declararInvasao('a1', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+    // Resgate e fuga usam a maioria dos aldeões: a vila errar derruba o
+    // resgate e solta a invasora.
+    await responder(ctx, { a1: 1, a2: 0, a3: 0, a4: 0, a5: 1 });
+
+    expect(h1(ctx).preso).toBe(false);
+    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(textos(ctx)).toContain('O resgate fracassou.');
   });
 });
