@@ -65,7 +65,9 @@ export class WorMatchService {
       throw new ForbiddenException('Essa batalha não é sua.');
     }
     if (!jogo.palavras?.length) {
-      throw new BadRequestException('Adicione ao menos uma palavra ao arsenal.');
+      throw new BadRequestException(
+        'Adicione ao menos uma palavra ao arsenal.',
+      );
     }
 
     const escolhida = await this.resolverTurma(professorId, jogo, turmaId);
@@ -86,9 +88,11 @@ export class WorMatchService {
       letrasTentadas: [],
       cartasVisiveis: primeira.dicas.slice(0, 1),
       totalCartas: primeira.dicas.length,
-      turnoEquipeId: null,
       ordemEquipes: [],
-      acoesRodada: [],
+      jaAgiram: [],
+      equipesFechadas: [],
+      feedRodada: [],
+      feedSeq: 0,
       placar: [],
       inscritos: [],
       vencedorEquipeId: null,
@@ -172,17 +176,16 @@ export class WorMatchService {
    * alunos na sala: duplas a partir de 4, trios a partir de 6, quartetos a
    * partir de 8 (máx. 4 por equipe). O professor só clica "Distribuir".
    */
-  async distribuir(
-    professorId: string,
-    matchId: string,
-  ): Promise<MatchView> {
+  async distribuir(professorId: string, matchId: string): Promise<MatchView> {
     const match = await this.assertProfessor(matchId, professorId);
     if (match.status !== 'LOBBY') {
       throw new BadRequestException('A partida já começou.');
     }
     const total = match.inscritos.length;
     if (total < 2) {
-      throw new BadRequestException('São necessários pelo menos 2 alunos na sala.');
+      throw new BadRequestException(
+        'São necessários pelo menos 2 alunos na sala.',
+      );
     }
 
     const tamanho = tamanhoEquipe(total);
@@ -211,6 +214,8 @@ export class WorMatchService {
         isHorde: false,
         pontos: 0,
         logPontos: [],
+        pontosIndividuais: {},
+        logIndividual: {},
         membros: membrosPorEquipe[i],
       });
     }
@@ -258,16 +263,18 @@ export class WorMatchService {
     return this.view(matchId);
   }
 
-  /** Inicia a batalha: passa para EM_ANDAMENTO e define o primeiro turno. */
+  /** Inicia a batalha: passa para EM_ANDAMENTO e abre a primeira rodada (todas as equipes). */
   async iniciar(professorId: string, matchId: string): Promise<MatchView> {
-    const match = await this.assertProfessor(matchId, professorId);
+    await this.assertProfessor(matchId, professorId);
     const teams = await this.matches.listarTeams(matchId);
     if (teams.length < 2) {
       throw new BadRequestException('Distribua as equipes antes de iniciar.');
     }
     await this.matches.atualizar(matchId, {
       status: 'EM_ANDAMENTO',
-      turnoEquipeId: match.ordemEquipes[0],
+      jaAgiram: [],
+      equipesFechadas: [],
+      feedRodada: [],
       rodadaIniciadaEm: new Date().toISOString(),
     });
     return this.view(matchId);

@@ -71,6 +71,15 @@ export class AlunoWorController {
     });
   }
 
+  /** O que a equipe do aluno já jogou na rodada em curso (letras pendentes). */
+  @Get(':matchId/rodada')
+  rodada(
+    @CurrentStudent() { alunoId }: Student,
+    @Param('matchId') matchId: string,
+  ) {
+    return this.game.rodadaDaEquipe(alunoId, matchId);
+  }
+
   /** O canal do chat privado da equipe do aluno (lido via onSnapshot). */
   @Get(':matchId/chat')
   canalChat(

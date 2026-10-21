@@ -1,80 +1,22 @@
 import { BadRequestException } from '@nestjs/common';
-import { WorGameService } from './wor-game.service';
-import { WorMatchRepository } from './wor-match.repository';
-import { WorJogoRepository } from './wor-jogo.repository';
-import { WOR, WorMatchEntity } from './entities/wor-match.entity';
+import { WOR } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
-import { WorJogoEntity } from './entities/wor-jogo.entity';
-import { XpService } from '../turma/xp.service';
+import { fakeWor, JOGO_TESTE, partidaTeste } from './wor.fake';
 
 /**
  * O Risco Heroico com escolha: acertar a palavra inteira dá à equipe comum
  * Recuperar HP (a Cura Massiva de sempre) ou a Catapulta num castelo rival.
  * A palavra da onda 0 é ARTE.
  */
-function cenario(teams: WorTeamEntity[], turno = 'equipe-1') {
-  const match = new WorMatchEntity({
-    id: 'm1',
-    jogoId: 'j1',
-    professorId: 'p1',
-    status: 'EM_ANDAMENTO',
-    ondaIndex: 0,
-    totalOndas: 2,
-    mascara: ['_', '_', '_', '_'],
-    letrasTentadas: [],
-    cartasVisiveis: ['d1'],
-    totalCartas: 3,
-    ordemEquipes: teams.map((t) => t.id),
-    turnoEquipeId: turno,
-    acoesRodada: [],
-    rodadaIniciadaEm: new Date().toISOString(),
-  });
-  const jogo = new WorJogoEntity({
-    id: 'j1',
-    palavras: [
-      { id: 'w1', palavra: 'ARTE', dicas: ['d1', 'd2', 'd3'] },
-      { id: 'w2', palavra: 'REI', dicas: ['x1'] },
-    ],
-  });
-  const matches = {
-    buscar: async () => new WorMatchEntity({ ...match }),
-    atualizar: async (_i: string, d: Partial<WorMatchEntity>) =>
-      Object.assign(match, d),
-    listarTeams: async () => teams.map((t) => new WorTeamEntity({ ...t })),
-    buscarTeam: async (_m: string, id: string) => {
-      const t = teams.find((x) => x.id === id);
-      return t ? new WorTeamEntity({ ...t }) : null;
-    },
-    atualizarTeam: async (
-      _m: string,
-      id: string,
-      d: Partial<WorTeamEntity>,
-    ) => {
-      const t = teams.find((x) => x.id === id);
-      if (t) Object.assign(t, d);
-    },
-    commitPartida: async (
-      _m: string,
-      raiz: Partial<WorMatchEntity>,
-      equipes: Record<string, Partial<WorTeamEntity>> = {},
-    ) => {
-      Object.assign(match, raiz);
-      for (const [id, d] of Object.entries(equipes)) {
-        const t = teams.find((x) => x.id === id);
-        if (t) Object.assign(t, d);
-      }
-    },
-  } as unknown as WorMatchRepository;
-  const jogos = { findById: async () => jogo } as unknown as WorJogoRepository;
-  const xp = { creditarPartida: async () => undefined } as unknown as XpService;
-  return { service: new WorGameService(jogos, matches, xp), match, teams };
+function cenario(teams: WorTeamEntity[]) {
+  return fakeWor(JOGO_TESTE, partidaTeste(teams), teams);
 }
 
 const time = (
   id: string,
   nome: string,
   membros: string[],
-  hp = WOR.HP_INICIAL,
+  hp: number = WOR.HP_INICIAL,
   isHorde = false,
 ) =>
   new WorTeamEntity({
@@ -103,7 +45,7 @@ describe('Tichr Wor — Catapulta: validação antes do palpite', () => {
     await expect(
       service.arriscar('a1', 'm1', 'arte', { efeito: 'CATAPULTA' }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(match.acoesRodada).toEqual([]);
+    expect(match.jaAgiram).toEqual([]);
     expect(match.ondaIndex).toBe(0);
   });
 
@@ -245,6 +187,7 @@ describe('Tichr Wor — Risco Heroico: Recuperar HP × Catapulta', () => {
 
     expect(hp(teams, 'equipe-1')).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO);
     expect(hp(teams, 'equipe-2')).toBe(WOR.HP_INICIAL);
-    expect(match.lastGlobalAction?.tipo).toBe('DANO_CRITICO');
+    expect(match.lastGlobalAction).toBeUndefined();
+    expect(match.feedRodada[0]?.tipo).toBe('DANO_CRITICO');
   });
 });

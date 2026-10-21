@@ -30,7 +30,6 @@ function cenarioWorPausa(over: Partial<WorMatchEntity> = {}) {
     turmaId: 't1',
     status: 'EM_ANDAMENTO',
     ordemEquipes: ['e1', 'e2'],
-    turnoEquipeId: 'e1',
     mascara: ['_', '_'],
     rodadaIniciadaEm: new Date(T0 - 10_000).toISOString(),
     ...over,
@@ -54,6 +53,7 @@ function cenarioWorPausa(over: Partial<WorMatchEntity> = {}) {
         }
       },
     ),
+    transacao: jest.fn(),
   } as unknown as WorMatchRepository;
   const jogos = {
     findById: jest.fn(async () => ({
@@ -193,7 +193,8 @@ describe('WorGameService — pausada, comando dá 409', () => {
       Date.now() - 10 * 60_000,
     ).toISOString();
     await ctx.service.resolverPorTempo('p1', 'm1').catch(() => null);
-    expect(ctx.match.turnoEquipeId).toBe('e1');
+    expect(ctx.match.resumoRodada).toBeUndefined();
+    expect(ctx.matches.transacao).not.toHaveBeenCalled();
     expect(ctx.matches.commitPartida).not.toHaveBeenCalled();
   });
 });

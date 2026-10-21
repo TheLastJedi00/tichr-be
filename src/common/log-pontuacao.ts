@@ -11,7 +11,9 @@ export type FontePontos =
   | 'CATAPULTA'
   | 'ARRISCAR'
   | 'HP_FINAL'
-  | 'FATOR_COLOCACAO';
+  | 'FATOR_COLOCACAO'
+  | 'ACERTO_PALAVRA'
+  | 'ACERTO_LETRA';
 
 export interface ItemLogPontos {
   /** Pergunta (Qlick), rodada (Wor) ou noite (Isolateus), 1-based. */
