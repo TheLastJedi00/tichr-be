@@ -8,8 +8,16 @@ export interface MembroTeam {
 
 /** Cores das fortalezas (temática épica). Até 10 equipes (turmas grandes). */
 export const CORES_TEAM = [
-  '#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#7c3aed',
-  '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5',
+  '#2563eb',
+  '#dc2626',
+  '#16a34a',
+  '#f59e0b',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+  '#65a30d',
+  '#ea580c',
+  '#4f46e5',
 ];
 
 /**
@@ -32,6 +40,13 @@ export class WorTeamEntity {
    * `pontos`. No encerramento vira o `logPontuacao` de cada membro.
    */
   logPontos: ItemLogPontos[] = [];
+  /**
+   * Bônus individual de cada membro (029 §6A), por `alunoId`. Fica fora do
+   * `pontos`: não é dividido com a equipe nem entra no desempate.
+   */
+  pontosIndividuais: Record<string, number> = {};
+  /** De onde veio o bônus individual de cada membro, por `alunoId`. */
+  logIndividual: Record<string, ItemLogPontos[]> = {};
   membros: MembroTeam[] = [];
   /**
    * Cópia do último Action Card (fan-out). Redundante com a raiz de propósito:
