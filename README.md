@@ -1039,17 +1039,19 @@ abre confiando. O que é gravado, esse sim, não é sanitizado: o relato vale pe
 | Campo | Observação |
 |---|---|
 | `alunoId` / `nome` | o `nome` é o do ranking final (codinome no Isolateus) |
-| `totalPartida` | pontos de jogo = `rankingFinal[i].pontos` (no Wor, os pontos da equipe) |
+| `totalPartida` | pontos de jogo = `rankingFinal[i].pontos` (no Wor, os pontos da equipe + o bônus pessoal do aluno) |
 | `creditoRanking` | XP que de fato entrou no `xp_logs` (0 se casual ou sem turma) |
 | `itens[]` | `{ rodada, fonte, descricao, pontos }`, `rodada` 1-based (pergunta, rodada ou noite) |
 
 - **Fontes:** Qlick e Isolateus `ACERTO` (base + rapidez na descrição); Wor `DANO`, `CRITICO`,
   `CATAPULTA`, `ARRISCAR` (com quem acertou letra/arriscou e o multiplicador quando > 1x),
   `HP_FINAL` e `FATOR_COLOCACAO` (negativo, a metade cortada da equipe não campeã: a soma dos
-  itens bate com o crédito).
+  itens bate com o crédito), seguidos dos itens pessoais do aluno, `ACERTO_PALAVRA` e
+  `ACERTO_LETRA` (spec 029, sem o fator).
 - **Onde nasce:** Qlick deriva das `qlick_respostas` apuradas; Isolateus acumula no cofre
   (`logPontos`, nunca público antes do fim: revelaria quem acertou cada noite); Wor acumula em
-  `matches/{id}/teams/{teamId}.logPontos` no mesmo patch de `pontos`.
+  `matches/{id}/teams/{teamId}.logPontos` no mesmo patch de `pontos`, e o bônus pessoal em
+  `logIndividual[alunoId]`.
 - `creditosDaPartida()` é a fonte única do crédito **e** do `creditoRanking`.
 - A penalidade de moderação do Wor (`WOR_MODERACAO`) é debitada na hora e **não** entra no log.
 - Partidas encerradas antes do deploy não têm o campo.
@@ -1099,10 +1101,19 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
 - **Estado fragmentado da partida** (leitura pública, escrita negada):
   - **`matches/{id}`** (raiz): `status` (LOBBY/EM_ANDAMENTO/ENCERRADO), `ondaIndex`,
     `mascara[]` (letra / `_` / espaço), `letrasTentadas[]`, `cartasVisiveis[]`,
-    `turnoEquipeId`, `ordemEquipes[]`, `acoesRodada[]`, `rodadaIniciadaEm`, `placar[]`,
-    `resumoRodada`, `lastGlobalAction`, `inscritos[]`, `vencedorEquipeId`.
-    **Não** guarda o segredo (palavra/dicas ficam em `wor_jogos`).
+    `ordemEquipes[]` (só exibição), `jaAgiram[]` (`alunoId` de quem já agiu na rodada),
+    `equipesFechadas[]` (`{ equipeId, ordem, resultado: ATACAR|DICA|NADA|CAIU }`, na ordem de
+    chegada), `feedRodada[]` (`{ seq, tipo: ATAQUE|DICA|DANO_CRITICO, mensagem, em }`) +
+    `feedSeq`, `rodadaIniciadaEm`, `placar[]`, `resumoRodada` (`{ seq, porTempo?,
+    resultados[] }`, um resultado por equipe em ordem), `lastGlobalAction`, `inscritos[]`,
+    `vencedorEquipeId`. **Não** guarda o segredo (palavra/dicas ficam em `wor_jogos`).
+    Desde a 029 saíram `turnoEquipeId` e `acoesRodada`.
+  - **`matches/{id}/privado/rodada`** (server-only: as rules só liberam a raiz e `teams`, então
+    cai no catch-all deny): `acoes[]` (`{ alunoId, equipeId, tipo, letra?, acertou, voto?,
+    ordem, em }`) e `resultados[]` de quem já fechou. Na raiz, a letra e o acerto deixariam uma
+    equipe copiar a resposta da outra antes do reveal.
   - **`matches/{id}/teams/{teamId}`**: `hp`, `isHorde`, `cor`, `nome`, `pontos`,
+    `logPontos[]`, `pontosIndividuais` (`{ [alunoId]: pontos }`), `logIndividual`,
     `membros[]`, `lastGlobalAction`.
     O **aluno escuta só o próprio time** → dano/cura dispara barato; o **professor**
     escuta a raiz + todos os times (1 leitura por ação no telão).
@@ -1110,18 +1121,23 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
 #### Action Cards (`lastGlobalAction`) — narração global + freeze
 Ação de impacto é narrada ao mesmo tempo em **todas** as telas. Como o aluno só
 escuta o doc da própria equipe, o evento vai por **fan-out**: o mesmo objeto é
-gravado na raiz (telão) **e em cada equipe**, num **único `WriteBatch`** junto do
-seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
+gravado na raiz (telão) **e em cada equipe**, na mesma transação do seu efeito
+(`WorMatchRepository.transacao`).
 
 - Formato: `{ seq, tipo, mensagem, duracaoMs, em }`, com `tipo` em
-  `ATAQUE | CURA | USURPACAO | DANO_CRITICO | DICA`. O cliente detecta `seq` novo,
-  exibe o card por `duracaoMs` (3s) e trava os inputs.
+  `CURA | CATAPULTA | USURPACAO | QUEDA | MODERACAO`. O cliente detecta `seq` novo,
+  exibe o card por `duracaoMs` (3s) e trava os inputs. `QUEDA` (029) sai quando um castelo
+  vira Horda. `MODERACAO` vai só à raiz e à equipe infratora.
+- **Feed sem freeze (029):** ataque, compra de dica e erro ao arriscar acontecem várias vezes
+  por rodada com as equipes em paralelo. Vão para `feedRodada` (zerado a cada rodada; `seq`
+  não zera) e não empurram o relógio.
 - **Freeze:** não existe timer no servidor para pausar — o cronômetro é derivado de
   `rodadaIniciadaEm`. Congelar = gravar esse instante **3s no futuro** (`WOR.FREEZE_MS`).
   O relógio dos clientes não corre durante o card e `resolverPorTempo` não fecha a
   rodada no meio da narração. Nada precisa ser "destravado" depois.
-- **Um card por requisição:** se a rodada resolve na mesma ação em que alguém sofreu
-  Dano Crítico, o card do crítico prevalece (a resolução ainda chega pelo `resumoRodada`).
+- **Um card por requisição:** dois eventos grandes no mesmo comando viram um card só, com as
+  duas falas. Com a rodada em curso, o card empurra `rodadaIniciadaEm` em 3s; com rodada nova,
+  ela nasce 3s no futuro.
 
 ### Endpoints — Arsenal & IA (professor)
 | Método | Rota | Descrição |
@@ -1137,25 +1153,39 @@ seu efeito (dano, cura, troca de turno) — `WorMatchRepository.commitPartida`.
 | `POST` | `/wor/matches/:id/distribuir` `{ numeroEquipes }` | forma equipes (round-robin dos inscritos) |
 | `POST` | `/wor/matches/:id/multiplicador` `{ multiplicador }` | **só no lobby**: quanto valem os pontos da partida, inteiro de **1 a 10** (400 fora da faixa ou depois do início; 403 se a partida não é do professor). Público em `multiplicador` (ausente = 1) |
 | `POST` | `/wor/matches/:id/vale-ranking` `{ valeRanking }` | **só no lobby** (400 `PARTIDA_INICIADA`; 403 se a partida não é do professor): desmarcado, a partida é **casual** |
-| `POST` | `/wor/matches/:id/iniciar` | inicia a batalha (define o 1º turno) |
-| `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada |
+| `POST` | `/wor/matches/:id/iniciar` | inicia a batalha e abre a 1ª rodada (todas as equipes) |
+| `POST` | `/wor/matches/:id/pular` | mestre pula a palavra travada (a rodada em curso é descartada, sem resolver ninguém) |
 | `POST` | `/wor/matches/:id/pausar` | **pausa** a batalha em andamento (400 `PARTIDA_NAO_PAUSAVEL` no lobby/encerrada; 403 se não é do professor; idempotente) |
 | `POST` | `/wor/matches/:id/retomar` | retoma, empurrando `rodadaIniciadaEm` e o `em` do Action Card em cartaz (raiz e equipes) |
-| `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo) |
+| `POST` | `/wor/matches/:id/tempo` | projetor fecha a rodada por tempo esgotado (o servidor revalida o prazo): as equipes abertas resolvem na ordem da última ação; sem ação, não agem |
 
 ### Endpoints — Ações do aluno (`@Roles('STUDENT')`, mesmo login do Qlick)
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/aluno/wor` | partida ativa da turma do aluno |
 | `POST` | `/aluno/wor/:id/entrar` | inscreve o aluno no lobby |
-| `POST` | `/aluno/wor/:id/letra` `{ letra, acao, alvoEquipeId? }` | chuta a letra **e vota** a ação da equipe (atacar rival / comprar dica) |
+| `POST` | `/aluno/wor/:id/letra` `{ letra, acao, alvoEquipeId? }` | chuta a letra **e vota** a ação da equipe (atacar rival / comprar dica). Letra repetida só é barrada dentro da equipe e em `letrasTentadas`; equipe que já fechou (ou caiu) → 400 `EQUIPE_FECHOU` |
+| `GET` | `/aluno/wor/:id/rodada` | o que a **própria equipe** jogou na rodada em curso: `{ equipeId, fechou: { ordem, resultado } \| null, acoes[{ alunoId, nome, tipo, letra? }] }`, sem `acertou` nem voto (403 sem equipe). O celular recupera as letras pendentes por aqui |
 | `GET` | `/aluno/wor/:id/chat` | `{ canalId }` do chat privado da **equipe do aluno** (403 sem equipe). Cria os canais que faltam numa transação (idempotente — cobre partidas antigas). O cliente escuta `wor_chats/{canalId}` |
 | `POST` | `/aluno/wor/:id/chat` `{ texto }` | Mensagem no chat da equipe: só em `EM_ANDAMENTO`, 1–200 caracteres depois do `trim`, 1 a cada 2s por aluno (429 `CHAT_RAPIDO`). **Palavrão → 422 `MENSAGEM_BLOQUEADA`**, a mensagem não é gravada e a penalidade é aplicada |
 | `POST` | `/aluno/wor/:id/arriscar` `{ palavra, efeito?, alvoEquipeId? }` | **Risco Heroico**: acertou → `efeito` `CURAR` (padrão) ou `CATAPULTA` no castelo `alvoEquipeId` + encerra a onda / **Invasão** da Horda (usurpação; ignora o efeito). Efeito/alvo inválidos → **400 antes de conferir a palavra** (a tentativa não é consumida) |
 
 ### Regras (constantes em `WOR`, ajustáveis)
-O turno é **da equipe**: cada membro age uma vez (letra + voto) e a rodada resolve
-quando todos jogaram — ou quando o cronômetro (`LIMITE_RODADA_MS`, 60s) zera.
+**Rodada em paralelo (spec 029):** não há turno. Todas as equipes jogam a mesma palavra no mesmo
+relógio (`LIMITE_RODADA_MS`, 60s), então uma rodada dura o mesmo com 2 ou 10 equipes.
+
+- Cada membro age uma vez (letra + voto, ou arrisca). A **equipe fecha** quando todos agiram e
+  aplica o dano **na hora**: quem fecha primeiro bate primeiro. Castelo derrubado antes de a
+  equipe fechar → ela fecha como `CAIU`, perde o ataque e não joga mais na rodada.
+- A **rodada fecha** quando todas as equipes fecharam ou o tempo acaba. Só aí as letras entram na
+  máscara e cada dica comprada revela uma carta (até o total).
+- Risco Heroico/Invasão certo acaba a onda na hora para todos: o dano de quem já fechou fica, as
+  ações pendentes são descartadas. Erro → Dano Crítico no próprio castelo, no feed.
+- **Concorrência:** todo comando roda o `MotorWor` (`wor-motor.ts`, puro) dentro de
+  `WorMatchRepository.transacao` (raiz + equipes + `privado/rodada`, `maxAttempts: 10`). O
+  crédito no ranking sai depois do commit.
+- **Fim de jogo não muda:** com um castelo só de pé, a batalha segue com as Hordas até acabarem
+  as palavras.
 
 HP inicial **1000** · Ataque **100** · Ataque perfeito (todos acertaram, equipe 2+)
 **200** · Cura Massiva **400** · Bônus de Risco Heroico **+300 pontos** · até **3 cartas** ·
@@ -1175,6 +1205,14 @@ restante vira pontos (`BONUS_HP_FATOR`) e os pontos viram XP da turma —
 `XP = pontos × XP_POR_PONTO (1)`, cheio para a campeã e **metade** para as demais
 (`XpService.creditarPartida`, motivo `WOR`). A conversão era **0,1** e deixava o Wor muito abaixo
 do Qlick e do Isolateus; agora é **1:1**, a mesma régua deles.
+
+**Bônus pessoal (029):** `BONUS_ACERTO_PALAVRA` **+1000** para quem arrisca e acerta a palavra
+(Risco Heroico ou Invasão) e `BONUS_ACERTO_LETRA` **+300** por letra certa, creditado no
+**fechamento da rodada** (antes, o doc da equipe diria se a letra estava certa). Vai para
+`pontosIndividuais`/`logIndividual` da equipe, **fora** do `pontos`: não é dividido com a
+equipe nem desempata. Tem o multiplicador e **não** sofre o ×0,5: crédito do aluno =
+`ganhoDaEquipe` + bônus pessoal. Letra descartada porque a onda acabou no meio da rodada não
+rende; letra certa de equipe que caiu rende.
 
 **Multiplicador da partida:** no lobby, o professor escolhe de **1x a 10x**
 (`MULTIPLICADOR_MIN`/`MULTIPLICADOR_MAX`). Todo ponto ganho na partida é multiplicado (dano,
