@@ -1,7 +1,5 @@
-import { WorGameService } from './wor-game.service';
-import { WorMatchRepository } from './wor-match.repository';
-import { WorJogoRepository } from './wor-jogo.repository';
-import { WOR, WorMatchEntity } from './entities/wor-match.entity';
+import { fakeWor, JOGO_TESTE, partidaTeste } from './wor.fake';
+import { WOR } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { XpService } from '../turma/xp.service';
 
@@ -12,40 +10,19 @@ import { XpService } from '../turma/xp.service';
  */
 function cenario(teams: WorTeamEntity[], turmaId: string | null = 't1') {
   const inicio = new Date('2026-10-07T12:00:00Z').toISOString();
-  const match = new WorMatchEntity({
-    id: 'm1',
-    jogoId: 'j1',
-    professorId: 'p1',
-    turmaId,
-    status: 'EM_ANDAMENTO',
-    ordemEquipes: teams.map((t) => t.id),
-    turnoEquipeId: teams[0].id,
-    rodadaIniciadaEm: inicio,
-  });
-  const patchesEquipes: Record<string, Partial<WorTeamEntity>> = {};
-  const matches = {
-    buscar: () => Promise.resolve(new WorMatchEntity({ ...match })),
-    listarTeams: () =>
-      Promise.resolve(teams.map((t) => new WorTeamEntity({ ...t }))),
-    commitPartida: (
-      _m: string,
-      raiz: Partial<WorMatchEntity>,
-      equipes: Record<string, Partial<WorTeamEntity>> = {},
-    ) => {
-      Object.assign(match, raiz);
-      for (const [id, d] of Object.entries(equipes)) {
-        patchesEquipes[id] = { ...(patchesEquipes[id] ?? {}), ...d };
-        const t = teams.find((x) => x.id === id);
-        if (t) Object.assign(t, d);
-      }
-      return Promise.resolve();
-    },
-  } as unknown as WorMatchRepository;
-  const jogos = {} as unknown as WorJogoRepository;
+  const match = partidaTeste(teams, { turmaId, rodadaIniciadaEm: inicio });
   const penalizar = jest.fn(() => Promise.resolve());
   const xp = { penalizarJogo: penalizar } as unknown as XpService;
+  const f = fakeWor(JOGO_TESTE, match, teams, { xp });
+  /** O que cada equipe recebeu na transação da penalidade. */
+  const patchesEquipes = new Proxy(
+    {},
+    {
+      get: (_t, id: string) => f.transacoes.at(-1)?.equipes?.[id],
+    },
+  );
   return {
-    service: new WorGameService(jogos, matches, xp),
+    service: f.service,
     match,
     teams,
     patchesEquipes,
@@ -153,6 +130,18 @@ describe('Tichr Wor — penalidade de moderação (Task 4)', () => {
     expect(teams[0].hp).toBe(0);
     expect(penalizar).toHaveBeenCalled();
     expect(match.lastGlobalAction?.mensagem).not.toContain('HP');
+  });
+
+  it('se derrubar o castelo de quem não fechou, a equipe fecha como CAIU', async () => {
+    const teams = [
+      time('e1', 'Dragões', ['ana', 'duda'], 80),
+      time('e2', 'Grifos', ['bia']),
+    ];
+    const { service, match } = cenario(teams);
+    await service.penalizarModeracao('m1', 'ana');
+    expect(match.equipesFechadas).toEqual([
+      { equipeId: 'e1', ordem: 1, resultado: 'CAIU' },
+    ]);
   });
 
   it('partida sem turma: sem ranking para debitar, só o HP', async () => {

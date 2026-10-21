@@ -1,8 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { FirebaseService } from '../firebase/firebase.service';
-import { WorMatchEntity } from './entities/wor-match.entity';
+import { WorMatchEntity, WorRodadaPrivada } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
+
+/** O que uma transação do Wor lê: a partida inteira, de uma vez. */
+export interface EstadoWor {
+  match: WorMatchEntity;
+  teams: WorTeamEntity[];
+  rodada: WorRodadaPrivada;
+}
+
+/** O que ela grava. `rodada` substitui o doc privado inteiro. */
+export interface MudancasWor {
+  raiz?: Partial<WorMatchEntity>;
+  equipes?: Record<string, Partial<WorTeamEntity>>;
+  rodada?: WorRodadaPrivada | null;
+}
 
 /** Por quanto tempo após a criação a partida continua "de hoje" para o aluno. */
 const JANELA_VISIBILIDADE_MS = 12 * 60 * 60 * 1000; // 12h
@@ -20,6 +34,9 @@ export class WorMatchRepository {
   }
   private teamsCol(matchId: string) {
     return this.col.doc(matchId).collection('teams');
+  }
+  private rodadaRef(matchId: string) {
+    return this.col.doc(matchId).collection('privado').doc('rodada');
   }
   private semId<T extends { id?: string }>(data: T): Omit<T, 'id'> {
     const plain = { ...data };
@@ -55,7 +72,9 @@ export class WorMatchRepository {
   ): Promise<void> {
     const batch = this.firebase.firestore.batch();
     if (Object.keys(raiz).length) {
-      batch.set(this.col.doc(matchId), this.semId({ ...raiz }), { merge: true });
+      batch.set(this.col.doc(matchId), this.semId({ ...raiz }), {
+        merge: true,
+      });
     }
     for (const [teamId, dados] of Object.entries(equipes)) {
       batch.set(this.teamsCol(matchId).doc(teamId), this.semId({ ...dados }), {
@@ -63,6 +82,64 @@ export class WorMatchRepository {
       });
     }
     await batch.commit();
+  }
+
+  /**
+   * Lê a raiz, as equipes e a rodada privada e grava o que `fn` devolver, numa
+   * TRANSAÇÃO (029). Desde a rodada em paralelo, todos os alunos agem ao mesmo
+   * tempo: com ler-e-gravar simples, duas ações no mesmo instante apagariam uma
+   * à outra. `fn` pode rodar mais de uma vez (o Firestore repete em conflito),
+   * então só deve mutar o que recebe.
+   */
+  async transacao<R>(
+    matchId: string,
+    fn: (estado: EstadoWor) => { mudancas: MudancasWor; resultado: R },
+  ): Promise<R> {
+    const refRaiz = this.col.doc(matchId);
+    const refRodada = this.rodadaRef(matchId);
+    return this.firebase.firestore.runTransaction(
+      async (tx) => {
+        const [snapRaiz, snapTeams, snapRodada] = await Promise.all([
+          tx.get(refRaiz),
+          tx.get(this.teamsCol(matchId)),
+          tx.get(refRodada),
+        ]);
+        if (!snapRaiz.exists) {
+          throw new NotFoundException('Partida não encontrada.');
+        }
+        const estado: EstadoWor = {
+          match: plainToInstance(WorMatchEntity, {
+            ...snapRaiz.data(),
+            id: snapRaiz.id,
+          }),
+          teams: snapTeams.docs.map((d) =>
+            plainToInstance(WorTeamEntity, { ...d.data(), id: d.id }),
+          ),
+          rodada: plainToInstance(WorRodadaPrivada, snapRodada.data() ?? {}),
+        };
+        const { mudancas, resultado } = fn(estado);
+        if (mudancas.raiz && Object.keys(mudancas.raiz).length) {
+          tx.set(refRaiz, this.semId({ ...mudancas.raiz }), { merge: true });
+        }
+        for (const [teamId, dados] of Object.entries(mudancas.equipes ?? {})) {
+          tx.set(this.teamsCol(matchId).doc(teamId), this.semId({ ...dados }), {
+            merge: true,
+          });
+        }
+        if (mudancas.rodada) {
+          tx.set(refRodada, { ...mudancas.rodada });
+        }
+        return resultado;
+      },
+      // Turma grande = muitas ações no mesmo segundo disputando a raiz.
+      { maxAttempts: 10 },
+    );
+  }
+
+  /** A rodada em curso, só para o servidor (deny pelo catch-all das rules). */
+  async buscarRodada(matchId: string): Promise<WorRodadaPrivada> {
+    const snap = await this.rodadaRef(matchId).get();
+    return plainToInstance(WorRodadaPrivada, snap.data() ?? {});
   }
 
   /**
@@ -88,7 +165,9 @@ export class WorMatchRepository {
     teamId: string,
     data: Omit<WorTeamEntity, 'id' | 'aplicarDano' | 'curar'>,
   ): Promise<WorTeamEntity> {
-    await this.teamsCol(matchId).doc(teamId).set({ ...data });
+    await this.teamsCol(matchId)
+      .doc(teamId)
+      .set({ ...data });
     return plainToInstance(WorTeamEntity, { ...data, id: teamId });
   }
 

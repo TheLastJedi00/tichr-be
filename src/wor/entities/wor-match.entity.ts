@@ -56,7 +56,8 @@ export type TipoAcaoGlobal =
   | 'USURPACAO'
   | 'DANO_CRITICO'
   | 'DICA'
-  | 'MODERACAO';
+  | 'MODERACAO'
+  | 'QUEDA';
 
 /**
  * Evento de impacto narrado em TODAS as telas (alunos + telão) ao mesmo tempo.
@@ -90,12 +91,13 @@ export interface InscritoWor {
 
 /** Voto do membro (só conta se ele acertou a letra). */
 export type VotoRodada =
-  | { tipo: 'ATACAR'; alvoEquipeId: string }
-  | { tipo: 'DICA' };
+  { tipo: 'ATACAR'; alvoEquipeId: string } | { tipo: 'DICA' };
 
-/** Ação de um membro na rodada da sua equipe. */
+/** Ação de um membro na rodada (server-only, em `privado/rodada`). */
 export interface AcaoMembro {
   alunoId: string;
+  /** Equipe do membro: todas as equipes jogam a mesma rodada (029 §1). */
+  equipeId: string;
   /** 'LETRA' = chutou uma letra; 'ARRISCAR' = tentou a palavra e errou. */
   tipo: 'LETRA' | 'ARRISCAR';
   letra?: string;
@@ -104,9 +106,47 @@ export interface AcaoMembro {
   voto?: VotoRodada;
   /** Ordem de chegada na rodada (desempate da votação). */
   ordem: number;
+  /** Hora da ação (ISO): ordena as equipes que fecham por tempo (029 #8). */
+  em: string;
 }
 
-/** Tempo-limite de uma rodada (turno de equipe). Cronômetro visível no cliente. */
+/** Como a equipe fechou a rodada (029 §1.2). `CAIU` = o castelo caiu antes. */
+export type ResultadoFechamento = 'ATACAR' | 'DICA' | 'NADA' | 'CAIU';
+
+/** Equipe que já fechou a rodada, na ordem de chegada (público). */
+export interface EquipeFechada {
+  equipeId: string;
+  /** 1 = fechou primeiro. */
+  ordem: number;
+  resultado: ResultadoFechamento;
+}
+
+/** Evento da rodada que não congela o jogo (029 §3). */
+export interface ItemFeed {
+  seq: number;
+  tipo: 'ATAQUE' | 'DICA' | 'DANO_CRITICO';
+  mensagem: string;
+  em: string;
+}
+
+/** O resultado de uma equipe na rodada (reveal do fechamento). */
+export interface ResultadoRodadaEquipe {
+  equipeId: string;
+  equipeNome: string;
+  ordem: number;
+  /** Membros que acertaram a letra nesta rodada. */
+  acertadores: { nome: string; letra: string }[];
+  acao: ResultadoFechamento;
+  alvoEquipeId?: string;
+  alvoNome?: string;
+  dano?: number;
+  critico?: boolean;
+}
+
+/**
+ * Tempo-limite de uma rodada. Desde a 029 vale para todas as equipes ao mesmo
+ * tempo: um relógio só, visível no telão e nos celulares.
+ */
 export const LIMITE_RODADA_MS = 60 * 1000;
 
 /** Snapshot público de uma equipe na raiz (o aluno vê os castelos rivais barato). */
@@ -120,28 +160,39 @@ export interface PlacarEquipe {
   pontos: number;
 }
 
-/** Resultado da última rodada resolvida — reveal para todos + quem atacou quem. */
+/**
+ * A última rodada fechada: o reveal para todos, com o resultado de cada equipe
+ * na ordem em que elas fecharam (029 §2.2).
+ */
 export interface ResumoRodada {
-  /** Incrementa a cada rodada resolvida (o cliente detecta rodada nova). */
+  /** Incrementa a cada rodada fechada (o cliente detecta rodada nova). */
   seq: number;
-  equipeId: string;
-  equipeNome: string;
-  /** Membros que acertaram a letra nesta rodada. */
-  acertadores: { nome: string; letra: string }[];
-  acao: 'ATACAR' | 'DICA' | 'NADA';
-  alvoEquipeId?: string;
-  alvoNome?: string;
-  dano?: number;
-  critico?: boolean;
-  /** A rodada foi encerrada por tempo esgotado. */
+  /** Na ordem em que as equipes fecharam. */
+  resultados: ResultadoRodadaEquipe[];
+  /** A rodada foi fechada por tempo esgotado. */
   porTempo?: boolean;
+}
+
+/**
+ * O que a rodada em curso guarda longe do cliente (`matches/{id}/privado/rodada`,
+ * deny pelo catch-all das rules): a letra e o acerto de cada membro, e o
+ * resultado de quem já fechou. Na raiz pública, deixariam uma equipe copiar a
+ * resposta da outra antes do reveal (029 §2.1).
+ */
+export class WorRodadaPrivada {
+  acoes: AcaoMembro[] = [];
+  resultados: ResultadoRodadaEquipe[] = [];
+
+  constructor(partial: Partial<WorRodadaPrivada> = {}) {
+    Object.assign(this, partial);
+  }
 }
 
 /**
  * Estado GLOBAL (raiz `matches/{id}`) de uma batalha do Tichr Wor. É lido pelo
  * cliente (professor e alunos), então **NÃO** guarda o segredo: a palavra e as
  * dicas completas ficam em `wor_jogos` (server-only). Aqui vai só a máscara, as
- * cartas já reveladas e o controle de turno/onda. Escrita só pelo backend.
+ * cartas já reveladas e o controle da rodada/onda. Escrita só pelo backend.
  */
 export class WorMatchEntity {
   id: string;
@@ -180,15 +231,20 @@ export class WorMatchEntity {
   /** Quantas cartas existem nesta palavra (para saber se ainda há o que comprar). */
   totalCartas = 0;
 
-  /** Turno (por equipe) e ordem de round-robin. */
-  turnoEquipeId?: string | null;
+  /** Ordem das equipes (exibição; desde a 029 não há mais rodízio). */
   ordemEquipes: string[] = [];
   /**
-   * Ações já feitas pelos membros da equipe do turno NESTA rodada. A rodada
-   * resolve (dano/dica + passa turno) quando todos os membros da equipe agiram.
+   * Quem já agiu na rodada em curso (`alunoId`). É o lado público das ações:
+   * a letra e o acerto ficam em `privado/rodada` (029 §2.1).
    */
-  acoesRodada: AcaoMembro[] = [];
-  /** Início do turno/rodada atual (ISO) — base do cronômetro de 1 min no cliente. */
+  jaAgiram: string[] = [];
+  /** Equipes que já fecharam a rodada em curso, na ordem de chegada. */
+  equipesFechadas: EquipeFechada[] = [];
+  /** Eventos da rodada em curso que não congelam o jogo (029 §3). */
+  feedRodada: ItemFeed[] = [];
+  /** Contador do feed (não zera entre rodadas: é o gatilho do cliente). */
+  feedSeq = 0;
+  /** Início da rodada atual (ISO) — base do cronômetro de 1 min no cliente. */
   rodadaIniciadaEm?: string | null;
 
   /**
@@ -216,10 +272,7 @@ export class WorMatchEntity {
 
   /** Normaliza uma letra para comparação: maiúscula, sem acento. */
   static normalizar(letra: string): string {
-    return letra
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .toUpperCase();
+    return letra.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
   }
 
   /**
@@ -230,7 +283,9 @@ export class WorMatchEntity {
   static mascarar(palavra: string, reveladas: Set<string>): string[] {
     return [...palavra].map((ch) => {
       if (ch.trim() === '') return ' ';
-      return reveladas.has(WorMatchEntity.normalizar(ch)) ? ch.toUpperCase() : '_';
+      return reveladas.has(WorMatchEntity.normalizar(ch))
+        ? ch.toUpperCase()
+        : '_';
     });
   }
 
