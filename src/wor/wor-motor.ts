@@ -174,6 +174,12 @@ export class MotorWor {
         fonte: 'ARRISCAR',
         descricao: `Rodada ${rodada}: ${aluno} arriscou a palavra inteira e acertou`,
       });
+      // …e o aluno que acertou leva o bônus pessoal (029 §6A).
+      this.ganharIndividual(team, alunoId, WOR.BONUS_ACERTO_PALAVRA, {
+        rodada,
+        fonte: 'ACERTO_PALAVRA',
+        descricao: `Rodada ${rodada}: acertou a palavra inteira ao arriscar`,
+      });
       // A onda acaba para todos: quem já fechou mantém o dano; as ações de
       // quem ainda não fechou são descartadas (029 #9).
       this.fecharRodada({ descartarAbertas: true, avancar: true });
@@ -396,6 +402,19 @@ export class MotorWor {
 
     const fechadas = new Set(this.match.equipesFechadas.map((f) => f.equipeId));
     const validas = this.rodada.acoes.filter((a) => fechadas.has(a.equipeId));
+    // Bônus pessoal da letra certa: só agora, no reveal. Creditar na hora
+    // diria, pelo doc da equipe, se a letra estava certa (029 #14).
+    const rodada = this.numeroRodada();
+    for (const a of validas) {
+      if (a.tipo !== 'LETRA' || !a.acertou) continue;
+      const team = this.teams.find((t) => t.id === a.equipeId);
+      if (!team) continue;
+      this.ganharIndividual(team, a.alunoId, WOR.BONUS_ACERTO_LETRA, {
+        rodada,
+        fonte: 'ACERTO_LETRA',
+        descricao: `Rodada ${rodada}: acertou a letra ${a.letra}`,
+      });
+    }
     const letras = validas
       .filter((a) => a.tipo === 'LETRA' && a.letra)
       .map((a) => a.letra as string);
@@ -488,9 +507,10 @@ export class MotorWor {
     const ganhos: Array<{ alunoId: string; pontos: number }> = [];
     for (const t of this.teams) {
       const ganho = this.ganhoDaEquipe(t, vencedor?.id);
-      if (ganho <= 0) continue;
-      for (const m of t.membros)
-        ganhos.push({ alunoId: m.alunoId, pontos: ganho });
+      for (const m of t.membros) {
+        const pontos = ganho + this.ganhoIndividual(t, m.alunoId);
+        if (pontos > 0) ganhos.push({ alunoId: m.alunoId, pontos });
+      }
     }
     const creditos = vencedor ? creditosDaPartida(this.match, ganhos) : [];
 
@@ -786,6 +806,26 @@ export class MotorWor {
     this.sujas.add(team.id);
   }
 
+  /**
+   * O bônus pessoal (029 §6A): com o multiplicador, no `pontosIndividuais` e
+   * no log do aluno — nunca no `team.pontos`, que é dividido com a equipe.
+   */
+  private ganharIndividual(
+    team: WorTeamEntity,
+    alunoId: string,
+    base: number,
+    item: Omit<ItemLogPontos, 'pontos'>,
+  ): void {
+    const pontos = this.pontos(base);
+    const individuais = { ...(team.pontosIndividuais ?? {}) };
+    individuais[alunoId] = (individuais[alunoId] ?? 0) + pontos;
+    team.pontosIndividuais = individuais;
+    const logs = { ...(team.logIndividual ?? {}) };
+    this.anotar(logs[alunoId], item, pontos, (l) => (logs[alunoId] = l));
+    team.logIndividual = logs;
+    this.sujas.add(team.id);
+  }
+
   /** Acrescenta o item ao log (o multiplicador vai na descrição acima de 1x). */
   private anotar(
     log: ItemLogPontos[] | undefined,
@@ -810,6 +850,13 @@ export class MotorWor {
     return Math.round(base * (this.match.multiplicador ?? 1));
   }
 
+  /** Bônus pessoal → XP do ranking, inteiro (sem o ×0,5 da não campeã). */
+  private ganhoIndividual(team: WorTeamEntity, alunoId: string): number {
+    return Math.round(
+      (team.pontosIndividuais?.[alunoId] ?? 0) * WOR.XP_POR_PONTO,
+    );
+  }
+
   /** Pontos da equipe → XP do ranking (campeã ×1, demais ×0,5). */
   private ganhoDaEquipe(team: WorTeamEntity, vencedorId?: string): number {
     const fator = team.id === vencedorId ? 1 : 0.5;
@@ -819,7 +866,8 @@ export class MotorWor {
   /**
    * O log de cada aluno (spec 027 §1.3): os pontos são da equipe, então todo
    * membro recebe os mesmos itens. A não campeã ganha o item do fator ×0,5,
-   * para a soma bater com o crédito real.
+   * para a soma bater com o crédito real. Depois vêm os itens do bônus pessoal
+   * de cada aluno (029 §6A), que não sofrem o fator.
    */
   private montarLog(
     vencedorId: string | undefined,
@@ -841,9 +889,9 @@ export class MotorWor {
       return t.membros.map((m) => ({
         alunoId: m.alunoId,
         nome: m.nome,
-        totalPartida: total,
+        totalPartida: total + (t.pontosIndividuais?.[m.alunoId] ?? 0),
         creditoRanking: creditoDe(creditos, m.alunoId),
-        itens,
+        itens: [...itens, ...(t.logIndividual?.[m.alunoId] ?? [])],
       }));
     });
   }

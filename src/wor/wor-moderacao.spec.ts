@@ -15,12 +15,7 @@ function cenario(teams: WorTeamEntity[], turmaId: string | null = 't1') {
   const xp = { penalizarJogo: penalizar } as unknown as XpService;
   const f = fakeWor(JOGO_TESTE, match, teams, { xp });
   /** O que cada equipe recebeu na transação da penalidade. */
-  const patchesEquipes = new Proxy(
-    {},
-    {
-      get: (_t, id: string) => f.transacoes.at(-1)?.equipes?.[id],
-    },
-  );
+  const patchesEquipes = () => f.transacoes.at(-1)?.equipes ?? {};
   return {
     service: f.service,
     match,
@@ -93,8 +88,8 @@ describe('Tichr Wor — penalidade de moderação (Task 4)', () => {
     await service.penalizarModeracao('m1', 'ana');
     expect(match.lastGlobalAction?.tipo).toBe('MODERACAO');
     expect(match.lastGlobalAction?.mensagem).toContain('ANA');
-    expect(patchesEquipes.e1?.lastGlobalAction?.tipo).toBe('MODERACAO');
-    expect(patchesEquipes.e2?.lastGlobalAction).toBeUndefined();
+    expect(patchesEquipes().e1?.lastGlobalAction?.tipo).toBe('MODERACAO');
+    expect(patchesEquipes().e2).toBeUndefined();
   });
 
   it('o card congela a rodada em curso por 3s, como os demais', async () => {

@@ -214,6 +214,8 @@ export class WorMatchService {
         isHorde: false,
         pontos: 0,
         logPontos: [],
+        pontosIndividuais: {},
+        logIndividual: {},
         membros: membrosPorEquipe[i],
       });
     }

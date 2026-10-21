@@ -17,6 +17,13 @@ export const WOR = {
   PONTOS_POR_DANO: 1,
   /** Bônus por arriscar a palavra inteira e acertar (Risco Heroico / Invasão). */
   BONUS_ARRISCAR: 300,
+  // ===== Bônus INDIVIDUAL (029 §6A) =====
+  // Só para o aluno que acertou, fora do `team.pontos` (dividido igual entre
+  // os membros). Com o multiplicador e sem o ×0,5 da não campeã.
+  /** Arriscar a palavra inteira e acertar (Risco Heroico ou Invasão). */
+  BONUS_ACERTO_PALAVRA: 1000,
+  /** Cada letra certa, creditada no fechamento da rodada. */
+  BONUS_ACERTO_LETRA: 300,
   /** Bônus de intactez no fim: `+hp * fator` (recompensa terminar de pé). */
   BONUS_HP_FATOR: 1,
   /**

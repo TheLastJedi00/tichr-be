@@ -490,7 +490,8 @@ describe('Wor em paralelo — pontos, ranking e log', () => {
     expect(creditos).toHaveLength(1);
     expect(creditos[0].motivo).toBe('WOR');
     expect(creditos[0].pontos).toEqual([
-      { alunoId: 'a1', pontos: 2000 },
+      // 1000 + HP 1000 (×1) + 300 pessoais pelo I certo (029 §6A).
+      { alunoId: 'a1', pontos: 2300 },
       { alunoId: 'b1', pontos: 450 },
     ]);
   });
