@@ -12,13 +12,30 @@ import {
 import { WorJogoRepository } from './wor-jogo.repository';
 import { WorMatchRepository } from './wor-match.repository';
 import { MatchView } from './wor-match.service';
-import { WOR, WorMatchEntity } from './entities/wor-match.entity';
+import {
+  ResultadoFechamento,
+  WOR,
+  WorMatchEntity,
+} from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { XpService } from '../turma/xp.service';
 import { EfeitoRisco } from './dto/arriscar.dto';
 import { CreditoPendente, MotorWor, VotoAcao } from './wor-motor';
 
 export type { VotoAcao } from './wor-motor';
+
+/** A rodada em curso vista pela equipe do aluno (`GET /aluno/wor/:id/rodada`). */
+export interface RodadaDaEquipe {
+  equipeId: string;
+  /** Preenchido quando a equipe já fechou a rodada. */
+  fechou: { ordem: number; resultado: ResultadoFechamento } | null;
+  acoes: Array<{
+    alunoId: string;
+    nome: string;
+    tipo: 'LETRA' | 'ARRISCAR';
+    letra?: string;
+  }>;
+}
 
 /**
  * Comandos do Tichr Wor. As regras vivem no `MotorWor` (rodada em paralelo,
@@ -149,6 +166,43 @@ export class WorGameService {
     assertNaoPausada(match);
     await this.executar(matchId, (m) => m.pularPalavra());
     return this.view(matchId);
+  }
+
+  /**
+   * O que a equipe do aluno já jogou na rodada em curso (029 §2.1): as letras
+   * pendentes não estão na raiz pública, então é por aqui que o celular as
+   * recupera depois de recarregar. Só a própria equipe, e sem `acertou`/voto —
+   * o acerto só aparece no reveal.
+   */
+  async rodadaDaEquipe(
+    alunoId: string,
+    matchId: string,
+  ): Promise<RodadaDaEquipe> {
+    const match = await this.carregar(matchId);
+    const teams = await this.matches.listarTeams(matchId);
+    const team = teams.find((t) =>
+      t.membros.some((m) => m.alunoId === alunoId),
+    );
+    if (!team) throw new ForbiddenException('Você não está em nenhuma equipe.');
+    const rodada = await this.matches.buscarRodada(matchId);
+    const fechada = (match.equipesFechadas ?? []).find(
+      (f) => f.equipeId === team.id,
+    );
+    return {
+      equipeId: team.id,
+      fechou: fechada
+        ? { ordem: fechada.ordem, resultado: fechada.resultado }
+        : null,
+      acoes: rodada.acoes
+        .filter((a) => a.equipeId === team.id)
+        .map((a) => ({
+          alunoId: a.alunoId,
+          nome:
+            team.membros.find((m) => m.alunoId === a.alunoId)?.nome ?? 'Aluno',
+          tipo: a.tipo,
+          ...(a.letra ? { letra: a.letra } : {}),
+        })),
+    };
   }
 
   // ===== Pausa (028 §4) =====
