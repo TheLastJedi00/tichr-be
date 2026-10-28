@@ -273,6 +273,12 @@ export interface PlacarItem {
   alunoId: string;
   nome: string;
   pontos: number;
+  /**
+   * O papel revelado no encerramento (spec 030): a Ameaça original é `ALIEN`,
+   * as convertidas pelo Contágio são `CONTAGIADO`. Ausente = aldeão (ou partida
+   * encerrada antes da spec).
+   */
+  papel?: 'ALIEN' | 'CONTAGIADO';
 }
 
 /**

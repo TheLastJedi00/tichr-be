@@ -2972,7 +2972,11 @@ export class IsolateusGameService {
         pontos: pontos[alunoId] ?? 0,
       }))
       .sort((a, b) => b.pontos - a.pontos)
-      .map((p, i) => ({ posicao: i + 1, ...p }));
+      .map((p, i) => ({
+        posicao: i + 1,
+        ...p,
+        ...this.papelRevelado(segredo, p.alunoId),
+      }));
 
     const creditos = creditosDaPartida(
       partida,
@@ -3004,5 +3008,18 @@ export class IsolateusGameService {
       await this.xp.creditarPartida(partida.turmaId, creditos, 'ISOLATEUS');
     }
     return partida;
+  }
+
+  /**
+   * O papel que o placar revela (spec 030 §1). Aldeão não ganha campo: no
+   * Firestore um `undefined` não é gravado, e a linha fica como antes.
+   */
+  private papelRevelado(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): { papel?: 'ALIEN' | 'CONTAGIADO' } {
+    if (alunoId === segredo.alienAlunoId) return { papel: 'ALIEN' };
+    if (segredo.ehAmeaca(alunoId)) return { papel: 'CONTAGIADO' };
+    return {};
   }
 }
