@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { FieldValue } from 'firebase-admin/firestore';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { PartidaEntity } from './entities/partida.entity';
 import { QlickSegredoEntity } from './entities/qlick-segredo.entity';
@@ -238,5 +239,114 @@ describe('PartidaService — embaralhamento: rodada (031 §2.2, §2.3, §2.5)', 
     });
     await service.apurarComando('p1', 'pt1');
     expect(partida.corretaIndex).toBe(2);
+  });
+});
+
+describe('PartidaService — embaralhamento: resposta (031 §2.4)', () => {
+  const ativa = (over: Partial<PartidaEntity> = {}) => ({
+    status: 'QUESTAO_ATIVA' as const,
+    perguntaAtual: 0,
+    perguntaIniciadaEm: new Date().toISOString(),
+    ...over,
+  });
+  const cofre = (ordens: QlickSegredoEntity['ordens']) =>
+    new QlickSegredoEntity({ id: 'pt1', ordens });
+
+  it('perguntas embaralhadas: avalia a pergunta da ordem do aluno e traduz a alternativa', async () => {
+    const { service, store } = cenario(
+      ativa({ embaralharPerguntas: true, embaralharAlternativas: true }),
+      cofre({
+        // a1 está na P2 (correta = 2) e vê as alternativas como [e, c, d]
+        a1: {
+          perguntas: [1, 0],
+          alternativas: { '0': [2, 0, 1], '1': [1, 0] },
+        },
+        // a2 está na P1 (correta = 0) e vê [b, a]
+        a2: {
+          perguntas: [0, 1],
+          alternativas: { '0': [1, 0], '1': [0, 1, 2] },
+        },
+      }),
+    );
+    await service.responder('a1', 'pt1', 0);
+    await service.responder('a2', 'pt1', 0);
+    const r1 = store.get('pt1_0_a1')!;
+    expect(r1).toMatchObject({
+      perguntaIndex: 0,
+      perguntaOriginal: 1,
+      alternativaIndex: 2,
+      correta: true,
+    });
+    expect(r1.pontos).toBeGreaterThan(1000);
+    expect(store.get('pt1_0_a2')).toMatchObject({
+      perguntaOriginal: 0,
+      alternativaIndex: 1,
+      correta: false,
+      pontos: 0,
+    });
+  });
+
+  it('só alternativas embaralhadas: traduz a posição exibida', async () => {
+    const { service, store } = cenario(
+      ativa({ embaralharPerguntas: false, embaralharAlternativas: true }),
+      cofre({
+        a1: {
+          perguntas: [0, 1],
+          alternativas: { '0': [1, 0], '1': [2, 1, 0] },
+        },
+        a2: {
+          perguntas: [0, 1],
+          alternativas: { '0': [0, 1], '1': [0, 1, 2] },
+        },
+      }),
+    );
+    await service.responder('a1', 'pt1', 1); // exibida 1 = original 0 = correta
+    expect(store.get('pt1_0_a1')).toMatchObject({
+      perguntaOriginal: 0,
+      alternativaIndex: 0,
+      correta: true,
+    });
+  });
+
+  it('modo normal: grava perguntaOriginal igual à rodada', async () => {
+    const { service, store } = cenario(ativa({ perguntaAtual: 1 }));
+    await service.responder('a1', 'pt1', 2);
+    expect(store.get('pt1_1_a1')).toMatchObject({
+      perguntaOriginal: 1,
+      alternativaIndex: 2,
+      correta: true,
+    });
+  });
+
+  it('recusa posição fora do intervalo, em qualquer modo', async () => {
+    const normal = cenario(ativa());
+    await expect(
+      normal.service.responder('a1', 'pt1', 2),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const emb = cenario(
+      ativa({ embaralharPerguntas: true }),
+      cofre({
+        a1: {
+          perguntas: [1, 0],
+          alternativas: { '0': [0, 1, 2], '1': [0, 1] },
+        },
+      }),
+    );
+    // P2 tem 3 alternativas: 2 vale, 3 não
+    await expect(emb.service.responder('a1', 'pt1', 3)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(emb.store.size).toBe(0);
+  });
+
+  it('incrementa o contador e a apuração automática segue contando as respostas', async () => {
+    const { service, partida, partidaRepo } = cenario(ativa());
+    await service.responder('a1', 'pt1', 0);
+    expect(partidaRepo.update).toHaveBeenCalledWith('pt1', {
+      respondidosRodada: FieldValue.increment(1),
+    });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    await service.responder('a2', 'pt1', 1);
+    expect(partida.status).toBe('RANKING_PARCIAL');
   });
 });

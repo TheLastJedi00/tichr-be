@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { FieldValue } from 'firebase-admin/firestore';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
@@ -382,9 +383,22 @@ export class PartidaService {
       return { registrada: false }; // já respondeu esta pergunta
     }
 
+    // Com cofre, a rodada aponta para a pergunta da ordem do aluno e a
+    // alternativa chega na posição que ele viu (spec 031).
+    const cofre = await this.cofreDe(partida);
+    const perguntaOriginal = cofre ? cofre.perguntaDe(alunoId, idx) : idx;
     const qlick = await this.qlickRepo.findById(partida.qlickId);
-    const pergunta = qlick?.perguntas[idx];
-    const correta = !!pergunta && alternativaIndex === pergunta.corretaIndex;
+    const pergunta = qlick?.perguntas[perguntaOriginal];
+    const original = cofre
+      ? cofre.originalDe(alunoId, idx, alternativaIndex)
+      : alternativaIndex;
+    if (
+      pergunta &&
+      (original === undefined || original >= pergunta.alternativas.length)
+    ) {
+      throw new BadRequestException('Alternativa inválida.');
+    }
+    const correta = !!pergunta && original === pergunta.corretaIndex;
     const tempoMs = partida.perguntaIniciadaEm
       ? Date.now() - Date.parse(partida.perguntaIniciadaEm)
       : 0;
@@ -397,10 +411,14 @@ export class PartidaService {
     await ref.set({
       partidaId,
       perguntaIndex: idx,
+      perguntaOriginal,
       alunoId,
-      alternativaIndex,
+      alternativaIndex: original,
       correta,
       pontos,
+    });
+    await this.partidaRepo.update(partidaId, {
+      respondidosRodada: FieldValue.increment(1) as unknown as number,
     });
 
     // Apuração automática quando todos os inscritos já responderam.
@@ -412,6 +430,14 @@ export class PartidaService {
   }
 
   // ===== helpers do fluxo =====
+
+  /** O cofre da partida, se ela embaralha (spec 031); senão `null`. */
+  private async cofreDe(
+    partida: PartidaEntity,
+  ): Promise<QlickSegredoEntity | null> {
+    if (!embaralha(partida) || !this.segredoRepo) return null;
+    return this.segredoRepo.findById(partida.id);
+  }
 
   /**
    * O log de pontuação (spec 027 §1.3): um item por pergunta acertada, das
