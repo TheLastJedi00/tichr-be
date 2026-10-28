@@ -1309,7 +1309,8 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   **`brilho`** (`{ rodada, setorIds[] }`), **`resgatePendente`**, `votosResgateRecebidos` e
   `resgateResultado` (`{ habitanteId, nome }`), `votosRecebidos`, `pulosRecebidos` e `movimentosRecebidos` (**só as
   contagens** — as listas são listas de habitantes reais e moram no cofre),
-  `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**),
+  `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**;
+  cada linha `{ posicao, alunoId, nome, pontos, jogador?, papel? }` — ver *A revelação no fim*),
   **`deslocamentosNoite[]`** (`{ habitanteId, para }`, os avisos de saída da noite, reais e NPCs
   iguais) e **`ultimosDeslocamentos`** (`{ rodada, movimentos[{ habitanteId, de, para }] } | null`,
   quem trocou de setor no último amanhecer; `null` em noite de Delírio).
@@ -1599,6 +1600,21 @@ acabou…"*, sem dizer quantas restam); a Vila vence quando não há Ameaça liv
 ```
 QUESTAO_ATIVA → [RESGATE_VOTO] → RESULTADO_RODADA
 ```
+
+### A revelação no fim (spec 030)
+
+O `encerrar()` (vitória da vila, da Ameaça ou `encerrarPeloProfessor`) grava, no mesmo commit do
+placar, dois campos opcionais em cada linha do `rankingFinal`:
+
+- **`papel`**: `ALIEN` para `alienAlunoId` e `CONTAGIADO` para os demais de `ameacasIds()`.
+  Aldeão fica sem o campo; cofre antigo sem `ameacas` revela só a original.
+- **`jogador`**: o nome real do aluno, lido **uma vez** do cadastro da turma
+  (`AlunoRepository.findByTurma`, opcional no construtor do `IsolateusGameService`). Partida
+  sem `turmaId` ou aluno removido da turma ficam sem o campo.
+
+O nome real só toca a camada pública no `ENCERRADO`: antes disso `inscritos` continua só com
+`alunoId` e nenhuma escrita leva `jogador` ou `papel`. O `nome` da linha e o `logPontuacao`
+continuam com o codinome.
 
 ### Regras (constantes em `ISOLATEUS`, ajustáveis)
 

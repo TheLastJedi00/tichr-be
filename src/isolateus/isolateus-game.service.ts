@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -23,6 +24,7 @@ import {
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
 import { valeRanking } from '../common/vale-ranking';
+import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { PoderAlienigena, UsarPoderDto } from './dto/usar-poder.dto';
@@ -108,6 +110,9 @@ export class IsolateusGameService {
     private readonly xp: XpService,
     // Padrão para as suítes que montam o serviço à mão; no Nest, vem do DI.
     private readonly moderacao: ModeracaoService = new ModeracaoService(),
+    // Só o encerramento lê o cadastro (nome real no placar, spec 030). Opcional
+    // para as suítes que montam o serviço à mão sem ele.
+    @Optional() private readonly alunos?: AlunoRepository,
   ) {}
 
   /**
@@ -2965,6 +2970,7 @@ export class IsolateusGameService {
             'Habitante',
         ]),
     );
+    const jogadores = await this.nomesReais(partida);
     const rankingFinal = [...nomePorAluno.keys()]
       .map((alunoId) => ({
         alunoId,
@@ -2972,7 +2978,14 @@ export class IsolateusGameService {
         pontos: pontos[alunoId] ?? 0,
       }))
       .sort((a, b) => b.pontos - a.pontos)
-      .map((p, i) => ({ posicao: i + 1, ...p }));
+      .map((p, i) => ({
+        posicao: i + 1,
+        ...p,
+        ...(jogadores.has(p.alunoId)
+          ? { jogador: jogadores.get(p.alunoId)! }
+          : {}),
+        ...this.papelRevelado(segredo, p.alunoId),
+      }));
 
     const creditos = creditosDaPartida(
       partida,
@@ -3004,5 +3017,31 @@ export class IsolateusGameService {
       await this.xp.creditarPartida(partida.turmaId, creditos, 'ISOLATEUS');
     }
     return partida;
+  }
+
+  /**
+   * alunoId → nome real, do cadastro da turma (spec 030 §1). Só é lido no
+   * encerramento: é aí que o nome pode ir para a camada pública. Sem turma não
+   * há de onde tirar o nome, e o placar fica só com os codinomes.
+   */
+  private async nomesReais(
+    partida: IsolateusMatchEntity,
+  ): Promise<Map<string, string>> {
+    if (!partida.turmaId || !this.alunos) return new Map();
+    const alunos = await this.alunos.findByTurma(partida.turmaId);
+    return new Map(alunos.map((a) => [a.id, a.nome]));
+  }
+
+  /**
+   * O papel que o placar revela (spec 030 §1). Aldeão não ganha campo: no
+   * Firestore um `undefined` não é gravado, e a linha fica como antes.
+   */
+  private papelRevelado(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): { papel?: 'ALIEN' | 'CONTAGIADO' } {
+    if (alunoId === segredo.alienAlunoId) return { papel: 'ALIEN' };
+    if (segredo.ehAmeaca(alunoId)) return { papel: 'CONTAGIADO' };
+    return {};
   }
 }

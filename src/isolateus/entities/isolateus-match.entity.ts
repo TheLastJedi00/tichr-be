@@ -273,6 +273,17 @@ export interface PlacarItem {
   alunoId: string;
   nome: string;
   pontos: number;
+  /**
+   * O nome real do aluno, do cadastro da turma (spec 030). Só no encerramento;
+   * ausente em partida sem turma ou encerrada antes da spec.
+   */
+  jogador?: string;
+  /**
+   * O papel revelado no encerramento (spec 030): a Ameaça original é `ALIEN`,
+   * as convertidas pelo Contágio são `CONTAGIADO`. Ausente = aldeão (ou partida
+   * encerrada antes da spec).
+   */
+  papel?: 'ALIEN' | 'CONTAGIADO';
 }
 
 /**

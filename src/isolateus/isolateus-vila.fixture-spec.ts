@@ -5,6 +5,7 @@
  * todo arquivo terminado em `spec.ts`) sem virar suíte do jest (que só roda
  * `.spec.ts`).
  */
+import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
 import {
   Habitante,
@@ -36,6 +37,8 @@ export function vilaComAmeacas(
     npcs?: number;
     ameacas?: string[];
     posicoes?: Record<string, string>;
+    /** Cadastro da turma (alunoId → nome real). Padrão: `Aluno N` para cada real. */
+    nomes?: Record<string, string>;
   } = {},
 ) {
   const nReais = opts.reais ?? 5;
@@ -200,13 +203,24 @@ export function vilaComAmeacas(
     penalizarJogo: penalizar,
   } as unknown as XpService;
 
+  const nomes =
+    opts.nomes ??
+    Object.fromEntries(
+      Array.from({ length: nReais }, (_, i) => [`a${i + 1}`, `Aluno ${i + 1}`]),
+    );
+  const findByTurma = jest.fn(async () =>
+    Object.entries(nomes).map(([id, nome]) => ({ id, turmaId: 't1', nome })),
+  );
+  const alunos = { findByTurma } as unknown as AlunoRepository;
+
   const setorDe = (id: string) =>
     partida.habitantes.find((h) => h.id === id)!.setorId;
   return {
-    service: new IsolateusGameService(repo, jogos, xp),
+    service: new IsolateusGameService(repo, jogos, xp, undefined, alunos),
     partida,
     segredo,
     setorDe,
+    findByTurma,
     repo,
     creditar,
     penalizar,
