@@ -60,6 +60,61 @@ describe('Isolateus — revelação no ranking final', () => {
     expect(papelDe(ctx, 'a2')).toBeUndefined();
   });
 
+  it('cada linha traz o nome real do jogador, lido uma vez do cadastro da turma', async () => {
+    const ctx = vilaComAmeacas({ reais: 3 });
+    await ctx.service.encerrarPeloProfessor('prof', 'p1');
+
+    const linha = (a: string) =>
+      ctx.partida.rankingFinal.find((p) => p.alunoId === a)!;
+    expect(linha('a1')).toMatchObject({ nome: 'Real 1', jogador: 'Aluno 1' });
+    expect(linha('a2')).toMatchObject({ nome: 'Real 2', jogador: 'Aluno 2' });
+    expect(linha('a3')).toMatchObject({ nome: 'Real 3', jogador: 'Aluno 3' });
+    expect(ctx.findByTurma).toHaveBeenCalledTimes(1);
+    expect(ctx.findByTurma).toHaveBeenCalledWith('t1');
+  });
+
+  it('partida sem turma encerra sem o nome real e sem erro', async () => {
+    const ctx = vilaComAmeacas({ reais: 3 });
+    ctx.partida.turmaId = undefined;
+    await ctx.service.encerrarPeloProfessor('prof', 'p1');
+
+    expect(ctx.partida.status).toBe('ENCERRADO');
+    expect(ctx.findByTurma).not.toHaveBeenCalled();
+    for (const p of ctx.partida.rankingFinal) {
+      expect(p).not.toHaveProperty('jogador');
+    }
+  });
+
+  it('aluno removido da turma fica sem o nome; os outros saem normais', async () => {
+    const ctx = vilaComAmeacas({
+      reais: 3,
+      nomes: { a1: 'Ana', a3: 'Caio' },
+    });
+    await ctx.service.encerrarPeloProfessor('prof', 'p1');
+
+    const linha = (a: string) =>
+      ctx.partida.rankingFinal.find((p) => p.alunoId === a)!;
+    expect(linha('a1').jogador).toBe('Ana');
+    expect(linha('a2')).not.toHaveProperty('jogador');
+    expect(linha('a3').jogador).toBe('Caio');
+  });
+
+  it('antes do encerramento, nenhuma escrita pública leva nome real ou papel', async () => {
+    const ctx = vilaComAmeacas({ reais: 5 });
+    ctx.partida.habitantes.find((h) => h.id === 'h2')!.preso = true;
+    await prender(ctx, 'h3', ['a1', 'a3', 'a4', 'a5']); // inocente, segue o jogo
+
+    expect(ctx.partida.status).not.toBe('ENCERRADO');
+    const chamadas = (ctx.repo.commitPartida as jest.Mock).mock
+      .calls as unknown[][];
+    const escritas = chamadas.map((c) => JSON.stringify(c[1] ?? {}));
+    for (const e of escritas) {
+      expect(e).not.toContain('Aluno ');
+      expect(e).not.toContain('"papel"');
+    }
+    expect(ctx.findByTurma).not.toHaveBeenCalled();
+  });
+
   it('o log de pontuação continua com o codinome e sem papel', async () => {
     const ctx = vilaComAmeacas({ reais: 4 });
     await ctx.service.encerrarPeloProfessor('prof', 'p1');
