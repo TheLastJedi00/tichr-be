@@ -10,6 +10,7 @@ import { PartidaService } from './partida.service';
 import { QlickController } from './qlick.controller';
 import { QlickIaService } from './qlick-ia.service';
 import { QlickRepository } from './qlick.repository';
+import { QlickSegredoRepository } from './qlick-segredo.repository';
 import { QlickService } from './qlick.service';
 
 /** Módulo independente do Tichr Qlick (definição + partidas + geração por IA). */
@@ -21,6 +22,7 @@ import { QlickService } from './qlick.service';
     QlickRepository,
     PartidaService,
     PartidaRepository,
+    QlickSegredoRepository,
     // GeminiService reprovido localmente (o WorModule não o exporta) + IA do Qlick.
     GeminiService,
     QlickIaService,
