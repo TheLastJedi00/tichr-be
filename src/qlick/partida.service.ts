@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
@@ -11,7 +12,9 @@ import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
 import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaEntity, PlacarItem } from './entities/partida.entity';
+import { QlickSegredoEntity } from './entities/qlick-segredo.entity';
 import { PartidaRepository } from './partida.repository';
+import { QlickSegredoRepository } from './qlick-segredo.repository';
 import { QlickRepository } from './qlick.repository';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import {
@@ -32,6 +35,11 @@ import {
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
+/** Alguma das opções de embaralhamento (spec 031) está ligada. */
+function embaralha(partida: PartidaEntity): boolean {
+  return !!partida.embaralharPerguntas || !!partida.embaralharAlternativas;
+}
+
 /** Por quanto tempo após a criação a partida continua "de hoje" para o aluno. */
 const JANELA_VISIBILIDADE_MS = 12 * 60 * 60 * 1000; // 12h
 
@@ -45,6 +53,8 @@ export class PartidaService {
     private readonly professorService: ProfessorService,
     private readonly firebase: FirebaseService,
     private readonly xpService: XpService,
+    /** Cofre da ordem por aluno (spec 031). Opcional: as suítes antigas montam sem. */
+    @Optional() private readonly segredoRepo?: QlickSegredoRepository,
   ) {}
 
   /** Cria a partida (LOBBY) a partir de um Qlick do professor (PhD). */
@@ -262,6 +272,19 @@ export class PartidaService {
     if (partida.inscritos.length === 0) {
       throw new BadRequestException('Nenhum aluno inscrito.');
     }
+    // A ordem de cada aluno é sorteada aqui, com os inscritos já congelados.
+    if (embaralha(partida) && this.segredoRepo) {
+      const qlick = await this.qlickRepo.findById(partida.qlickId);
+      const cofre = QlickSegredoEntity.sortear(
+        partida.inscritos.map((i) => i.alunoId),
+        qlick!.perguntas,
+        {
+          perguntas: !!partida.embaralharPerguntas,
+          alternativas: !!partida.embaralharAlternativas,
+        },
+      );
+      await this.segredoRepo.gravar(partida.id, cofre);
+    }
     return this.ativarPergunta(partida, 0);
   }
 
@@ -431,12 +454,17 @@ export class PartidaService {
       status: 'QUESTAO_ATIVA',
       perguntaAtual: idx,
       perguntaIniciadaEm: new Date().toISOString(),
-      perguntaPublica: {
-        enunciado: pergunta.enunciado,
-        alternativas: pergunta.alternativas,
-      },
+      // Com as perguntas embaralhadas, cada aluno está numa pergunta: nenhuma
+      // vai ao doc público (o aluno busca a sua por REST).
+      perguntaPublica: partida.embaralharPerguntas
+        ? null
+        : {
+            enunciado: pergunta.enunciado,
+            alternativas: pergunta.alternativas,
+          },
       corretaIndex: null,
       rankingParcial: [],
+      respondidosRodada: 0,
     };
     Object.assign(partida, dados);
     await this.partidaRepo.update(partida.id, dados);
@@ -474,7 +502,7 @@ export class PartidaService {
       .slice(0, 3);
     const dados: Partial<PartidaEntity> = {
       status: 'RANKING_PARCIAL',
-      corretaIndex: pergunta.corretaIndex,
+      corretaIndex: partida.embaralharPerguntas ? null : pergunta.corretaIndex,
       placar,
       rankingParcial,
     };
