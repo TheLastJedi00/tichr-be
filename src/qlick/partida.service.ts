@@ -3,14 +3,19 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FieldValue } from 'firebase-admin/firestore';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
+import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaEntity, PlacarItem } from './entities/partida.entity';
+import { QlickSegredoEntity } from './entities/qlick-segredo.entity';
 import { PartidaRepository } from './partida.repository';
+import { QlickSegredoRepository } from './qlick-segredo.repository';
 import { QlickRepository } from './qlick.repository';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import {
@@ -31,6 +36,22 @@ import {
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
+/** A pergunta do aluno na rodada (spec 031 §2.6). Índices na ordem exibida. */
+export interface MinhaPergunta {
+  rodada: number;
+  enunciado: string;
+  alternativas: string[];
+  respondida: boolean;
+  alternativaEscolhida?: number;
+  /** Só no RANKING_PARCIAL. */
+  corretaIndex?: number;
+}
+
+/** Alguma das opções de embaralhamento (spec 031) está ligada. */
+function embaralha(partida: PartidaEntity): boolean {
+  return !!partida.embaralharPerguntas || !!partida.embaralharAlternativas;
+}
+
 /** Por quanto tempo após a criação a partida continua "de hoje" para o aluno. */
 const JANELA_VISIBILIDADE_MS = 12 * 60 * 60 * 1000; // 12h
 
@@ -44,6 +65,8 @@ export class PartidaService {
     private readonly professorService: ProfessorService,
     private readonly firebase: FirebaseService,
     private readonly xpService: XpService,
+    /** Cofre da ordem por aluno (spec 031). Opcional: as suítes antigas montam sem. */
+    @Optional() private readonly segredoRepo?: QlickSegredoRepository,
   ) {}
 
   /** Cria a partida (LOBBY) a partir de um Qlick do professor (PhD). */
@@ -96,6 +119,9 @@ export class PartidaService {
         titulo: qlick.titulo,
         status: 'LOBBY',
         valeRanking: true,
+        embaralharPerguntas: true,
+        embaralharAlternativas: true,
+        respondidosRodada: 0,
         criadaEm: new Date().toISOString(),
         perguntaAtual: -1,
         totalPerguntas: qlick.perguntas.length,
@@ -131,6 +157,40 @@ export class PartidaService {
     assertLobbyValeRanking(partida.status);
     partida.valeRanking = vale;
     await this.partidaRepo.update(partidaId, { valeRanking: vale });
+    return partida;
+  }
+
+  /**
+   * Lobby: embaralhar perguntas e/ou alternativas por aluno (spec 031). Muda
+   * só o que veio no corpo; a ordem é sorteada no `iniciar`.
+   */
+  async definirEmbaralhamento(
+    professorId: string,
+    partidaId: string,
+    dto: DefinirEmbaralhamentoDto,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    if (partida.status !== 'LOBBY') {
+      throw new BadRequestException({
+        code: 'PARTIDA_INICIADA',
+        message:
+          'Só dá para escolher o embaralhamento antes de a partida começar.',
+      });
+    }
+    const dados: Partial<PartidaEntity> = {};
+    if (dto.embaralharPerguntas !== undefined) {
+      dados.embaralharPerguntas = dto.embaralharPerguntas;
+    }
+    if (dto.embaralharAlternativas !== undefined) {
+      dados.embaralharAlternativas = dto.embaralharAlternativas;
+    }
+    if (!Object.keys(dados).length) {
+      throw new BadRequestException(
+        'Informe embaralharPerguntas e/ou embaralharAlternativas.',
+      );
+    }
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
     return partida;
   }
 
@@ -223,6 +283,19 @@ export class PartidaService {
     }
     if (partida.inscritos.length === 0) {
       throw new BadRequestException('Nenhum aluno inscrito.');
+    }
+    // A ordem de cada aluno é sorteada aqui, com os inscritos já congelados.
+    if (embaralha(partida) && this.segredoRepo) {
+      const qlick = await this.qlickRepo.findById(partida.qlickId);
+      const cofre = QlickSegredoEntity.sortear(
+        partida.inscritos.map((i) => i.alunoId),
+        qlick!.perguntas,
+        {
+          perguntas: !!partida.embaralharPerguntas,
+          alternativas: !!partida.embaralharAlternativas,
+        },
+      );
+      await this.segredoRepo.gravar(partida.id, cofre);
     }
     return this.ativarPergunta(partida, 0);
   }
@@ -321,9 +394,22 @@ export class PartidaService {
       return { registrada: false }; // já respondeu esta pergunta
     }
 
+    // Com cofre, a rodada aponta para a pergunta da ordem do aluno e a
+    // alternativa chega na posição que ele viu (spec 031).
+    const cofre = await this.cofreDe(partida);
+    const perguntaOriginal = cofre ? cofre.perguntaDe(alunoId, idx) : idx;
     const qlick = await this.qlickRepo.findById(partida.qlickId);
-    const pergunta = qlick?.perguntas[idx];
-    const correta = !!pergunta && alternativaIndex === pergunta.corretaIndex;
+    const pergunta = qlick?.perguntas[perguntaOriginal];
+    const original = cofre
+      ? cofre.originalDe(alunoId, idx, alternativaIndex)
+      : alternativaIndex;
+    if (
+      pergunta &&
+      (original === undefined || original >= pergunta.alternativas.length)
+    ) {
+      throw new BadRequestException('Alternativa inválida.');
+    }
+    const correta = !!pergunta && original === pergunta.corretaIndex;
     const tempoMs = partida.perguntaIniciadaEm
       ? Date.now() - Date.parse(partida.perguntaIniciadaEm)
       : 0;
@@ -336,10 +422,14 @@ export class PartidaService {
     await ref.set({
       partidaId,
       perguntaIndex: idx,
+      perguntaOriginal,
       alunoId,
-      alternativaIndex,
+      alternativaIndex: original,
       correta,
       pontos,
+    });
+    await this.partidaRepo.update(partidaId, {
+      respondidosRodada: FieldValue.increment(1) as unknown as number,
     });
 
     // Apuração automática quando todos os inscritos já responderam.
@@ -350,7 +440,70 @@ export class PartidaService {
     return { registrada: true };
   }
 
+  /**
+   * Aluno: a sua pergunta da rodada corrente, na ordem que ele vê (spec 031).
+   * Vale em qualquer modo: recarregar a página restaura a escolha. A correta
+   * só sai depois da apuração.
+   */
+  async minhaPergunta(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<MinhaPergunta> {
+    const partida = await this.partidaRepo.findById(partidaId);
+    if (!partida) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (!partida.inscritos.some((i) => i.alunoId === alunoId)) {
+      throw new ForbiddenException('Você não está inscrito nesta partida.');
+    }
+    if (
+      partida.status !== 'QUESTAO_ATIVA' &&
+      partida.status !== 'RANKING_PARCIAL'
+    ) {
+      throw new BadRequestException('Não há pergunta na rodada.');
+    }
+
+    const rodada = partida.perguntaAtual;
+    const cofre = await this.cofreDe(partida);
+    const qlick = await this.qlickRepo.findById(partida.qlickId);
+    const pergunta =
+      qlick!.perguntas[cofre ? cofre.perguntaDe(alunoId, rodada) : rodada];
+    const exibida = (original: number) =>
+      cofre ? cofre.exibidaDe(alunoId, rodada, original) : original;
+    const ordem = pergunta.alternativas.map((_, i) =>
+      cofre ? cofre.originalDe(alunoId, rodada, i)! : i,
+    );
+
+    const resposta = await this.firebase.firestore
+      .collection('qlick_respostas')
+      .doc(`${partidaId}_${rodada}_${alunoId}`)
+      .get();
+    const r: MinhaPergunta = {
+      rodada,
+      enunciado: pergunta.enunciado,
+      alternativas: ordem.map((i) => pergunta.alternativas[i]),
+      respondida: resposta.exists,
+    };
+    if (resposta.exists) {
+      r.alternativaEscolhida = exibida(
+        resposta.data()!.alternativaIndex as number,
+      );
+    }
+    if (partida.status === 'RANKING_PARCIAL') {
+      r.corretaIndex = exibida(pergunta.corretaIndex);
+    }
+    return r;
+  }
+
   // ===== helpers do fluxo =====
+
+  /** O cofre da partida, se ela embaralha (spec 031); senão `null`. */
+  private async cofreDe(
+    partida: PartidaEntity,
+  ): Promise<QlickSegredoEntity | null> {
+    if (!embaralha(partida) || !this.segredoRepo) return null;
+    return this.segredoRepo.findById(partida.id);
+  }
 
   /**
    * O log de pontuação (spec 027 §1.3): um item por pergunta acertada, das
@@ -393,12 +546,17 @@ export class PartidaService {
       status: 'QUESTAO_ATIVA',
       perguntaAtual: idx,
       perguntaIniciadaEm: new Date().toISOString(),
-      perguntaPublica: {
-        enunciado: pergunta.enunciado,
-        alternativas: pergunta.alternativas,
-      },
+      // Com as perguntas embaralhadas, cada aluno está numa pergunta: nenhuma
+      // vai ao doc público (o aluno busca a sua por REST).
+      perguntaPublica: partida.embaralharPerguntas
+        ? null
+        : {
+            enunciado: pergunta.enunciado,
+            alternativas: pergunta.alternativas,
+          },
       corretaIndex: null,
       rankingParcial: [],
+      respondidosRodada: 0,
     };
     Object.assign(partida, dados);
     await this.partidaRepo.update(partida.id, dados);
@@ -436,7 +594,7 @@ export class PartidaService {
       .slice(0, 3);
     const dados: Partial<PartidaEntity> = {
       status: 'RANKING_PARCIAL',
-      corretaIndex: pergunta.corretaIndex,
+      corretaIndex: partida.embaralharPerguntas ? null : pergunta.corretaIndex,
       placar,
       rankingParcial,
     };

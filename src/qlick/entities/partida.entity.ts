@@ -37,6 +37,15 @@ export class PartidaEntity {
    * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
    */
   valeRanking?: boolean;
+  /**
+   * Cada aluno recebe as perguntas em ordem própria (spec 031). Escolhido no
+   * lobby; ausente (partida antiga) = false. Ligado, o enunciado sai do doc.
+   */
+  embaralharPerguntas?: boolean;
+  /** Cada aluno vê as alternativas em ordem própria (spec 031). Ausente = false. */
+  embaralharAlternativas?: boolean;
+  /** Quantos inscritos já responderam a rodada corrente. Zera a cada rodada. */
+  respondidosRodada?: number;
   /** ISO de quando a partida foi criada (lobby aberto). Filtra sessões velhas. */
   criadaEm?: string | null;
   /** Índice da pergunta corrente (0-based); -1 no lobby. */

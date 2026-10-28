@@ -1,0 +1,440 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { FieldValue } from 'firebase-admin/firestore';
+import { ProfessorEntity } from '../professor/entities/professor.entity';
+import { PartidaEntity } from './entities/partida.entity';
+import { QlickSegredoEntity } from './entities/qlick-segredo.entity';
+import { QlickEntity } from './entities/qlick.entity';
+import { PartidaService } from './partida.service';
+
+/** Embaralhamento de perguntas e alternativas por aluno (spec 031). */
+
+const qlick = () =>
+  new QlickEntity({
+    id: 'q1',
+    professorId: 'p1',
+    titulo: 'Quiz',
+    duracaoSegundos: 20,
+    perguntas: [
+      { enunciado: 'P1', alternativas: ['a', 'b'], corretaIndex: 0 },
+      { enunciado: 'P2', alternativas: ['c', 'd', 'e'], corretaIndex: 2 },
+    ],
+    turmaIds: ['t1'],
+  });
+
+const partidaBase = (over: Partial<PartidaEntity> = {}) =>
+  new PartidaEntity({
+    id: 'pt1',
+    qlickId: 'q1',
+    professorId: 'p1',
+    turmaId: 't1',
+    titulo: 'Quiz',
+    status: 'LOBBY',
+    perguntaAtual: -1,
+    totalPerguntas: 2,
+    duracaoSegundos: 20,
+    inscritos: [
+      { alunoId: 'a1', nome: 'Ana' },
+      { alunoId: 'a2', nome: 'Bruno' },
+    ],
+    placar: [],
+    ...over,
+  });
+
+/** Firestore fake em memória para a coleção qlick_respostas. */
+function firebaseFake() {
+  const store = new Map<string, Record<string, unknown>>();
+  const firestore = {
+    collection: () => ({
+      doc: (id: string) => ({
+        get: () =>
+          Promise.resolve({ exists: store.has(id), data: () => store.get(id) }),
+        set: (data: Record<string, unknown>) =>
+          Promise.resolve(store.set(id, data)),
+      }),
+      where: (_campo: string, _op: string, valor: unknown) => ({
+        get: () =>
+          Promise.resolve({
+            docs: [...store.values()]
+              .filter((r) => r.partidaId === valor)
+              .map((r) => ({ data: () => r })),
+          }),
+      }),
+    }),
+  };
+  return { firebase: { firestore } as never, store };
+}
+
+function cenario(
+  over: Partial<PartidaEntity> = {},
+  cofreInicial: QlickSegredoEntity | null = null,
+) {
+  const partida = partidaBase(over);
+  let cofre = cofreInicial;
+  const segredoRepo = {
+    gravar: jest.fn((_id: string, s: QlickSegredoEntity) => {
+      cofre = s;
+      return Promise.resolve();
+    }),
+    findById: jest.fn(() => Promise.resolve(cofre)),
+  };
+  const { firebase, store } = firebaseFake();
+  const partidaRepo = {
+    findById: jest.fn(() => Promise.resolve(partida)),
+    create: jest.fn((p: PartidaEntity) => Promise.resolve(p)),
+    update: jest.fn((_id: string, d: Partial<PartidaEntity>) => {
+      // o contador é um sentinel do Firestore: não aplica no objeto local
+      const { respondidosRodada, ...resto } = d;
+      if (typeof respondidosRodada === 'number') {
+        Object.assign(partida, { respondidosRodada });
+      }
+      Object.assign(partida, resto);
+      return Promise.resolve();
+    }),
+  };
+  const qlickRepo = { findById: jest.fn().mockResolvedValue(qlick()) };
+  const turmaRepo = {
+    findById: jest.fn().mockResolvedValue({ id: 't1', professorId: 'p1' }),
+  };
+  const professorService = {
+    getProfile: jest
+      .fn()
+      .mockResolvedValue(new ProfessorEntity({ planoAtual: 'PHD' })),
+  };
+  const service = new PartidaService(
+    partidaRepo as never,
+    qlickRepo as never,
+    turmaRepo as never,
+    {} as never,
+    professorService as never,
+    firebase,
+    { creditarPartida: jest.fn() } as never,
+    segredoRepo as never,
+  );
+  return { service, partida, partidaRepo, segredoRepo, store };
+}
+
+describe('PartidaService — embaralhamento: lobby (031 §2.1)', () => {
+  it('criar liga as duas opções e zera o contador', async () => {
+    const { service } = cenario();
+    const p = await service.criar('p1', 'q1', 't1');
+    expect(p.embaralharPerguntas).toBe(true);
+    expect(p.embaralharAlternativas).toBe(true);
+    expect(p.respondidosRodada).toBe(0);
+  });
+
+  it('definirEmbaralhamento altera só o campo enviado', async () => {
+    const { service, partida, partidaRepo } = cenario({
+      embaralharPerguntas: true,
+      embaralharAlternativas: true,
+    });
+    await service.definirEmbaralhamento('p1', 'pt1', {
+      embaralharAlternativas: false,
+    });
+    expect(partidaRepo.update).toHaveBeenCalledWith('pt1', {
+      embaralharAlternativas: false,
+    });
+    expect(partida.embaralharPerguntas).toBe(true);
+    expect(partida.embaralharAlternativas).toBe(false);
+  });
+
+  it('definirEmbaralhamento recusa corpo sem nenhum dos dois campos', async () => {
+    const { service } = cenario();
+    await expect(
+      service.definirEmbaralhamento('p1', 'pt1', {}),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('definirEmbaralhamento recusa fora do LOBBY', async () => {
+    const { service } = cenario({ status: 'QUESTAO_ATIVA', perguntaAtual: 0 });
+    await expect(
+      service.definirEmbaralhamento('p1', 'pt1', {
+        embaralharPerguntas: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('definirEmbaralhamento recusa professor que não é o dono', async () => {
+    const { service } = cenario();
+    await expect(
+      service.definirEmbaralhamento('outro', 'pt1', {
+        embaralharPerguntas: false,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('PartidaService — embaralhamento: rodada (031 §2.2, §2.3, §2.5)', () => {
+  it('iniciar com perguntas embaralhadas grava o cofre e esconde o enunciado', async () => {
+    const { service, segredoRepo } = cenario({
+      embaralharPerguntas: true,
+      embaralharAlternativas: true,
+    });
+    const r = await service.iniciar('p1', 'pt1');
+    expect(segredoRepo.gravar).toHaveBeenCalledTimes(1);
+    const [id, cofre] = segredoRepo.gravar.mock.calls[0];
+    expect(id).toBe('pt1');
+    expect(Object.keys(cofre.ordens).sort()).toEqual(['a1', 'a2']);
+    expect(r.status).toBe('QUESTAO_ATIVA');
+    expect(r.perguntaPublica).toBeNull();
+    expect(r.corretaIndex).toBeNull();
+  });
+
+  it('iniciar com só as alternativas embaralhadas grava o cofre e mantém o enunciado', async () => {
+    const { service, segredoRepo } = cenario({
+      embaralharPerguntas: false,
+      embaralharAlternativas: true,
+    });
+    const r = await service.iniciar('p1', 'pt1');
+    expect(segredoRepo.gravar).toHaveBeenCalledTimes(1);
+    const cofre = segredoRepo.gravar.mock.calls[0][1];
+    expect(cofre.ordens.a1.perguntas).toEqual([0, 1]);
+    expect(r.perguntaPublica?.enunciado).toBe('P1');
+  });
+
+  it('iniciar com as duas opções desligadas não grava cofre', async () => {
+    const { service, segredoRepo } = cenario({
+      embaralharPerguntas: false,
+      embaralharAlternativas: false,
+    });
+    const r = await service.iniciar('p1', 'pt1');
+    expect(segredoRepo.gravar).not.toHaveBeenCalled();
+    expect(r.perguntaPublica?.enunciado).toBe('P1');
+  });
+
+  it('partida antiga (sem os campos) não embaralha', async () => {
+    const { service, segredoRepo } = cenario();
+    const r = await service.iniciar('p1', 'pt1');
+    expect(segredoRepo.gravar).not.toHaveBeenCalled();
+    expect(r.perguntaPublica?.enunciado).toBe('P1');
+  });
+
+  it('próxima rodada zera o contador de respostas', async () => {
+    const { service, partida } = cenario({
+      status: 'RANKING_PARCIAL',
+      perguntaAtual: 0,
+      respondidosRodada: 2,
+    });
+    await service.proxima('p1', 'pt1');
+    expect(partida.respondidosRodada).toBe(0);
+  });
+
+  it('apurar com perguntas embaralhadas não revela a correta', async () => {
+    const { service, partida } = cenario({
+      status: 'QUESTAO_ATIVA',
+      perguntaAtual: 0,
+      embaralharPerguntas: true,
+      perguntaPublica: null,
+    });
+    await service.apurarComando('p1', 'pt1');
+    expect(partida.status).toBe('RANKING_PARCIAL');
+    expect(partida.corretaIndex).toBeNull();
+  });
+
+  it('apurar com só as alternativas embaralhadas revela a correta no índice do cadastro', async () => {
+    const { service, partida } = cenario({
+      status: 'QUESTAO_ATIVA',
+      perguntaAtual: 1,
+      embaralharPerguntas: false,
+      embaralharAlternativas: true,
+    });
+    await service.apurarComando('p1', 'pt1');
+    expect(partida.corretaIndex).toBe(2);
+  });
+});
+
+describe('PartidaService — embaralhamento: resposta (031 §2.4)', () => {
+  const ativa = (over: Partial<PartidaEntity> = {}) => ({
+    status: 'QUESTAO_ATIVA' as const,
+    perguntaAtual: 0,
+    perguntaIniciadaEm: new Date().toISOString(),
+    ...over,
+  });
+  const cofre = (ordens: QlickSegredoEntity['ordens']) =>
+    new QlickSegredoEntity({ id: 'pt1', ordens });
+
+  it('perguntas embaralhadas: avalia a pergunta da ordem do aluno e traduz a alternativa', async () => {
+    const { service, store } = cenario(
+      ativa({ embaralharPerguntas: true, embaralharAlternativas: true }),
+      cofre({
+        // a1 está na P2 (correta = 2) e vê as alternativas como [e, c, d]
+        a1: {
+          perguntas: [1, 0],
+          alternativas: { '0': [2, 0, 1], '1': [1, 0] },
+        },
+        // a2 está na P1 (correta = 0) e vê [b, a]
+        a2: {
+          perguntas: [0, 1],
+          alternativas: { '0': [1, 0], '1': [0, 1, 2] },
+        },
+      }),
+    );
+    await service.responder('a1', 'pt1', 0);
+    await service.responder('a2', 'pt1', 0);
+    const r1 = store.get('pt1_0_a1')!;
+    expect(r1).toMatchObject({
+      perguntaIndex: 0,
+      perguntaOriginal: 1,
+      alternativaIndex: 2,
+      correta: true,
+    });
+    expect(r1.pontos).toBeGreaterThan(1000);
+    expect(store.get('pt1_0_a2')).toMatchObject({
+      perguntaOriginal: 0,
+      alternativaIndex: 1,
+      correta: false,
+      pontos: 0,
+    });
+  });
+
+  it('só alternativas embaralhadas: traduz a posição exibida', async () => {
+    const { service, store } = cenario(
+      ativa({ embaralharPerguntas: false, embaralharAlternativas: true }),
+      cofre({
+        a1: {
+          perguntas: [0, 1],
+          alternativas: { '0': [1, 0], '1': [2, 1, 0] },
+        },
+        a2: {
+          perguntas: [0, 1],
+          alternativas: { '0': [0, 1], '1': [0, 1, 2] },
+        },
+      }),
+    );
+    await service.responder('a1', 'pt1', 1); // exibida 1 = original 0 = correta
+    expect(store.get('pt1_0_a1')).toMatchObject({
+      perguntaOriginal: 0,
+      alternativaIndex: 0,
+      correta: true,
+    });
+  });
+
+  it('modo normal: grava perguntaOriginal igual à rodada', async () => {
+    const { service, store } = cenario(ativa({ perguntaAtual: 1 }));
+    await service.responder('a1', 'pt1', 2);
+    expect(store.get('pt1_1_a1')).toMatchObject({
+      perguntaOriginal: 1,
+      alternativaIndex: 2,
+      correta: true,
+    });
+  });
+
+  it('recusa posição fora do intervalo, em qualquer modo', async () => {
+    const normal = cenario(ativa());
+    await expect(
+      normal.service.responder('a1', 'pt1', 2),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const emb = cenario(
+      ativa({ embaralharPerguntas: true }),
+      cofre({
+        a1: {
+          perguntas: [1, 0],
+          alternativas: { '0': [0, 1, 2], '1': [0, 1] },
+        },
+      }),
+    );
+    // P2 tem 3 alternativas: 2 vale, 3 não
+    await expect(emb.service.responder('a1', 'pt1', 3)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(emb.store.size).toBe(0);
+  });
+
+  it('incrementa o contador e a apuração automática segue contando as respostas', async () => {
+    const { service, partida, partidaRepo } = cenario(ativa());
+    await service.responder('a1', 'pt1', 0);
+    expect(partidaRepo.update).toHaveBeenCalledWith('pt1', {
+      respondidosRodada: FieldValue.increment(1),
+    });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    await service.responder('a2', 'pt1', 1);
+    expect(partida.status).toBe('RANKING_PARCIAL');
+  });
+});
+
+describe('PartidaService — embaralhamento: minha pergunta (031 §2.6)', () => {
+  const cofre = new QlickSegredoEntity({
+    id: 'pt1',
+    ordens: {
+      // a1 está na P2 na rodada 0 e vê as alternativas como [e, c, d]
+      a1: { perguntas: [1, 0], alternativas: { '0': [2, 0, 1], '1': [1, 0] } },
+      a2: { perguntas: [0, 1], alternativas: { '0': [1, 0], '1': [0, 1, 2] } },
+    },
+  });
+  const emb = {
+    embaralharPerguntas: true,
+    embaralharAlternativas: true,
+    perguntaAtual: 0,
+    perguntaIniciadaEm: new Date().toISOString(),
+  };
+
+  it('QUESTAO_ATIVA: devolve a pergunta do aluno na ordem dele, sem a correta', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    const r = await service.minhaPergunta('a1', 'pt1');
+    expect(r).toEqual({
+      rodada: 0,
+      enunciado: 'P2',
+      alternativas: ['e', 'c', 'd'],
+      respondida: false,
+    });
+    expect(r).not.toHaveProperty('corretaIndex');
+  });
+
+  it('depois de responder, restaura a escolha na posição exibida', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    await service.responder('a1', 'pt1', 1);
+    const r = await service.minhaPergunta('a1', 'pt1');
+    expect(r.respondida).toBe(true);
+    expect(r.alternativaEscolhida).toBe(1);
+    expect(r.corretaIndex).toBeUndefined();
+  });
+
+  it('RANKING_PARCIAL: traz a correta na posição exibida', async () => {
+    const { service, partida } = cenario(
+      { ...emb, status: 'QUESTAO_ATIVA' },
+      cofre,
+    );
+    await service.responder('a1', 'pt1', 0);
+    await service.responder('a2', 'pt1', 1);
+    expect(partida.status).toBe('RANKING_PARCIAL');
+    const r1 = await service.minhaPergunta('a1', 'pt1');
+    expect(r1.corretaIndex).toBe(0); // correta da P2 = 'e', exibida em 0
+    expect(r1.alternativaEscolhida).toBe(0);
+    const r2 = await service.minhaPergunta('a2', 'pt1');
+    expect(r2.corretaIndex).toBe(1); // correta da P1 = 'a', exibida em 1
+  });
+
+  it('sem cofre: devolve a pergunta da rodada na ordem do cadastro', async () => {
+    const { service } = cenario({
+      status: 'RANKING_PARCIAL',
+      perguntaAtual: 1,
+    });
+    const r = await service.minhaPergunta('a2', 'pt1');
+    expect(r).toEqual({
+      rodada: 1,
+      enunciado: 'P2',
+      alternativas: ['c', 'd', 'e'],
+      respondida: false,
+      corretaIndex: 2,
+    });
+  });
+
+  it('recusa aluno não inscrito', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    await expect(service.minhaPergunta('zz', 'pt1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('recusa fora de rodada (lobby ou encerrada)', async () => {
+    for (const status of ['LOBBY', 'ENCERRADO'] as const) {
+      const { service } = cenario({ status }, cofre);
+      await expect(service.minhaPergunta('a1', 'pt1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
+  });
+});

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
+import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaService } from './partida.service';
 
 /** Controle da partida pelo professor (comandos via REST). */
@@ -34,6 +35,16 @@ export class PartidaController {
       id,
       dto.valeRanking,
     );
+  }
+
+  /** Lobby: embaralhar perguntas e/ou alternativas por aluno (spec 031). */
+  @Post('partidas/:id/embaralhamento')
+  embaralhamento(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirEmbaralhamentoDto,
+  ) {
+    return this.partidaService.definirEmbaralhamento(professorId, id, dto);
   }
 
   @Post('partidas/:id/iniciar')
