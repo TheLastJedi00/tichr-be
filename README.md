@@ -399,8 +399,11 @@ Estado **em tempo real** de uma rodada ao vivo — a **única** coleção lida p
 | `perguntaAtual` / `totalPerguntas` | number | índice corrente (−1 no lobby) |
 | `duracaoSegundos` | number | janela da pergunta |
 | `perguntaIniciadaEm` | string? | ISO; base do timer do cliente |
-| `perguntaPublica` | `{ enunciado, alternativas }?` | **sem** a resposta correta |
-| `corretaIndex` | number? | revelado **só** no `RANKING_PARCIAL` |
+| `perguntaPublica` | `{ enunciado, alternativas }?` | **sem** a resposta correta; `null` com `embaralharPerguntas` |
+| `corretaIndex` | number? | revelado **só** no `RANKING_PARCIAL`, no índice do cadastro; nunca com `embaralharPerguntas` |
+| `embaralharPerguntas` | boolean? | cada aluno recebe as perguntas em ordem própria (spec 031; ausente = `false`) |
+| `embaralharAlternativas` | boolean? | cada aluno vê as alternativas em ordem própria (spec 031; ausente = `false`) |
+| `respondidosRodada` | number? | quantos já responderam a rodada corrente (`FieldValue.increment`; zera a cada rodada) |
 | `inscritos` | `{ alunoId, nome }[]` | congelado ao iniciar |
 | `placar` | `{ alunoId, nome, pontos }[]` | acumulado ordenado |
 | `rankingParcial` | `PlacarItem[]?` | top da rodada |
@@ -414,10 +417,19 @@ aluno/pergunta** (idempotência).
 | Campo | Tipo | Observação |
 |---|---|---|
 | `partidaId` / `alunoId` | string | |
-| `perguntaIndex` | number | filtrado em memória (evita índice composto) |
-| `alternativaIndex` | number | escolha do aluno |
+| `perguntaIndex` | number | a **rodada**; filtrado em memória (evita índice composto) |
+| `perguntaOriginal` | number | índice da pergunta no cadastro (igual à rodada sem `embaralharPerguntas`) |
+| `alternativaIndex` | number | escolha do aluno, já traduzida para o **índice original** |
 | `correta` | boolean | |
 | `pontos` | number | acerto: `1000` + bônus de rapidez (até `500`) |
+
+### `qlick_segredos` (doc id = partidaId)
+Cofre do embaralhamento (spec 031) — **server-only** (cai no deny-all das rules). Gravado no
+`iniciar` quando alguma opção de embaralhamento está ligada; não é apagado no encerramento.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `ordens` | `Record<alunoId, { perguntas: number[]; alternativas: Record<rodada, number[]> }>` | `perguntas[rodada]` = índice no cadastro; `alternativas[rodada][posicaoExibida]` = índice original. A dimensão desligada é a identidade. Mapa por rodada porque o Firestore não aceita array aninhado |
 
 ### `prompts_ia` (doc id = jogo)
 Governança dos prompts de IA (BUG-ENH-006). **Server-only**, editável pelo admin —
@@ -664,7 +676,8 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 | `POST` | `/qlicks/:qlickId/partida` | `{ turmaId? }` | `PartidaEntity` em `LOBBY` — a partida **escolhe a turma** (N:N); 400 `TURMA_NAO_ATRIBUIDA`/`TURMA_ENCERRADA` |
 | `GET` | `/partidas/:id` | — | `PartidaEntity` (dona do professor) |
 | `POST` | `/partidas/:id/vale-ranking` | `{ valeRanking: boolean }` | **só no `LOBBY`** (400 `PARTIDA_INICIADA`): desmarcado, a partida é **casual** |
-| `POST` | `/partidas/:id/iniciar` | — | congela inscritos, ativa a pergunta 1 (400 se sem inscritos) |
+| `POST` | `/partidas/:id/embaralhamento` | `{ embaralharPerguntas?, embaralharAlternativas? }` | **só no `LOBBY`** (400 `PARTIDA_INICIADA`); muda só o campo enviado (400 sem nenhum). Ver *Embaralhamento por aluno* |
+| `POST` | `/partidas/:id/iniciar` | — | congela inscritos, sorteia a ordem de cada aluno (se embaralha) e ativa a pergunta 1 (400 se sem inscritos) |
 | `POST` | `/partidas/:id/apurar` | — | revela a resposta e o ranking da rodada |
 | `POST` | `/partidas/:id/proxima` | — | avança (400 se ainda não apurou ou se era a última) |
 | `POST` | `/partidas/:id/pausar` | — | **pausa** (fora de `LOBBY`/`ENCERRADO`, senão 400 `PARTIDA_NAO_PAUSAVEL`; idempotente). Ver *Pausa da partida* |
@@ -676,7 +689,8 @@ aceitos. `InstituicaoView` = a entidade + `grades` (`{turno, slots}[]`) + `grade
 |---|---|---|---|
 | `GET` | `/aluno/qlick` | — | `{ partidaId, titulo, status } \| null` — partida "de hoje" da turma, dentro da janela da aula |
 | `POST` | `/aluno/qlick/:partidaId/inscricao` | — | `PartidaEntity` — entra no lobby (idempotente; 400 fora do `LOBBY`) |
-| `POST` | `/aluno/qlick/:partidaId/resposta` | `{ alternativaIndex }` | `{ registrada }` — grava a resposta; **auto-apura** quando todos respondem |
+| `GET` | `/aluno/qlick/:partidaId/minha-pergunta` | — | `{ rodada, enunciado, alternativas, respondida, alternativaEscolhida?, corretaIndex? }` — a pergunta do aluno **na ordem dele**; `corretaIndex` só no `RANKING_PARCIAL`. 403 se não inscrito, 400 fora de rodada |
+| `POST` | `/aluno/qlick/:partidaId/resposta` | `{ alternativaIndex }` | `{ registrada }` — `alternativaIndex` na **posição exibida** (400 fora do intervalo); **auto-apura** quando todos respondem |
 
 ### Sessões
 | Método | Rota | Resposta |
@@ -962,6 +976,17 @@ LOBBY ──iniciar──▶ QUESTAO_ATIVA ──apurar──▶ RANKING_PARCIAL
 pergunta: o doc público expõe só `perguntaPublica` (enunciado + alternativas). A correta é
 gravada no doc apenas ao entrar em `RANKING_PARCIAL`. As respostas cruas ficam em
 `qlick_respostas`, coleção **server-only**.
+
+**Embaralhamento por aluno (spec 031).** Duas opções independentes no lobby
+(`embaralharPerguntas`, `embaralharAlternativas`), ligadas por padrão em partida nova. As
+rodadas continuam sincronizadas: na rodada `N`, cada aluno responde a `N`-ésima pergunta da
+**sua** ordem. No `iniciar`, `QlickSegredoEntity.sortear` gera permutações independentes por
+inscrito (Fisher-Yates com `crypto.randomInt`) e grava o cofre `qlick_segredos`. O aluno
+busca a própria pergunta em `GET /aluno/qlick/:id/minha-pergunta` e responde na posição
+exibida; o backend traduz para o índice original (`originalDe`). Com perguntas embaralhadas,
+o doc público não leva `perguntaPublica` nem `corretaIndex` (o telão mostra só a rodada); com
+só as alternativas, o enunciado continua público e a correta é revelada no índice do
+cadastro. A pontuação, a apuração automática e o log não mudam (o log numera pela rodada).
 
 **Regras do Firestore** (`firestore.rules`, deploy manual): o cliente só **lê**
 `qlick_partidas`; todo o resto (incluindo `qlick_respostas`, `qlicks`, `alunos`,
