@@ -64,7 +64,10 @@ export class WorJogoService {
     return jogo;
   }
 
-  async criar(professorId: string, dto: CreateWorJogoDto): Promise<WorJogoEntity> {
+  async criar(
+    professorId: string,
+    dto: CreateWorJogoDto,
+  ): Promise<WorJogoEntity> {
     await this.assertPhd(professorId);
     assertTurmaOuDisciplina(dto);
     const turmaIds = await this.validarTurmas(professorId, dto);
@@ -107,9 +110,12 @@ export class WorJogoService {
     await this.repo.delete(id);
   }
 
-  /** Gera ids, apara textos e limita as dicas a 3 (da mais difícil à mais fácil). */
+  /**
+   * Gera ids, apara textos, limita as dicas a 3 (da mais difícil à mais fácil)
+   * e descarta cópias da mesma palavra (ver `WorJogoEntity.ondas`).
+   */
   static normalizarPalavras(palavras: PalavraWorDto[]): PalavraWor[] {
-    return (palavras ?? []).map((p) => ({
+    return WorJogoEntity.semRepetidas(palavras ?? []).map((p) => ({
       id: randomUUID(),
       palavra: p.palavra.trim(),
       dicas: (p.dicas ?? [])

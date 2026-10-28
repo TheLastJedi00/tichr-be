@@ -7,6 +7,7 @@ const FASES_CRONOMETRADAS: StatusIsolateus[] = [
   'RESULTADO_RODADA',
   'QUARENTENA_DEBATE',
   'QUARENTENA_VOTO',
+  'RESGATE_VOTO',
 ];
 
 /**

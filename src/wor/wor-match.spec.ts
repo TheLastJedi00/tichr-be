@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
+import { WorJogoEntity } from './entities/wor-jogo.entity';
 import { WorMatchEntity } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { WorMatchService } from './wor-match.service';
@@ -75,10 +76,12 @@ describe('Tichr Wor — partida (Fase 3)', () => {
       const criados: Array<{ teamId: string; membros: unknown[] }> = [];
       const repo = {
         buscar: jest.fn().mockResolvedValue(match),
-        criarTeam: jest.fn((_m: string, teamId: string, data: { membros: unknown[] }) => {
-          criados.push({ teamId, membros: data.membros });
-          return Promise.resolve({});
-        }),
+        criarTeam: jest.fn(
+          (_m: string, teamId: string, data: { membros: unknown[] }) => {
+            criados.push({ teamId, membros: data.membros });
+            return Promise.resolve({});
+          },
+        ),
         atualizar: jest.fn().mockResolvedValue(undefined),
         listarTeams: jest.fn().mockResolvedValue([]),
       } as unknown as WorMatchRepository;
@@ -106,7 +109,9 @@ describe('Tichr Wor — partida (Fase 3)', () => {
         status: 'LOBBY',
         inscritos: [{ alunoId: 'a1', nome: 'A' }],
       });
-      const repo = { buscar: jest.fn().mockResolvedValue(match) } as unknown as WorMatchRepository;
+      const repo = {
+        buscar: jest.fn().mockResolvedValue(match),
+      } as unknown as WorMatchRepository;
       const service = new WorMatchService(
         {} as WorJogoRepository,
         repo,
@@ -118,16 +123,13 @@ describe('Tichr Wor — partida (Fase 3)', () => {
   });
 
   describe('WorMatchService.criar (turma derivada + PhD, como no Qlick)', () => {
-    const jogo = {
+    const jogo = new WorJogoEntity({
       id: 'j1',
       professorId: 'p1',
       nome: 'Batalha',
       palavras: [{ id: 'w', palavra: 'REI', dicas: ['dica'] }],
       turmaIds: ['t1'],
-      get turmas() {
-        return ['t1'];
-      },
-    };
+    });
 
     const build = (
       overrides: {
@@ -137,7 +139,8 @@ describe('Tichr Wor — partida (Fase 3)', () => {
         criar?: jest.Mock;
       } = {},
     ) => {
-      const criar = overrides.criar ?? jest.fn().mockResolvedValue({ id: 'm1' });
+      const criar =
+        overrides.criar ?? jest.fn().mockResolvedValue({ id: 'm1' });
       const jogos = {
         findById: jest.fn().mockResolvedValue(overrides.jogo ?? jogo),
       } as unknown as WorJogoRepository;
@@ -175,16 +178,13 @@ describe('Tichr Wor — partida (Fase 3)', () => {
 
     it('aceita turma da mesma disciplina numa batalha só-disciplina (ENH-002)', async () => {
       const { service, criar } = build({
-        jogo: {
+        jogo: new WorJogoEntity({
           id: 'j1',
           professorId: 'p1',
           nome: 'Batalha',
           palavras: [{ id: 'w', palavra: 'REI', dicas: ['dica'] }],
           disciplina: 'História',
-          get turmas() {
-            return [];
-          },
-        },
+        }),
         turma: { id: 't9', professorId: 'p1', disciplina: 'História' },
       });
       await service.criar('p1', 'j1', 't9');
