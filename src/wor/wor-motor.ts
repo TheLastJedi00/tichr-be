@@ -470,11 +470,11 @@ export class MotorWor {
   /** Próxima onda (palavra) ou o encerramento da partida. */
   private avancarOnda(): void {
     const proximo = this.match.ondaIndex + 1;
-    if (proximo >= this.jogo.palavras.length) {
+    if (proximo >= this.jogo.ondas.length) {
       this.encerrar();
       return;
     }
-    const palavra = this.jogo.palavras[proximo];
+    const palavra = this.jogo.ondas[proximo];
     Object.assign(this.match, {
       ondaIndex: proximo,
       mascara: WorMatchEntity.mascarar(palavra.palavra, new Set()),
@@ -607,7 +607,7 @@ export class MotorWor {
   }
 
   private palavra(): PalavraWor {
-    const p = this.jogo.palavras[this.match.ondaIndex];
+    const p = this.jogo.ondas[this.match.ondaIndex];
     if (!p) throw new NotFoundException('Palavra da onda não encontrada.');
     return p;
   }

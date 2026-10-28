@@ -72,7 +72,8 @@ export class WorMatchService {
 
     const escolhida = await this.resolverTurma(professorId, jogo, turmaId);
 
-    const primeira = jogo.palavras[0];
+    const ondas = jogo.ondas;
+    const primeira = ondas[0];
     return this.matches.criar({
       jogoId,
       professorId,
@@ -83,7 +84,7 @@ export class WorMatchService {
       valeRanking: true,
       criadaEm: new Date().toISOString(),
       ondaIndex: 0,
-      totalOndas: jogo.palavras.length,
+      totalOndas: ondas.length,
       mascara: WorMatchEntity.mascarar(primeira.palavra, new Set()),
       letrasTentadas: [],
       cartasVisiveis: primeira.dicas.slice(0, 1),
