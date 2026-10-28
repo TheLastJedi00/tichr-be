@@ -24,6 +24,15 @@ export class AlunoQlickController {
     return this.partidaService.inscrever(alunoId, partidaId);
   }
 
+  /** A pergunta do aluno na rodada, na ordem dele (spec 031). */
+  @Get(':partidaId/minha-pergunta')
+  minhaPergunta(
+    @CurrentStudent() { alunoId }: { alunoId: string; turmaId: string },
+    @Param('partidaId') partidaId: string,
+  ) {
+    return this.partidaService.minhaPergunta(alunoId, partidaId);
+  }
+
   @Post(':partidaId/resposta')
   responder(
     @CurrentStudent() { alunoId }: { alunoId: string; turmaId: string },
