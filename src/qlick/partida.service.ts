@@ -36,6 +36,17 @@ import {
 const PONTOS_ACERTO = 1000;
 const BONUS_RAPIDEZ = 500;
 
+/** A pergunta do aluno na rodada (spec 031 §2.6). Índices na ordem exibida. */
+export interface MinhaPergunta {
+  rodada: number;
+  enunciado: string;
+  alternativas: string[];
+  respondida: boolean;
+  alternativaEscolhida?: number;
+  /** Só no RANKING_PARCIAL. */
+  corretaIndex?: number;
+}
+
 /** Alguma das opções de embaralhamento (spec 031) está ligada. */
 function embaralha(partida: PartidaEntity): boolean {
   return !!partida.embaralharPerguntas || !!partida.embaralharAlternativas;
@@ -427,6 +438,61 @@ export class PartidaService {
       await this.apurar(partida);
     }
     return { registrada: true };
+  }
+
+  /**
+   * Aluno: a sua pergunta da rodada corrente, na ordem que ele vê (spec 031).
+   * Vale em qualquer modo: recarregar a página restaura a escolha. A correta
+   * só sai depois da apuração.
+   */
+  async minhaPergunta(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<MinhaPergunta> {
+    const partida = await this.partidaRepo.findById(partidaId);
+    if (!partida) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    if (!partida.inscritos.some((i) => i.alunoId === alunoId)) {
+      throw new ForbiddenException('Você não está inscrito nesta partida.');
+    }
+    if (
+      partida.status !== 'QUESTAO_ATIVA' &&
+      partida.status !== 'RANKING_PARCIAL'
+    ) {
+      throw new BadRequestException('Não há pergunta na rodada.');
+    }
+
+    const rodada = partida.perguntaAtual;
+    const cofre = await this.cofreDe(partida);
+    const qlick = await this.qlickRepo.findById(partida.qlickId);
+    const pergunta =
+      qlick!.perguntas[cofre ? cofre.perguntaDe(alunoId, rodada) : rodada];
+    const exibida = (original: number) =>
+      cofre ? cofre.exibidaDe(alunoId, rodada, original) : original;
+    const ordem = pergunta.alternativas.map((_, i) =>
+      cofre ? cofre.originalDe(alunoId, rodada, i)! : i,
+    );
+
+    const resposta = await this.firebase.firestore
+      .collection('qlick_respostas')
+      .doc(`${partidaId}_${rodada}_${alunoId}`)
+      .get();
+    const r: MinhaPergunta = {
+      rodada,
+      enunciado: pergunta.enunciado,
+      alternativas: ordem.map((i) => pergunta.alternativas[i]),
+      respondida: resposta.exists,
+    };
+    if (resposta.exists) {
+      r.alternativaEscolhida = exibida(
+        resposta.data()!.alternativaIndex as number,
+      );
+    }
+    if (partida.status === 'RANKING_PARCIAL') {
+      r.corretaIndex = exibida(pergunta.corretaIndex);
+    }
+    return r;
   }
 
   // ===== helpers do fluxo =====

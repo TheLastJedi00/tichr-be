@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { FieldValue } from 'firebase-admin/firestore';
 import { ProfessorEntity } from '../professor/entities/professor.entity';
 import { PartidaEntity } from './entities/partida.entity';
@@ -348,5 +352,89 @@ describe('PartidaService — embaralhamento: resposta (031 §2.4)', () => {
     expect(partida.status).toBe('QUESTAO_ATIVA');
     await service.responder('a2', 'pt1', 1);
     expect(partida.status).toBe('RANKING_PARCIAL');
+  });
+});
+
+describe('PartidaService — embaralhamento: minha pergunta (031 §2.6)', () => {
+  const cofre = new QlickSegredoEntity({
+    id: 'pt1',
+    ordens: {
+      // a1 está na P2 na rodada 0 e vê as alternativas como [e, c, d]
+      a1: { perguntas: [1, 0], alternativas: { '0': [2, 0, 1], '1': [1, 0] } },
+      a2: { perguntas: [0, 1], alternativas: { '0': [1, 0], '1': [0, 1, 2] } },
+    },
+  });
+  const emb = {
+    embaralharPerguntas: true,
+    embaralharAlternativas: true,
+    perguntaAtual: 0,
+    perguntaIniciadaEm: new Date().toISOString(),
+  };
+
+  it('QUESTAO_ATIVA: devolve a pergunta do aluno na ordem dele, sem a correta', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    const r = await service.minhaPergunta('a1', 'pt1');
+    expect(r).toEqual({
+      rodada: 0,
+      enunciado: 'P2',
+      alternativas: ['e', 'c', 'd'],
+      respondida: false,
+    });
+    expect(r).not.toHaveProperty('corretaIndex');
+  });
+
+  it('depois de responder, restaura a escolha na posição exibida', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    await service.responder('a1', 'pt1', 1);
+    const r = await service.minhaPergunta('a1', 'pt1');
+    expect(r.respondida).toBe(true);
+    expect(r.alternativaEscolhida).toBe(1);
+    expect(r.corretaIndex).toBeUndefined();
+  });
+
+  it('RANKING_PARCIAL: traz a correta na posição exibida', async () => {
+    const { service, partida } = cenario(
+      { ...emb, status: 'QUESTAO_ATIVA' },
+      cofre,
+    );
+    await service.responder('a1', 'pt1', 0);
+    await service.responder('a2', 'pt1', 1);
+    expect(partida.status).toBe('RANKING_PARCIAL');
+    const r1 = await service.minhaPergunta('a1', 'pt1');
+    expect(r1.corretaIndex).toBe(0); // correta da P2 = 'e', exibida em 0
+    expect(r1.alternativaEscolhida).toBe(0);
+    const r2 = await service.minhaPergunta('a2', 'pt1');
+    expect(r2.corretaIndex).toBe(1); // correta da P1 = 'a', exibida em 1
+  });
+
+  it('sem cofre: devolve a pergunta da rodada na ordem do cadastro', async () => {
+    const { service } = cenario({
+      status: 'RANKING_PARCIAL',
+      perguntaAtual: 1,
+    });
+    const r = await service.minhaPergunta('a2', 'pt1');
+    expect(r).toEqual({
+      rodada: 1,
+      enunciado: 'P2',
+      alternativas: ['c', 'd', 'e'],
+      respondida: false,
+      corretaIndex: 2,
+    });
+  });
+
+  it('recusa aluno não inscrito', async () => {
+    const { service } = cenario({ ...emb, status: 'QUESTAO_ATIVA' }, cofre);
+    await expect(service.minhaPergunta('zz', 'pt1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('recusa fora de rodada (lobby ou encerrada)', async () => {
+    for (const status of ['LOBBY', 'ENCERRADO'] as const) {
+      const { service } = cenario({ status }, cofre);
+      await expect(service.minhaPergunta('a1', 'pt1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
   });
 });
