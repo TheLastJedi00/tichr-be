@@ -9,6 +9,7 @@ import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
+import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaEntity, PlacarItem } from './entities/partida.entity';
 import { PartidaRepository } from './partida.repository';
 import { QlickRepository } from './qlick.repository';
@@ -96,6 +97,9 @@ export class PartidaService {
         titulo: qlick.titulo,
         status: 'LOBBY',
         valeRanking: true,
+        embaralharPerguntas: true,
+        embaralharAlternativas: true,
+        respondidosRodada: 0,
         criadaEm: new Date().toISOString(),
         perguntaAtual: -1,
         totalPerguntas: qlick.perguntas.length,
@@ -131,6 +135,40 @@ export class PartidaService {
     assertLobbyValeRanking(partida.status);
     partida.valeRanking = vale;
     await this.partidaRepo.update(partidaId, { valeRanking: vale });
+    return partida;
+  }
+
+  /**
+   * Lobby: embaralhar perguntas e/ou alternativas por aluno (spec 031). Muda
+   * só o que veio no corpo; a ordem é sorteada no `iniciar`.
+   */
+  async definirEmbaralhamento(
+    professorId: string,
+    partidaId: string,
+    dto: DefinirEmbaralhamentoDto,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    if (partida.status !== 'LOBBY') {
+      throw new BadRequestException({
+        code: 'PARTIDA_INICIADA',
+        message:
+          'Só dá para escolher o embaralhamento antes de a partida começar.',
+      });
+    }
+    const dados: Partial<PartidaEntity> = {};
+    if (dto.embaralharPerguntas !== undefined) {
+      dados.embaralharPerguntas = dto.embaralharPerguntas;
+    }
+    if (dto.embaralharAlternativas !== undefined) {
+      dados.embaralharAlternativas = dto.embaralharAlternativas;
+    }
+    if (!Object.keys(dados).length) {
+      throw new BadRequestException(
+        'Informe embaralharPerguntas e/ou embaralharAlternativas.',
+      );
+    }
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
     return partida;
   }
 
