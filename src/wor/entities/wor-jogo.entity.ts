@@ -1,3 +1,5 @@
+import { WorMatchEntity } from './wor-match.entity';
+
 /** Uma palavra do baralho (onda) com até 3 cartas de dica progressivas. */
 export interface PalavraWor {
   id: string;
@@ -46,5 +48,25 @@ export class WorJogoEntity {
       ids.push(this.turmaId);
     }
     return ids;
+  }
+
+  /**
+   * O baralho que a partida joga: sem cópias da mesma palavra (ignorando
+   * acento, caixa e espaços). Uma cópia viraria uma onda de resposta já
+   * conhecida — Catapulta de graça para quem acertou a anterior.
+   */
+  get ondas(): PalavraWor[] {
+    return WorJogoEntity.semRepetidas(this.palavras ?? []);
+  }
+
+  /** Mantém a 1ª ocorrência de cada palavra, na ordem original. */
+  static semRepetidas<T extends { palavra: string }>(palavras: T[]): T[] {
+    const vistas = new Set<string>();
+    return palavras.filter((p) => {
+      const chave = WorMatchEntity.normalizar(p.palavra.trim());
+      if (vistas.has(chave)) return false;
+      vistas.add(chave);
+      return true;
+    });
   }
 }
