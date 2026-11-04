@@ -299,6 +299,15 @@ export class WorMatchEntity {
   /** De onde veio cada ponto, por aluno (spec 027 §1). Só no encerramento. */
   logPontuacao?: LogPontuacaoJogador[];
 
+  /**
+   * Ociosidade (032 §3): faltas a partir das quais o aluno é marcado (ausente =
+   * padrão do jogo), as faltas por aluno (só quem tem ao menos uma) e os
+   * descontos já aplicados no fim. Público: o celular mostra o alerta ao aluno.
+   */
+  limiteOciosidade?: number;
+  ociosidade?: Record<string, number>;
+  descontosOciosidade?: Record<string, number>;
+
   constructor(partial: Partial<WorMatchEntity> = {}) {
     Object.assign(this, partial);
   }

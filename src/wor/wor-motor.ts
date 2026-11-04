@@ -9,6 +9,12 @@ import {
   ItemLogPontos,
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
+import {
+  ehOcioso,
+  limiteOciosidade,
+  marcarNoLog,
+  registrarFaltas,
+} from '../common/ociosidade';
 import { valeRanking } from '../common/vale-ranking';
 import { MudancasWor } from './wor-match.repository';
 import {
@@ -213,9 +219,42 @@ export class MotorWor {
     if (!this.fechou(team.id) && this.pendentesDa(team).length === 0) {
       this.fecharEquipe(team);
     }
-    if (this.match.status === 'EM_ANDAMENTO' && this.todasFecharam()) {
+    if (
+      this.match.status === 'EM_ANDAMENTO' &&
+      (this.todasFecharam() || this.soFaltamOciosos())
+    ) {
       this.fecharRodada({});
     }
+  }
+
+  /**
+   * Os únicos que ainda não jogaram já estão marcados como ociosos (032 #10):
+   * a rodada fecha sem esperar o tempo, para o ocioso não segurar a turma.
+   */
+  private soFaltamOciosos(): boolean {
+    const limite = limiteOciosidade(this.match, 'WOR');
+    const pendentes = this.equipesAtivas()
+      .filter((t) => !this.fechou(t.id))
+      .flatMap((t) => this.pendentesDa(t));
+    return (
+      pendentes.length > 0 &&
+      pendentes.every((id) => ehOcioso(this.match.ociosidade, id, limite))
+    );
+  }
+
+  /**
+   * Faltas da rodada que fecha (032 §3.2): todo membro de equipe ativa que tinha
+   * ação e não agiu. Na Horda, depois do arriscar ninguém mais tinha ação.
+   */
+  private registrarFaltasDaRodada(hordaAntes: Map<string, boolean>): void {
+    const esperados = this.equipesAtivas()
+      .filter((t) => !(hordaAntes.get(t.id) && t.arriscouNaRodada))
+      .flatMap((t) => t.membros.map((m) => m.alunoId));
+    this.match.ociosidade = registrarFaltas(
+      this.match.ociosidade,
+      esperados,
+      this.match.jaAgiram,
+    );
   }
 
   /**
@@ -479,6 +518,7 @@ export class MotorWor {
       Math.min(dicas.length, this.match.cartasVisiveis.length + compras),
     );
 
+    this.registrarFaltasDaRodada(hordaAntes);
     Object.assign(this.match, {
       letrasTentadas,
       mascara,
@@ -581,7 +621,11 @@ export class MotorWor {
       status: 'ENCERRADO',
       vencedorEquipeId: vencedor?.id ?? null,
       rodadaIniciadaEm: null,
-      logPontuacao: this.montarLog(vencedor?.id, creditos, rodada),
+      logPontuacao: marcarNoLog(
+        this.montarLog(vencedor?.id, creditos, rodada),
+        (alunoId) => this.match.ociosidade?.[alunoId] ?? 0,
+        limiteOciosidade(this.match, 'WOR'),
+      ),
     });
     this.novaRodada = false;
     if (this.match.turmaId && vencedor && valeRanking(this.match)) {

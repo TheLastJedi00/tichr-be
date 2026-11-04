@@ -143,26 +143,34 @@ export class XpService {
     turmaId: string,
     alunoId: string,
     pontos: number,
-    motivo: 'WOR_MODERACAO' | 'ISOLATEUS_MODERACAO',
-  ): Promise<void> {
+    motivo:
+      | 'WOR_MODERACAO'
+      | 'ISOLATEUS_MODERACAO'
+      | 'QLICK_OCIOSIDADE'
+      | 'WOR_OCIOSIDADE'
+      | 'ISOLATEUS_OCIOSIDADE',
+  ): Promise<number> {
     const aluno = await this.alunoRepo.findById(alunoId);
     if (!aluno || aluno.turmaId !== turmaId || pontos <= 0) {
-      return;
+      return 0;
     }
     const db = this.firebase.firestore;
     const alunoRef = db.collection('alunos').doc(alunoId);
     const logRef = db.collection('xp_logs').doc();
-    await db.runTransaction(async (tx) => {
+    // Devolve (e registra) o que de fato saiu: o XP nunca fica negativo (032).
+    return db.runTransaction(async (tx) => {
       const snap = await tx.get(alunoRef);
       const atual = (snap.data()?.xpTotal as number | undefined) ?? 0;
-      tx.update(alunoRef, { xpTotal: Math.max(0, atual - pontos) });
+      const debitado = Math.min(pontos, Math.max(0, atual));
+      tx.update(alunoRef, { xpTotal: atual - debitado });
       tx.set(logRef, {
         alunoId,
         turmaId,
-        pontos: -pontos,
+        pontos: -debitado,
         motivo,
         data: new Date().toISOString(),
       });
+      return debitado;
     });
   }
 

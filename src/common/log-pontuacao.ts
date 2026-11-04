@@ -13,7 +13,9 @@ export type FontePontos =
   | 'HP_FINAL'
   | 'FATOR_COLOCACAO'
   | 'ACERTO_PALAVRA'
-  | 'ACERTO_LETRA';
+  | 'ACERTO_LETRA'
+  /** 032: desconto do professor no fim da partida (negativo). */
+  | 'OCIOSIDADE';
 
 export interface ItemLogPontos {
   /** Pergunta (Qlick), rodada (Wor) ou noite (Isolateus), 1-based. */
@@ -33,6 +35,10 @@ export interface LogPontuacaoJogador {
   /** XP que de fato entrou no ranking da turma (0 se casual ou sem turma). */
   creditoRanking: number;
   itens: ItemLogPontos[];
+  /** 032: rodadas em que o aluno tinha ação e não agiu (só se > 0). */
+  faltasOciosidade?: number;
+  /** 032: atingiu o limite de ociosidade da partida. */
+  ocioso?: boolean;
 }
 
 /**
