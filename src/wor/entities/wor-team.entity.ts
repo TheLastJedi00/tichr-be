@@ -53,6 +53,11 @@ export class WorTeamEntity {
    * o aluno só escuta este doc, e é por aqui que a narração global o alcança.
    */
   lastGlobalAction?: LastGlobalAction | null;
+  /**
+   * Quem arriscou pela equipe na rodada em curso (032 #13): o "Arriscar" vale
+   * uma vez por equipe por rodada. Não diz se acertou. Zera no fechamento.
+   */
+  arriscouNaRodada?: string | null;
 
   constructor(partial: Partial<WorTeamEntity> = {}) {
     Object.assign(this, partial);
