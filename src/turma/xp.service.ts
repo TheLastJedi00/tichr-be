@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Transaction } from 'firebase-admin/firestore';
 import { hojeISO } from '../common/date.util';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
@@ -163,6 +163,66 @@ export class XpService {
         motivo,
         data: new Date().toISOString(),
       });
+    });
+  }
+
+  /**
+   * Transfere XP de um aluno para outro da mesma turma (spec 032, denúncia
+   * validada). Transferência REAL: sai do doador no máximo o que ele tem (o XP
+   * nunca fica negativo) e o recebedor ganha exatamente isso, sem criar pontos.
+   * `noMesmoCommit` deixa o chamador ler e gravar o próprio documento na mesma
+   * transação (a denúncia não pode ser resolvida duas vezes). Devolve o valor
+   * transferido.
+   */
+  async transferir(op: {
+    turmaId: string;
+    deAlunoId: string;
+    paraAlunoId: string;
+    pontos: number;
+    motivo: string;
+    noMesmoCommit?: {
+      ler: (tx: Transaction) => Promise<void>;
+      gravar: (tx: Transaction, transferido: number) => void;
+    };
+  }): Promise<number> {
+    for (const id of [op.deAlunoId, op.paraAlunoId]) {
+      const aluno = await this.alunoRepo.findById(id);
+      if (!aluno || aluno.turmaId !== op.turmaId) {
+        throw new NotFoundException('Aluno nao encontrado.');
+      }
+    }
+    const db = this.firebase.firestore;
+    const deRef = db.collection('alunos').doc(op.deAlunoId);
+    const paraRef = db.collection('alunos').doc(op.paraAlunoId);
+    return db.runTransaction(async (tx) => {
+      // Todas as leituras antes de qualquer escrita (regra do Firestore).
+      await op.noMesmoCommit?.ler(tx);
+      const de = await tx.get(deRef);
+      const para = await tx.get(paraRef);
+      const xpDe = (de.data()?.xpTotal as number | undefined) ?? 0;
+      const xpPara = (para.data()?.xpTotal as number | undefined) ?? 0;
+      const transferido = Math.max(0, Math.min(op.pontos, xpDe));
+      if (transferido > 0) {
+        const data = new Date().toISOString();
+        tx.update(deRef, { xpTotal: xpDe - transferido });
+        tx.update(paraRef, { xpTotal: xpPara + transferido });
+        tx.set(db.collection('xp_logs').doc(), {
+          alunoId: op.deAlunoId,
+          turmaId: op.turmaId,
+          pontos: -transferido,
+          motivo: op.motivo,
+          data,
+        });
+        tx.set(db.collection('xp_logs').doc(), {
+          alunoId: op.paraAlunoId,
+          turmaId: op.turmaId,
+          pontos: transferido,
+          motivo: op.motivo,
+          data,
+        });
+      }
+      op.noMesmoCommit?.gravar(tx, transferido);
+      return transferido;
     });
   }
 
