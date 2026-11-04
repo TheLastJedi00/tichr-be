@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
+import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
@@ -154,6 +155,19 @@ export class IsolateusMatchService {
   }
 
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
+  async definirLimiteOciosidade(
+    professorId: string,
+    partidaId: string,
+    limite: number,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyOciosidade(partida.status);
+    partida.limiteOciosidade = limite;
+    await this.matches.commitPartida(partidaId, { limiteOciosidade: limite });
+    return partida;
+  }
+
   async definirValeRanking(
     professorId: string,
     partidaId: string,

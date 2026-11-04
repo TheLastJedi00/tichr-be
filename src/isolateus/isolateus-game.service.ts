@@ -23,6 +23,14 @@ import {
   itemAcerto,
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
+import {
+  aplicarDescontoNoLog,
+  DescontarOciosidadeDto,
+  limiteOciosidade,
+  marcarNoLog,
+  planejarDesconto,
+  registrarFaltas,
+} from '../common/ociosidade';
 import { valeRanking } from '../common/vale-ranking';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
@@ -86,6 +94,11 @@ export interface PainelHabitante {
   contagioAcertos?: { atual: number; necessario: number };
   /** O habitante sob Controle Mental nesta rodada, se houver. */
   controle?: { habitanteId: string; nome: string } | null;
+  /**
+   * Ociosidade do PRÓPRIO aluno (032 §3.3). Só por aqui: a contagem mora no
+   * cofre, porque os NPCs nunca faltam e um contador público os entregaria.
+   */
+  ociosidade?: { faltas: number; limite: number; ocioso: boolean };
   /** Quem está AGORA no setor de onde ela age (o dela ou o do controlado). */
   fileira?: {
     setorId: string;
@@ -204,12 +217,15 @@ export class IsolateusGameService {
 
     // O gabarito NÃO sai mais por aqui: com o poder condicionado ao acerto,
     // entregá-lo à Ameaça daria um poder de graça em toda questão.
+    const limite = limiteOciosidade(partida, 'ISOLATEUS');
+    const faltas = segredo.ociosidade?.[alunoId] ?? 0;
     const base: PainelHabitante = {
       papel: segredo.ehAmeaca(alunoId) ? 'AMEACA' : 'ALDEAO',
       habitanteId: habitante.id,
       vivo: habitante.vivo,
       preso: habitante.preso,
       setorId: this.posicaoDe(segredo, habitante),
+      ociosidade: { faltas, limite, ocioso: faltas >= limite },
     };
     if (base.papel !== 'AMEACA') return base;
 
@@ -1902,7 +1918,8 @@ export class IsolateusGameService {
     if (this.limiteDaFase(partida) === undefined) {
       throw new BadRequestException('Não há cronômetro correndo nesta fase.');
     }
-    return this.encerrarFase(partida, segredo);
+    // O pulo do professor não é culpa de ninguém: não conta falta (032 §3.2).
+    return this.encerrarFase(partida, segredo, false);
   }
 
   /** Duração de cada fase cronometrada; `undefined` = fase sem relógio. */
@@ -1926,7 +1943,9 @@ export class IsolateusGameService {
   private async encerrarFase(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
+    contarFaltas = true,
   ): Promise<IsolateusMatchEntity> {
+    if (contarFaltas) await this.contarFaltasDaFase(partida, segredo);
     if (partida.status === 'DESLOCAMENTO') {
       return this.fecharNoite(partida);
     }
@@ -1944,6 +1963,74 @@ export class IsolateusGameService {
       return this.apurarResgate(partida, segredo);
     }
     return this.apurarQuarentena(partida, segredo);
+  }
+
+  /**
+   * Ociosidade (032 §3.2): o relógio fechou a fase, e quem tinha ação nela e não
+   * agiu ganha uma falta. Só é chamado pelo prazo (o avanço rápido acontece
+   * justamente quando todos agiram). A contagem mora no COFRE e é idempotente
+   * por fase: vários celulares cobram o mesmo prazo, e a chave
+   * `rodada:status` registrada na mesma transação impede a falta em dobro.
+   */
+  private async contarFaltasDaFase(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<void> {
+    const naVila = this.reaisNaVila(partida, segredo).map((v) => v.alunoId);
+    let esperados: string[];
+    let agiram: string[];
+    switch (partida.status) {
+      case 'DESLOCAMENTO': {
+        // Todos fecham a posição; a Ameaça livre ainda precisa da jogada.
+        const confirmou = new Set(segredo.confirmacoesNoite ?? []);
+        const jogaram = new Set(segredo.acoesDaNoite().map((j) => j.alunoId));
+        const livres = new Set(this.ameacasLivres(partida, segredo));
+        esperados = naVila;
+        agiram = naVila.filter(
+          (a) => confirmou.has(a) && (!livres.has(a) || jogaram.has(a)),
+        );
+        break;
+      }
+      case 'QUESTAO_ATIVA':
+        // Abduzidos e presos seguem respondendo na tela hackeada.
+        esperados = segredo.vinculos
+          .filter((v) => !!v.alunoId)
+          .map((v) => v.alunoId!);
+        agiram = (
+          await this.matches.lerRespostas(partida.id, partida.rodada)
+        ).map((r) => r.alunoId);
+        break;
+      case 'QUARENTENA_VOTO':
+        esperados = naVila;
+        agiram = (await this.matches.lerVotos(partida.id, partida.rodada)).map(
+          (v) => v.alunoId,
+        );
+        break;
+      case 'RESGATE_VOTO':
+        if (!this.resgataveis(partida).length) return;
+        esperados = naVila;
+        agiram = (
+          await this.matches.lerVotosResgate(partida.id, partida.rodada)
+        ).map((v) => v.alunoId);
+        break;
+      default:
+        return; // janela de decisão e debate: não há ação obrigatória
+    }
+
+    const chave = `${partida.rodada}:${partida.status}`;
+    let gravado: {
+      ociosidade: Record<string, number>;
+      faltasFases: string[];
+    } | null = null;
+    await this.matches.transacao(partida.id, (_p, s) => {
+      if ((s.faltasFases ?? []).includes(chave)) return null;
+      gravado = {
+        ociosidade: registrarFaltas(s.ociosidade, esperados, agiram),
+        faltasFases: [...(s.faltasFases ?? []), chave].slice(-50),
+      };
+      return { segredo: gravado };
+    });
+    if (gravado) Object.assign(segredo, gravado);
   }
 
   /**
@@ -2401,6 +2488,29 @@ export class IsolateusGameService {
    * No LOBBY não há o que encerrar: sem Despertar não existem papéis, mapa nem
    * pontuação para julgar.
    */
+  /** Fim da partida: desconta os pontos do aluno ocioso (032 §3.4). */
+  async descontarOciosidade(
+    professorId: string,
+    partidaId: string,
+    dto: DescontarOciosidadeDto,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.matches.buscar(partidaId);
+    if (!partida || partida.professorId !== professorId) {
+      throw new NotFoundException('Partida nao encontrada.');
+    }
+    const pontos = planejarDesconto(partida, dto);
+    const efetivo = await this.xp.penalizarJogo(
+      partida.turmaId!,
+      dto.alunoId,
+      pontos,
+      'ISOLATEUS_OCIOSIDADE',
+    );
+    const dados = aplicarDescontoNoLog(partida, dto.alunoId, efetivo);
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partida.id, dados);
+    return partida;
+  }
+
   async encerrarPeloProfessor(
     professorId: string,
     partidaId: string,
@@ -2992,13 +3102,18 @@ export class IsolateusGameService {
       rankingFinal.map((p) => ({ alunoId: p.alunoId, pontos: p.pontos })),
     );
     // O mistério acabou: o log sai do cofre junto do placar (spec 027 §1.3).
-    const logPontuacao: LogPontuacaoJogador[] = rankingFinal.map((p) => ({
-      alunoId: p.alunoId,
-      nome: p.nome,
-      totalPartida: p.pontos,
-      creditoRanking: creditoDe(creditos, p.alunoId),
-      itens: segredo.logPontos?.[p.alunoId] ?? [],
-    }));
+    // As faltas saem do cofre junto: agora já não entregam quem era NPC (032).
+    const logPontuacao: LogPontuacaoJogador[] = marcarNoLog(
+      rankingFinal.map((p) => ({
+        alunoId: p.alunoId,
+        nome: p.nome,
+        totalPartida: p.pontos,
+        creditoRanking: creditoDe(creditos, p.alunoId),
+        itens: segredo.logPontos?.[p.alunoId] ?? [],
+      })),
+      (alunoId) => segredo.ociosidade?.[alunoId] ?? 0,
+      limiteOciosidade(partida, 'ISOLATEUS'),
+    );
 
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'ENCERRADO',

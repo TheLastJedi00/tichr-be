@@ -314,6 +314,7 @@ describe('Isolateus — Controle Mental', () => {
       vivo: true,
       preso: false,
       setorId: 'saude',
+      ociosidade: { faltas: 0, limite: 2, ocioso: false },
     });
   });
 
