@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   creditoDe,
   creditosDaPartida,
@@ -9,6 +13,7 @@ import { valeRanking } from '../common/vale-ranking';
 import { MudancasWor } from './wor-match.repository';
 import {
   AcaoMembro,
+  ItemFeed,
   LastGlobalAction,
   LIMITE_RODADA_MS,
   PlacarEquipe,
@@ -33,12 +38,13 @@ export interface CreditoPendente {
 }
 
 /**
- * Motor da rodada em paralelo do Tichr Wor (029). Não há turno: todas as
- * equipes jogam a mesma palavra no mesmo relógio. Cada membro age uma vez
- * (chuta letra + vota, ou arrisca a palavra). A equipe FECHA quando todos os
- * membros agiram e aplica o dano na hora: quem fecha primeiro bate primeiro. A
- * RODADA fecha quando todas as equipes fecharam ou o tempo acaba, e só então as
- * letras e as dicas aparecem.
+ * Motor da rodada do Tichr Wor. Desde a 029 não há turno: todas as equipes
+ * jogam a mesma palavra no mesmo relógio. Cada membro age uma vez (chuta letra
+ * + vota, ou arrisca a palavra — uma vez por equipe por rodada). Desde a 032
+ * nada acontece durante a rodada: a equipe só "fecha" (todos agiram), e a
+ * RODADA fecha quando todas fecharam ou o tempo acaba. Aí tudo é resolvido de
+ * uma vez (resolução simultânea): dano, Catapulta, cura, Usurpação, letras e
+ * dicas.
  *
  * É puro: roda dentro da transação do repositório (`WorMatchRepository.transacao`)
  * sobre o estado lido nela, e pode rodar mais de uma vez se o Firestore repetir.
@@ -111,10 +117,11 @@ export class MotorWor {
   }
 
   /**
-   * Risco Heroico / Invasão: um membro tenta a palavra inteira. Acerto → o
-   * efeito escolhido (Recuperar HP ou Catapulta; Usurpação se Horda) e a onda
-   * acaba na hora para todos. Erro → Dano Crítico no próprio castelo, no feed;
-   * a ação conta para a equipe.
+   * Risco Heroico / Invasão: um membro tenta a palavra inteira, uma vez por
+   * equipe por rodada (032 #13). Só REGISTRA: o efeito (Catapulta, Recuperar HP
+   * ou Usurpação no acerto; Dano Crítico no próprio castelo no erro) sai no
+   * fechamento da rodada, junto com o resto (032 #11, #14, #15). Acertar não
+   * encerra mais a onda na hora: ela avança depois do fechamento.
    */
   arriscar(
     alunoId: string,
@@ -124,6 +131,12 @@ export class MotorWor {
     this.assertEmAndamento();
     const team = this.equipeDoAluno(alunoId);
     this.assertPodeAgir(team, alunoId);
+    if (team.arriscouNaRodada) {
+      throw new ConflictException({
+        code: 'ARRISCAR_USADO',
+        message: 'Arriscar já foi usado nesta rodada pela sua equipe.',
+      });
+    }
     // Antes de conferir a palavra: um envio malformado não pode queimar a
     // tentativa — nem revelar se o palpite estava certo.
     const catapultaEm = this.alvoDaCatapulta(team, opcoes);
@@ -132,77 +145,22 @@ export class MotorWor {
     const acertou =
       WorMatchEntity.normalizar(palpite.trim()) ===
       WorMatchEntity.normalizar(palavra.trim());
-    const aluno = this.nomeMembro(team, alunoId);
-    const rodada = this.numeroRodada();
-
-    if (acertou) {
-      if (team.isHorde) {
-        const lider = this.usurpar(team);
-        this.emitirCard(
-          'USURPACAO',
-          lider
-            ? `A Horda de ${aluno} acertou a palavra e ROUBOU o castelo da ${lider.nome}!`
-            : `A Horda de ${aluno} acertou a palavra e reergueu o próprio castelo!`,
-        );
-      } else if (catapultaEm) {
-        // O dano que vira ponto é o que de fato saiu do castelo (um alvo com
-        // 200 de HP só perde 200).
-        const antes = catapultaEm.hp;
-        const caiu = catapultaEm.aplicarDano(WOR.DANO_CATAPULTA);
-        const dano = antes - catapultaEm.hp;
-        this.sujas.add(catapultaEm.id);
-        this.ganhar(team, dano * WOR.PONTOS_POR_DANO, {
-          rodada,
-          fonte: 'CATAPULTA',
-          descricao: `Rodada ${rodada}: ${aluno} disparou a Catapulta no castelo da ${catapultaEm.nome}, ${dano} de dano`,
-        });
-        this.emitirCard(
-          'CATAPULTA',
-          `${aluno} acertou a palavra e disparou a Catapulta! O castelo da ${catapultaEm.nome} sofreu ${dano} de dano${caiu ? ' e caiu' : ''}!`,
-        );
-      } else {
-        team.curar(WOR.CURA_MASSIVA);
-        this.sujas.add(team.id);
-        this.emitirCard(
-          'CURA',
-          `${aluno} arriscou tudo e acertou a palavra! A ${team.nome} restaurou a vida do castelo!`,
-        );
-      }
-      // Arriscar tudo e acertar rende pontos extras (desempate + ranking).
-      this.ganhar(team, WOR.BONUS_ARRISCAR, {
-        rodada,
-        fonte: 'ARRISCAR',
-        descricao: `Rodada ${rodada}: ${aluno} arriscou a palavra inteira e acertou`,
-      });
-      // …e o aluno que acertou leva o bônus pessoal (029 §6A).
-      this.ganharIndividual(team, alunoId, WOR.BONUS_ACERTO_PALAVRA, {
-        rodada,
-        fonte: 'ACERTO_PALAVRA',
-        descricao: `Rodada ${rodada}: acertou a palavra inteira ao arriscar`,
-      });
-      // A onda acaba para todos: quem já fechou mantém o dano; as ações de
-      // quem ainda não fechou são descartadas (029 #9).
-      this.fecharRodada({ descartarAbertas: true, avancar: true });
-      return;
-    }
-
+    // Sem `undefined` no objeto: o Firestore recusa.
+    const efeito: Pick<AcaoMembro, 'efeito' | 'alvoEquipeId'> = team.isHorde
+      ? {}
+      : catapultaEm
+        ? { efeito: 'CATAPULTA', alvoEquipeId: catapultaEm.id }
+        : { efeito: 'CURA' };
     this.registrar({
       alunoId,
       equipeId: team.id,
       tipo: 'ARRISCAR',
-      acertou: false,
+      acertou,
+      ...efeito,
     });
-    const tinhaHp = team.hp > 0;
-    const caiu = team.aplicarDano(WOR.DANO_CRITICO);
+    // Público na própria equipe (trava o botão dos colegas), sem dizer se acertou.
+    team.arriscouNaRodada = alunoId;
     this.sujas.add(team.id);
-    // Vira feed, não card: em paralelo isso acontece várias vezes por rodada.
-    this.noFeed(
-      'DANO_CRITICO',
-      tinhaHp
-        ? `${aluno} arriscou a palavra e errou! A ${team.nome} sofreu ${WOR.DANO_CRITICO} de dano.`
-        : `${aluno} tentou a Invasão e errou!`,
-    );
-    if (caiu) this.queda(team);
     this.depoisDaAcao(team);
   }
 
@@ -230,13 +188,14 @@ export class MotorWor {
   /**
    * Linguagem imprópria no chat: o castelo da equipe perde HP (pode cair e virar
    * Horda). O alerta, com o nome do aluno, vai ao telão e à equipe infratora —
-   * sem fan-out para as rivais, que não têm nada com a mensagem.
+   * sem fan-out para as rivais, que não têm nada com a mensagem. É a única
+   * perda de HP fora do fechamento (é punição, não jogada).
    */
   penalizarModeracao(alunoId: string): void {
     const team = this.equipeDoAluno(alunoId);
     const aluno = this.nomeMembro(team, alunoId);
     const tinhaHp = team.hp > 0;
-    const caiu = tinhaHp && team.aplicarDano(WOR.PENALIDADE_HP);
+    if (tinhaHp) team.aplicarDano(WOR.PENALIDADE_HP);
     this.sujas.add(team.id);
     this.emitirCard(
       'MODERACAO',
@@ -245,20 +204,13 @@ export class MotorWor {
         : `⚠ ${aluno} usou linguagem imprópria no chat.`,
       team.id,
     );
-    if (caiu && this.match.status === 'EM_ANDAMENTO' && !this.fechou(team.id)) {
-      this.marcarCaiu(team);
-      if (this.todasFecharam()) this.fecharRodada({});
-    }
   }
 
   // ===== Fechamentos =====
 
   /** Depois de uma ação: fecha a equipe completa e, se era a última, a rodada. */
   private depoisDaAcao(team: WorTeamEntity): void {
-    if (
-      !this.fechou(team.id) &&
-      this.acoesDa(team.id).length >= team.membros.length
-    ) {
+    if (!this.fechou(team.id) && this.pendentesDa(team).length === 0) {
       this.fecharEquipe(team);
     }
     if (this.match.status === 'EM_ANDAMENTO' && this.todasFecharam()) {
@@ -267,145 +219,238 @@ export class MotorWor {
   }
 
   /**
-   * A equipe fecha a rodada: apura o voto entre quem acertou e, se for atacar,
-   * aplica o dano NA HORA (200 se todos acertaram e a equipe tem ≥2 membros;
-   * senão 100). Comprar dica só registra: a carta sai no fechamento da rodada.
+   * Membros que ainda têm ação na rodada. Na Horda a única ação é arriscar, e
+   * ela vale uma vez por equipe: depois dela não sobra nada a ninguém.
+   */
+  private pendentesDa(team: WorTeamEntity): string[] {
+    if (team.isHorde && team.arriscouNaRodada) return [];
+    return team.membros
+      .map((m) => m.alunoId)
+      .filter((id) => !this.match.jaAgiram.includes(id));
+  }
+
+  /**
+   * A equipe terminou de jogar (032): entra na fila de chegada, sem efeito. O
+   * lado público diz só `JOGOU` — o que ela fez aparece no fechamento.
    */
   private fecharEquipe(team: WorTeamEntity): void {
-    const acoes = this.acoesDa(team.id);
-    const acertadores = acoes.filter((a) => a.tipo === 'LETRA' && a.acertou);
-    const ordem = this.match.equipesFechadas.length + 1;
-    const res: ResultadoRodadaEquipe = {
-      equipeId: team.id,
-      equipeNome: team.nome,
-      ordem,
-      acertadores: this.acertadoresDe(team, acertadores),
-      acao: 'NADA',
-    };
-
-    let alvoAtingido: {
-      alvo: WorTeamEntity;
-      dano: number;
-      critico: boolean;
-    } | null = null;
-    if (!team.isHorde && acertadores.length) {
-      const vencedor = this.apurarVoto(acertadores);
-      if (vencedor.tipo === 'DICA') {
-        res.acao = 'DICA';
-      } else {
-        const alvo = this.teams.find((t) => t.id === vencedor.alvoEquipeId);
-        if (alvo) {
-          const todosAcertaram =
-            acoes.length === team.membros.length &&
-            acoes.every((a) => a.tipo === 'LETRA' && a.acertou);
-          const critico = todosAcertaram && team.membros.length >= 2;
-          const dano = critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE;
-          res.acao = 'ATACAR';
-          res.alvoEquipeId = alvo.id;
-          res.alvoNome = alvo.nome;
-          res.dano = dano;
-          res.critico = critico;
-          alvoAtingido = { alvo, dano, critico };
-        }
-      }
-    }
-    // A equipe entra na fila antes do efeito: se o ataque derrubar o alvo, ele
-    // fecha DEPOIS dela.
     this.match.equipesFechadas = [
       ...this.match.equipesFechadas,
-      { equipeId: team.id, ordem, resultado: res.acao },
-    ];
-    this.rodada.resultados = [...this.rodada.resultados, res];
-
-    if (res.acao === 'DICA') {
-      this.noFeed('DICA', `A ${team.nome} comprou uma dica.`);
-      return;
-    }
-    if (!alvoAtingido) return;
-
-    const { alvo, dano, critico } = alvoAtingido;
-    const caiu = alvo.aplicarDano(dano);
-    this.sujas.add(alvo.id);
-    const n = acertadores.length;
-    const quem = res.acertadores.map((a) => a.nome).join(', ');
-    const rodada = this.numeroRodada();
-    // O dano causado vira pontos da equipe atacante (desempate + ranking).
-    this.ganhar(team, dano * WOR.PONTOS_POR_DANO, {
-      rodada,
-      fonte: critico ? 'CRITICO' : 'DANO',
-      descricao: `Rodada ${rodada}: a equipe fechou em ${ordem}º, acertou ${n} ${n === 1 ? 'letra' : 'letras'} (${quem}) e ${critico ? 'deu um ataque crítico no' : 'atacou o'} castelo da ${alvo.nome}, ${dano} de dano`,
-    });
-    // O ataque é da EQUIPE: o dano nasce da votação, não de um aluno.
-    this.noFeed(
-      'ATAQUE',
-      `A ${team.nome} fechou em ${ordem}º e causou ${dano} de dano${critico ? ' crítico' : ''} no castelo da ${alvo.nome}!`,
-    );
-    if (caiu) this.queda(alvo);
-  }
-
-  /** Um castelo caiu: card com freeze e, se a equipe não fechou, ela fecha como `CAIU`. */
-  private queda(team: WorTeamEntity): void {
-    this.emitirCard(
-      'QUEDA',
-      `O castelo da ${team.nome} caiu! A ${team.nome} agora é uma Horda.`,
-    );
-    if (!this.fechou(team.id)) this.marcarCaiu(team);
-  }
-
-  /**
-   * A equipe que caiu antes de fechar perde o ataque pendente e não joga mais
-   * nesta rodada (029 #2, #6). As letras que ela já chutou contam no reveal.
-   */
-  private marcarCaiu(team: WorTeamEntity): void {
-    const ordem = this.match.equipesFechadas.length + 1;
-    const acertadores = this.acoesDa(team.id).filter(
-      (a) => a.tipo === 'LETRA' && a.acertou,
-    );
-    this.match.equipesFechadas = [
-      ...this.match.equipesFechadas,
-      { equipeId: team.id, ordem, resultado: 'CAIU' },
-    ];
-    this.rodada.resultados = [
-      ...this.rodada.resultados,
       {
         equipeId: team.id,
-        equipeNome: team.nome,
-        ordem,
-        acertadores: this.acertadoresDe(team, acertadores),
-        acao: 'CAIU',
+        ordem: this.match.equipesFechadas.length + 1,
+        resultado: 'JOGOU',
       },
     ];
+    this.noFeed('JOGOU', `A ${team.nome} já jogou.`);
   }
 
   /**
-   * Fecha a rodada: as equipes abertas resolvem com o que tiverem (na ordem da
-   * última ação), as letras entram na máscara, cada dica comprada revela uma
-   * carta e o reveal sai no `resumoRodada`. Palavra completa (ou `avancar`)
-   * acaba a onda; senão começa a próxima rodada.
+   * Fecha a rodada (032 §2.1). Tudo é calculado sobre o HP do INÍCIO do
+   * fechamento e aplicado de uma vez: um castelo que cai nesta rodada ainda dá o
+   * golpe dela, e cura e dano no mesmo castelo somam. A ordem de chegada só
+   * desempata: decide quem leva os pontos quando os golpes passam do HP do alvo,
+   * e a ordem do reveal. Depois vêm as Usurpações, as letras e as dicas. Palavra
+   * completa ou acertada ao arriscar acaba a onda; senão começa a próxima rodada.
    */
-  private fecharRodada(opcoes: {
-    porTempo?: boolean;
-    descartarAbertas?: boolean;
-    avancar?: boolean;
-  }): void {
-    if (!opcoes.descartarAbertas) {
-      const ultima = (t: WorTeamEntity) =>
-        Math.max(...this.acoesDa(t.id).map((a) => Date.parse(a.em)));
-      const abertas = this.equipesAtivas()
-        .filter((t) => !this.fechou(t.id) && this.acoesDa(t.id).length)
-        .sort((a, b) => ultima(a) - ultima(b));
-      for (const t of abertas) {
-        // Uma anterior pode tê-la derrubado (aí ela já fechou como CAIU).
-        if (!this.fechou(t.id)) this.fecharEquipe(t);
+  private fecharRodada(opcoes: { porTempo?: boolean }): void {
+    const rodada = this.numeroRodada();
+    const chegada = this.ordemDeChegada();
+    const hordaAntes = new Map(this.teams.map((t) => [t.id, t.isHorde]));
+
+    type Golpe = {
+      de: WorTeamEntity;
+      alvo: WorTeamEntity;
+      dano: number;
+      tipo: 'DANO' | 'CRITICO' | 'CATAPULTA' | 'PROPRIO';
+      res: ResultadoRodadaEquipe;
+      aluno?: string;
+    };
+    const golpes: Golpe[] = [];
+    const curas = new Map<string, number>();
+    const usurpadoras: Array<{
+      team: WorTeamEntity;
+      res: ResultadoRodadaEquipe;
+      aluno: string;
+    }> = [];
+    const resultados: ResultadoRodadaEquipe[] = [];
+    let palavraAcertada = false;
+
+    chegada.forEach((team, i) => {
+      const acoes = this.acoesDa(team.id);
+      const acertadores = acoes.filter((a) => a.tipo === 'LETRA' && a.acertou);
+      const res: ResultadoRodadaEquipe = {
+        equipeId: team.id,
+        equipeNome: team.nome,
+        ordem: i + 1,
+        acertadores: this.acertadoresDe(team, acertadores),
+        acao: 'NADA',
+        hpAntes: team.hp,
+      };
+
+      if (!hordaAntes.get(team.id) && acertadores.length) {
+        const vencedor = this.apurarVoto(acertadores);
+        if (vencedor.tipo === 'DICA') {
+          res.acao = 'DICA';
+        } else {
+          const alvo = this.teams.find((t) => t.id === vencedor.alvoEquipeId);
+          if (alvo) {
+            const todosAcertaram =
+              acoes.length === team.membros.length &&
+              acoes.every((a) => a.tipo === 'LETRA' && a.acertou);
+            const critico = todosAcertaram && team.membros.length >= 2;
+            res.acao = 'ATACAR';
+            res.alvoEquipeId = alvo.id;
+            res.alvoNome = alvo.nome;
+            res.critico = critico;
+            golpes.push({
+              de: team,
+              alvo,
+              dano: critico ? WOR.DANO_CRITICO : WOR.DANO_ATAQUE,
+              tipo: critico ? 'CRITICO' : 'DANO',
+              res,
+            });
+          }
+        }
       }
+
+      const arr = acoes.find((a) => a.tipo === 'ARRISCAR');
+      if (arr) {
+        const aluno = this.nomeMembro(team, arr.alunoId);
+        res.arriscar = { nome: aluno, acertou: arr.acertou };
+        if (arr.acertou) {
+          palavraAcertada = true;
+          // Arriscar tudo e acertar rende pontos extras (desempate + ranking)…
+          this.ganhar(team, WOR.BONUS_ARRISCAR, {
+            rodada,
+            fonte: 'ARRISCAR',
+            descricao: `Rodada ${rodada}: ${aluno} arriscou a palavra inteira e acertou`,
+          });
+          // …e o aluno que acertou leva o bônus pessoal (029 §6A).
+          this.ganharIndividual(team, arr.alunoId, WOR.BONUS_ACERTO_PALAVRA, {
+            rodada,
+            fonte: 'ACERTO_PALAVRA',
+            descricao: `Rodada ${rodada}: acertou a palavra inteira ao arriscar`,
+          });
+          const alvo = this.teams.find((t) => t.id === arr.alvoEquipeId);
+          if (hordaAntes.get(team.id)) {
+            res.arriscar.efeito = 'USURPACAO';
+            usurpadoras.push({ team, res, aluno });
+          } else if (arr.efeito === 'CATAPULTA' && alvo) {
+            res.arriscar.efeito = 'CATAPULTA';
+            res.arriscar.alvoEquipeId = alvo.id;
+            res.arriscar.alvoNome = alvo.nome;
+            golpes.push({
+              de: team,
+              alvo,
+              dano: WOR.DANO_CATAPULTA,
+              tipo: 'CATAPULTA',
+              res,
+              aluno,
+            });
+          } else {
+            res.arriscar.efeito = 'CURA';
+            curas.set(team.id, (curas.get(team.id) ?? 0) + WOR.CURA_MASSIVA);
+          }
+        } else if (team.hp > 0) {
+          golpes.push({
+            de: team,
+            alvo: team,
+            dano: WOR.DANO_CRITICO,
+            tipo: 'PROPRIO',
+            res,
+          });
+        }
+      }
+      resultados.push(res);
+    });
+
+    // Simultâneo: o "HP disponível" de cada castelo é o do início + a cura da
+    // rodada. Os golpes o consomem na ordem de chegada só para dizer quanto de
+    // cada um de fato saiu (é isso que vira ponto).
+    const restante = new Map(
+      this.teams.map((t) => [t.id, t.hp + (curas.get(t.id) ?? 0)]),
+    );
+    for (const g of golpes) {
+      const antes = restante.get(g.alvo.id) ?? 0;
+      const efetivo = Math.min(g.dano, Math.max(0, antes));
+      restante.set(g.alvo.id, antes - g.dano);
+      if (g.tipo === 'PROPRIO') continue;
+      if (g.tipo === 'CATAPULTA') {
+        g.res.arriscar!.dano = efetivo;
+        this.ganhar(g.de, efetivo * WOR.PONTOS_POR_DANO, {
+          rodada,
+          fonte: 'CATAPULTA',
+          descricao: `Rodada ${rodada}: ${g.aluno} disparou a Catapulta no castelo da ${g.alvo.nome}, ${efetivo} de dano`,
+        });
+        continue;
+      }
+      g.res.dano = efetivo;
+      const n = g.res.acertadores.length;
+      const quem = g.res.acertadores.map((a) => a.nome).join(', ');
+      // O dano causado vira pontos da equipe atacante (desempate + ranking).
+      this.ganhar(g.de, efetivo * WOR.PONTOS_POR_DANO, {
+        rodada,
+        fonte: g.tipo,
+        descricao: `Rodada ${rodada}: a equipe chegou em ${g.res.ordem}º, acertou ${n} ${n === 1 ? 'letra' : 'letras'} (${quem}) e ${g.tipo === 'CRITICO' ? 'deu um ataque crítico no' : 'atacou o'} castelo da ${g.alvo.nome}, ${efetivo} de dano`,
+      });
     }
 
-    const fechadas = new Set(this.match.equipesFechadas.map((f) => f.equipeId));
-    const validas = this.rodada.acoes.filter((a) => fechadas.has(a.equipeId));
+    const quedas: WorTeamEntity[] = [];
+    for (const t of this.teams) {
+      const novo = Math.max(
+        0,
+        Math.min(WOR.HP_INICIAL, restante.get(t.id) ?? t.hp),
+      );
+      if (novo === t.hp) continue;
+      t.hp = novo;
+      if (novo === 0 && !t.isHorde) {
+        t.isHorde = true;
+        quedas.push(t);
+      }
+      this.sujas.add(t.id);
+    }
+
+    // Usurpação depois dos danos: a Horda toma o castelo de maior HP de AGORA.
+    for (const { team, res, aluno } of usurpadoras) {
+      const lider = this.usurpar(team);
+      res.arriscar!.alvoNome = lider?.nome;
+      this.emitirCard(
+        'USURPACAO',
+        lider
+          ? `A Horda de ${aluno} acertou a palavra e ROUBOU o castelo da ${lider.nome}!`
+          : `A Horda de ${aluno} acertou a palavra e reergueu o próprio castelo!`,
+      );
+    }
+
+    for (const res of resultados) {
+      const t = this.teams.find((x) => x.id === res.equipeId)!;
+      res.hpDepois = t.hp;
+      if (quedas.includes(t)) res.caiu = true;
+      const a = res.arriscar;
+      if (a?.acertou && a.efeito === 'CATAPULTA') {
+        const caiu = quedas.some((q) => q.id === a.alvoEquipeId);
+        this.emitirCard(
+          'CATAPULTA',
+          `${a.nome} acertou a palavra e disparou a Catapulta! O castelo da ${a.alvoNome} sofreu ${a.dano ?? 0} de dano${caiu ? ' e caiu' : ''}!`,
+        );
+      } else if (a?.acertou && a.efeito === 'CURA') {
+        this.emitirCard(
+          'CURA',
+          `${a.nome} arriscou tudo e acertou a palavra! A ${res.equipeNome} restaurou a vida do castelo!`,
+        );
+      }
+    }
+    for (const t of quedas) {
+      this.emitirCard(
+        'QUEDA',
+        `O castelo da ${t.nome} caiu! A ${t.nome} agora é uma Horda.`,
+      );
+    }
+
     // Bônus pessoal da letra certa: só agora, no reveal. Creditar na hora
     // diria, pelo doc da equipe, se a letra estava certa (029 #14).
-    const rodada = this.numeroRodada();
-    for (const a of validas) {
+    for (const a of this.rodada.acoes) {
       if (a.tipo !== 'LETRA' || !a.acertou) continue;
       const team = this.teams.find((t) => t.id === a.equipeId);
       if (!team) continue;
@@ -415,7 +460,7 @@ export class MotorWor {
         descricao: `Rodada ${rodada}: acertou a letra ${a.letra}`,
       });
     }
-    const letras = validas
+    const letras = this.rodada.acoes
       .filter((a) => a.tipo === 'LETRA' && a.letra)
       .map((a) => a.letra as string);
     const letrasTentadas = [
@@ -427,9 +472,7 @@ export class MotorWor {
     );
 
     // Cada equipe que comprou revela uma carta, até acabarem (029 #7).
-    const compras = this.rodada.resultados.filter(
-      (r) => r.acao === 'DICA',
-    ).length;
+    const compras = resultados.filter((r) => r.acao === 'DICA').length;
     const dicas = this.palavra().dicas;
     const cartasVisiveis = dicas.slice(
       0,
@@ -442,21 +485,34 @@ export class MotorWor {
       cartasVisiveis,
       resumoRodada: {
         seq: (this.match.resumoRodada?.seq ?? 0) + 1,
-        resultados: [...this.rodada.resultados].sort(
-          (a, b) => a.ordem - b.ordem,
-        ),
+        resultados,
         porTempo: !!opcoes.porTempo,
       },
     });
     this.limparRodada();
 
-    if (opcoes.avancar || WorMatchEntity.estaCompleta(mascara)) {
+    if (palavraAcertada || WorMatchEntity.estaCompleta(mascara)) {
       this.avancarOnda();
     } else {
       this.novaRodada = true;
     }
   }
 
+  /**
+   * Ordem de chegada da rodada: as equipes que fecharam, na ordem em que
+   * fecharam, e depois as que ficaram abertas com alguma ação, pela última ação.
+   */
+  private ordemDeChegada(): WorTeamEntity[] {
+    const fechadas = this.match.equipesFechadas
+      .map((f) => this.teams.find((t) => t.id === f.equipeId))
+      .filter((t): t is WorTeamEntity => !!t);
+    const ultima = (t: WorTeamEntity) =>
+      Math.max(...this.acoesDa(t.id).map((a) => Date.parse(a.em)));
+    const abertas = this.equipesAtivas()
+      .filter((t) => !this.fechou(t.id) && this.acoesDa(t.id).length)
+      .sort((a, b) => ultima(a) - ultima(b));
+    return [...fechadas, ...abertas];
+  }
   /** Zera a rodada em curso (pública e privada). */
   private limparRodada(): void {
     Object.assign(this.match, {
@@ -465,6 +521,12 @@ export class MotorWor {
       feedRodada: [],
     });
     this.rodada = new WorRodadaPrivada();
+    // A trava do arriscar é por rodada (032 #13): nada acumula.
+    for (const t of this.teams) {
+      if (!t.arriscouNaRodada) continue;
+      t.arriscouNaRodada = null;
+      this.sujas.add(t.id);
+    }
   }
 
   /** Próxima onda (palavra) ou o encerramento da partida. */
@@ -779,10 +841,7 @@ export class MotorWor {
   }
 
   /** Evento sem freeze (029 §3). */
-  private noFeed(
-    tipo: 'ATAQUE' | 'DICA' | 'DANO_CRITICO',
-    mensagem: string,
-  ): void {
+  private noFeed(tipo: ItemFeed['tipo'], mensagem: string): void {
     const seq = (this.match.feedSeq ?? 0) + 1;
     this.match.feedSeq = seq;
     this.match.feedRodada = [
