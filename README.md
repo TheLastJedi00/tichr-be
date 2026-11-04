@@ -30,6 +30,8 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
   - [Painel Administrativo e feedback](#painel-administrativo-backoffice-e-cupons)
 - [Log de pontuação e partida casual](#log-de-pontuação-e-partida-casual-spec-027-todos-os-jogos)
+- [Denúncia entre alunos](#denúncia-entre-alunos-spec-032)
+- [Ociosidade nos jogos](#ociosidade-nos-jogos-spec-032-qlick-wor-e-isolateus)
 - [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
 - [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
 
@@ -362,7 +364,7 @@ Registro (event sourcing) de cada distribuição de pontos.
 |---|---|---|
 | `id` / `alunoId` / `turmaId` | string | |
 | `pontos` | number | delta aplicado (pode ser negativo) |
-| `motivo` | string? | `BASE` (aula concluída), `QLICK` / `WOR` / `ISOLATEUS` (partida; nada em partida casual), `WOR_MODERACAO` (penalidade) ou livre (pontuação manual) |
+| `motivo` | string? | `BASE` (aula concluída), `QLICK` / `WOR` / `ISOLATEUS` (partida; nada em partida casual), `WOR_MODERACAO`/`ISOLATEUS_MODERACAO` (penalidade), `DENUNCIA` (transferência da denúncia validada, spec 032), `QLICK_OCIOSIDADE`/`WOR_OCIOSIDADE`/`ISOLATEUS_OCIOSIDADE` (desconto por ociosidade, spec 032) ou livre (pontuação manual) |
 | `data` | string | ISO datetime |
 
 ### `qlicks`
@@ -1088,6 +1090,78 @@ Isolateus `POST /<jogo>/matches/:id/vale-ranking`), body `{ valeRanking: boolean
 `XpService.creditarPartida`: placar e log saem normais. A penalidade de moderação do Wor
 continua debitando.
 
+## Denúncia entre alunos (spec 032)
+
+Pelo portal (PIN), o aluno denuncia um colega da própria turma com um **tópico** criado pelo
+professor e/ou um texto, e pode anexar **uma foto**. O professor valida ou invalida. Mesmo gating
+do portal (`podeGamificar`, hoje só PhD; senão 403 `GAMIFICACAO_LOCKED`). Módulo `denuncia/`.
+
+**Coleções** (fechadas ao cliente):
+
+| Coleção | Campos |
+|---|---|
+| `denuncia_topicos` | `professorId`, `titulo` (3–80), `pontosSugeridos` (0–10.000), `ativo` (remover arquiva: as denúncias antigas citam o tópico), `criadoEm` |
+| `denuncias` | `turmaId`, `professorId`, `autorAlunoId`, `denunciadoAlunoId`, `topicoId?`, `topicoTitulo?` (cópia), `texto?` (≤1000), `imagemPath?`, `status` (`PENDENTE`/`VALIDADA`/`INVALIDADA`), `criadaEm`, `resolvidaEm?`, `pontos?`, `pontosTransferidos?` |
+
+**Endpoints — professor**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET`/`POST` | `/denuncias/topicos` | lista os ativos / cria `{ titulo, pontosSugeridos }` |
+| `PATCH` | `/denuncias/topicos/:id` | edita ou arquiva (`{ ativo: false }`) |
+| `GET` | `/denuncias/pendentes` | `{ [turmaId]: pendentes }` para os badges |
+| `GET` | `/turmas/:turmaId/denuncias?status=` | com nomes, XP atual do denunciado, pontos sugeridos e `temImagem` (o caminho não sai) |
+| `GET` | `/turmas/:turmaId/denuncias/:id/imagem` | `{ url }` assinada por 5 min |
+| `POST` | `/turmas/:turmaId/denuncias/:id/validar` | `{ pontos }` (0–10.000) → `{ pontosTransferidos }` |
+| `POST` | `/turmas/:turmaId/denuncias/:id/invalidar` | só arquiva |
+
+**Endpoints — aluno** (`@Roles('STUDENT')`): `GET /aluno/denuncias/opcoes` (colegas sem o próprio
+aluno e tópicos sem a pontuação), `GET /aluno/denuncias` (as próprias, sem pontos), `POST
+/aluno/denuncias` multipart (`denunciadoAlunoId`, `topicoId?`, `texto?`, arquivo `imagem?`).
+
+**Regras**
+
+- Exige tópico ou texto (400 `DENUNCIA_VAZIA`); recusa autodenúncia (`AUTODENUNCIA`), colega de
+  outra turma (404), duplicada pendente contra o mesmo colega (`DENUNCIA_DUPLICADA`) e a 4ª
+  pendente do autor (`LIMITE_PENDENTES`). Imagem: `image/*`, até ~400KB (413).
+- **Transferência real:** validar move do denunciado para o autor `min(pontos, xpDoDenunciado)`
+  (`XpService.transferir`, uma transação com dois `xp_logs` de motivo `DENUNCIA`). A checagem de
+  pendente vai no mesmo commit: validar duas vezes → 409 `DENUNCIA_RESOLVIDA`.
+- Turma com `pontuacaoAtiva` desligada: validar só registra (`pontosTransferidos: 0`).
+- **Anonimato:** o autor só chega ao professor. O denunciado vê no log apenas o débito.
+- **A foto não tem token público** (é de menor): fica em `denuncias/{turmaId}/{id}.jpg`, só sai por
+  URL assinada ao professor dono e é **apagada ao resolver** (validar ou invalidar).
+
+## Ociosidade nos jogos (spec 032, Qlick, Wor e Isolateus)
+
+Uma **falta** é uma fase com ação esperada que fechou sem ação do aluno. A contagem é **total na
+partida**. A partir do limite (padrão `OCIOSIDADE.LIMITE_PADRAO`: Qlick 3, Wor 2, Isolateus 2;
+ajustável no lobby de 1 a 10) o aluno é marcado: vê o alerta e, no fim, aparece no
+`logPontuacao` com `faltasOciosidade` e `ocioso: true`. Regras puras em `src/common/ociosidade.ts`.
+
+| Jogo | Falta quando… | Onde fica a contagem |
+|---|---|---|
+| Qlick | a pergunta é apurada sem resposta do inscrito | `qlick_partidas.ociosidade` (público) |
+| Wor | a rodada fecha e o membro não chutou letra nem arriscou (na Horda, depois do arriscar ninguém mais tinha ação) | `matches.ociosidade` (público) |
+| Isolateus | o **relógio** fecha `DESLOCAMENTO` (sem confirmar posição; a Ameaça livre também sem a jogada), `QUESTAO_ATIVA` (sem responder, inclusive abduzidos e presos), `QUARENTENA_VOTO` ou `RESGATE_VOTO` (sem votar) | **cofre** `isolateus_segredos.ociosidade` |
+
+- No Isolateus a contagem **não é pública**: os NPCs nunca faltam, e um contador por habitante
+  entregaria quem é NPC. O aluno recebe as próprias faltas em `painel.ociosidade`
+  (`{ faltas, limite, ocioso }`); o log final as revela. É idempotente por fase
+  (`faltasFases`, chave `rodada:status`, na mesma transação), porque vários celulares cobram o
+  mesmo prazo. Pular a fase (professor) e pular a palavra (Wor) não contam.
+- No Qlick, o aluno que nunca respondeu e tem falta entra no `rankingFinal` com 0.
+- **Lobby:** `POST /partidas/:id/ociosidade/limite`, `POST /wor/matches/:id/ociosidade/limite`,
+  `POST /isolateus/matches/:id/ociosidade/limite` com `{ limite }`; fora do `LOBBY` → 400.
+- **Desconto no fim:** `POST …/ociosidade/descontar` `{ alunoId, modo: 'ZERAR_PARTIDA' | 'VALOR',
+  pontos? }`, só o professor dono e só no `ENCERRADO`. Recusa partida casual ou sem turma (400
+  `PARTIDA_CASUAL`), aluno não marcado (`NAO_OCIOSO`), nada a descontar (`NADA_A_DESCONTAR`) e o
+  segundo desconto do mesmo aluno (409 `DESCONTO_APLICADO`). "Zerar" desconta o `creditoRanking`
+  da partida. O débito sai por `XpService.penalizarJogo` (motivos `QLICK_OCIOSIDADE`,
+  `WOR_OCIOSIDADE`, `ISOLATEUS_OCIOSIDADE`), que agora devolve e registra **o que de fato saiu**
+  (o XP nunca fica negativo). A partida grava `descontosOciosidade[alunoId]` e o item
+  `{ fonte: 'OCIOSIDADE', pontos: -N }` no log do aluno.
+
 ## Pausa da partida (spec 028, todos os jogos)
 
 O professor pausa qualquer partida **em andamento** (fora de `LOBBY` e `ENCERRADO`; senão 400
@@ -1127,19 +1201,23 @@ cliente via `onSnapshot`, com **escrita só pelo backend** (Admin SDK).
   - **`matches/{id}`** (raiz): `status` (LOBBY/EM_ANDAMENTO/ENCERRADO), `ondaIndex`,
     `mascara[]` (letra / `_` / espaço), `letrasTentadas[]`, `cartasVisiveis[]`,
     `ordemEquipes[]` (só exibição), `jaAgiram[]` (`alunoId` de quem já agiu na rodada),
-    `equipesFechadas[]` (`{ equipeId, ordem, resultado: ATACAR|DICA|NADA|CAIU }`, na ordem de
-    chegada), `feedRodada[]` (`{ seq, tipo: ATAQUE|DICA|DANO_CRITICO, mensagem, em }`) +
+    `equipesFechadas[]` (`{ equipeId, ordem, resultado }`, na ordem de chegada; desde a 032 o
+    resultado durante a rodada é só `JOGOU`), `feedRodada[]` (`{ seq, tipo, mensagem, em }`;
+    desde a 032 o tipo é `JOGOU`, "a equipe já jogou") +
     `feedSeq`, `rodadaIniciadaEm`, `placar[]`, `resumoRodada` (`{ seq, porTempo?,
     resultados[] }`, um resultado por equipe em ordem), `lastGlobalAction`, `inscritos[]`,
-    `vencedorEquipeId`. **Não** guarda o segredo (palavra/dicas ficam em `wor_jogos`).
+    `vencedorEquipeId`, `limiteOciosidade?`, `ociosidade?` (`{ [alunoId]: faltas }`),
+    `descontosOciosidade?` (spec 032). **Não** guarda o segredo (palavra/dicas ficam em
+    `wor_jogos`).
     Desde a 029 saíram `turnoEquipeId` e `acoesRodada`.
   - **`matches/{id}/privado/rodada`** (server-only: as rules só liberam a raiz e `teams`, então
     cai no catch-all deny): `acoes[]` (`{ alunoId, equipeId, tipo, letra?, acertou, voto?,
-    ordem, em }`) e `resultados[]` de quem já fechou. Na raiz, a letra e o acerto deixariam uma
+    efeito?, alvoEquipeId?, ordem, em }`). Na raiz, a letra e o acerto deixariam uma
     equipe copiar a resposta da outra antes do reveal.
   - **`matches/{id}/teams/{teamId}`**: `hp`, `isHorde`, `cor`, `nome`, `pontos`,
     `logPontos[]`, `pontosIndividuais` (`{ [alunoId]: pontos }`), `logIndividual`,
-    `membros[]`, `lastGlobalAction`.
+    `membros[]`, `lastGlobalAction`, `arriscouNaRodada` (032: quem arriscou pela equipe na
+    rodada em curso, sem dizer se acertou; zera no fechamento).
     O **aluno escuta só o próprio time** → dano/cura dispara barato; o **professor**
     escuta a raiz + todos os times (1 leitura por ação no telão).
 
@@ -1153,9 +1231,9 @@ gravado na raiz (telão) **e em cada equipe**, na mesma transação do seu efeit
   `CURA | CATAPULTA | USURPACAO | QUEDA | MODERACAO`. O cliente detecta `seq` novo,
   exibe o card por `duracaoMs` (3s) e trava os inputs. `QUEDA` (029) sai quando um castelo
   vira Horda. `MODERACAO` vai só à raiz e à equipe infratora.
-- **Feed sem freeze (029):** ataque, compra de dica e erro ao arriscar acontecem várias vezes
-  por rodada com as equipes em paralelo. Vão para `feedRodada` (zerado a cada rodada; `seq`
-  não zera) e não empurram o relógio.
+- **Feed sem freeze:** desde a 032, durante a rodada o feed só diz que uma equipe já jogou
+  (`JOGOU`); os efeitos aparecem juntos no `resumoRodada` do fechamento. `feedRodada` zera a
+  cada rodada (o `seq` não) e não empurra o relógio.
 - **Freeze:** não existe timer no servidor para pausar — o cronômetro é derivado de
   `rodadaIniciadaEm`. Congelar = gravar esse instante **3s no futuro** (`WOR.FREEZE_MS`).
   O relógio dos clientes não corre durante o card e `resolverPorTempo` não fecha a
@@ -1193,19 +1271,29 @@ gravado na raiz (telão) **e em cada equipe**, na mesma transação do seu efeit
 | `GET` | `/aluno/wor/:id/rodada` | o que a **própria equipe** jogou na rodada em curso: `{ equipeId, fechou: { ordem, resultado } \| null, acoes[{ alunoId, nome, tipo, letra? }] }`, sem `acertou` nem voto (403 sem equipe). O celular recupera as letras pendentes por aqui |
 | `GET` | `/aluno/wor/:id/chat` | `{ canalId }` do chat privado da **equipe do aluno** (403 sem equipe). Cria os canais que faltam numa transação (idempotente — cobre partidas antigas). O cliente escuta `wor_chats/{canalId}` |
 | `POST` | `/aluno/wor/:id/chat` `{ texto }` | Mensagem no chat da equipe: só em `EM_ANDAMENTO`, 1–200 caracteres depois do `trim`, 1 a cada 2s por aluno (429 `CHAT_RAPIDO`). **Palavrão → 422 `MENSAGEM_BLOQUEADA`**, a mensagem não é gravada e a penalidade é aplicada |
-| `POST` | `/aluno/wor/:id/arriscar` `{ palavra, efeito?, alvoEquipeId? }` | **Risco Heroico**: acertou → `efeito` `CURAR` (padrão) ou `CATAPULTA` no castelo `alvoEquipeId` + encerra a onda / **Invasão** da Horda (usurpação; ignora o efeito). Efeito/alvo inválidos → **400 antes de conferir a palavra** (a tentativa não é consumida) |
+| `POST` | `/aluno/wor/:id/arriscar` `{ palavra, efeito?, alvoEquipeId? }` | **Risco Heroico**: uma vez por equipe por rodada (o segundo → **409 `ARRISCAR_USADO`**). Acerto → `efeito` `CURAR` (padrão) ou `CATAPULTA` no castelo `alvoEquipeId`, aplicado no fechamento da rodada; a onda avança depois dela / **Invasão** da Horda (usurpação; ignora o efeito). Efeito/alvo inválidos → **400 antes de conferir a palavra** (a tentativa não é consumida) |
 
 ### Regras (constantes em `WOR`, ajustáveis)
-**Rodada em paralelo (spec 029):** não há turno. Todas as equipes jogam a mesma palavra no mesmo
-relógio (`LIMITE_RODADA_MS`, 60s), então uma rodada dura o mesmo com 2 ou 10 equipes.
+**Rodada em paralelo, resolvida no fechamento (specs 029 e 032):** não há turno. Todas as equipes
+jogam a mesma palavra no mesmo relógio (`LIMITE_RODADA_MS`, 60s), então uma rodada dura o mesmo
+com 2 ou 10 equipes.
 
-- Cada membro age uma vez (letra + voto, ou arrisca). A **equipe fecha** quando todos agiram e
-  aplica o dano **na hora**: quem fecha primeiro bate primeiro. Castelo derrubado antes de a
-  equipe fechar → ela fecha como `CAIU`, perde o ataque e não joga mais na rodada.
-- A **rodada fecha** quando todas as equipes fecharam ou o tempo acaba. Só aí as letras entram na
-  máscara e cada dica comprada revela uma carta (até o total).
-- Risco Heroico/Invasão certo acaba a onda na hora para todos: o dano de quem já fechou fica, as
-  ações pendentes são descartadas. Erro → Dano Crítico no próprio castelo, no feed.
+- Cada membro age uma vez (letra + voto, ou arrisca). Nada acontece na hora: a **equipe fecha**
+  quando todos agiram (na Horda, quem arrisca fecha pela equipe, porque não sobra ação).
+- **"Arriscar" vale uma vez por equipe por rodada** (`arriscouNaRodada`). Depois dele, os colegas
+  ainda chutam letra. Nada acumula para a rodada seguinte.
+- A **rodada fecha** quando todas as equipes fecharam, quando os únicos que faltam já estão
+  marcados como ociosos, ou quando o tempo acaba.
+- **Resolução simultânea (032):** ataques, Catapulta, Recuperar HP e o Dano Crítico do arriscar
+  errado são calculados sobre o HP do início do fechamento e aplicados de uma vez. Um castelo que
+  cai na rodada **ainda dá o golpe dela**; cura e dano no mesmo castelo somam (sem passar de 1000
+  nem de 0). A ordem de chegada só desempata: quando os golpes passam do HP do alvo, os pontos
+  vão para quem chegou antes. Depois dos danos vêm as Usurpações (a Horda toma o castelo de maior
+  HP de então), as letras na máscara e uma carta por dica comprada.
+- Acertar a palavra **não encerra a onda na hora**: o efeito entra no fechamento e a onda avança
+  depois dele. Duas equipes acertando na mesma rodada recebem as duas o efeito.
+- A penalidade de moderação é a única perda de HP fora do fechamento; o castelo que cai por ela
+  vira Horda e segue na rodada (só a Invasão).
 - **Concorrência:** todo comando roda o `MotorWor` (`wor-motor.ts`, puro) dentro de
   `WorMatchRepository.transacao` (raiz + equipes + `privado/rodada`, `maxAttempts: 10`). O
   crédito no ranking sai depois do commit.
@@ -1236,8 +1324,8 @@ do Qlick e do Isolateus; agora é **1:1**, a mesma régua deles.
 **fechamento da rodada** (antes, o doc da equipe diria se a letra estava certa). Vai para
 `pontosIndividuais`/`logIndividual` da equipe, **fora** do `pontos`: não é dividido com a
 equipe nem desempata. Tem o multiplicador e **não** sofre o ×0,5: crédito do aluno =
-`ganhoDaEquipe` + bônus pessoal. Letra descartada porque a onda acabou no meio da rodada não
-rende; letra certa de equipe que caiu rende.
+`ganhoDaEquipe` + bônus pessoal. Toda letra certa da rodada rende, inclusive de equipe que caiu
+no mesmo fechamento.
 
 **Multiplicador da partida:** no lobby, o professor escolhe de **1x a 10x**
 (`MULTIPLICADOR_MIN`/`MULTIPLICADOR_MAX`). Todo ponto ganho na partida é multiplicado (dano,

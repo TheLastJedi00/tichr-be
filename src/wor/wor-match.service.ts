@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { embaralhar } from '../common/shuffle.util';
+import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
@@ -249,6 +250,18 @@ export class WorMatchService {
       );
     }
     await this.matches.atualizar(matchId, { multiplicador });
+    return this.view(matchId);
+  }
+
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032 §3.5). */
+  async definirLimiteOciosidade(
+    professorId: string,
+    matchId: string,
+    limite: number,
+  ): Promise<MatchView> {
+    const match = await this.assertProfessor(matchId, professorId);
+    assertLobbyOciosidade(match.status);
+    await this.matches.atualizar(matchId, { limiteOciosidade: limite });
     return this.view(matchId);
   }
 

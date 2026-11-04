@@ -176,6 +176,15 @@ export class IsolateusSegredoEntity {
    */
   logPontos?: Record<string, ItemLogPontos[]>;
 
+  /**
+   * Ociosidade por aluno (032 §3): fases que o relógio fechou sem a ação dele.
+   * No cofre, não no doc público: os NPCs nunca faltam, e um contador por
+   * habitante diria quem é NPC. Só sai no `logPontuacao` do fim.
+   */
+  ociosidade?: Record<string, number>;
+  /** Fases já contadas (`rodada:status`): o prazo é cobrado por vários celulares. */
+  faltasFases?: string[];
+
   constructor(partial: Partial<IsolateusSegredoEntity> = {}) {
     Object.assign(this, partial);
   }

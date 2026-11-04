@@ -101,6 +101,7 @@ describe('Tichr Wor — Catapulta: validação antes do palpite', () => {
       efeito: 'CATAPULTA',
       alvoEquipeId: 'equipe-2',
     });
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA'); // fecha a rodada (032)
     expect(match.lastGlobalAction?.tipo).toBe('USURPACAO');
     expect(hp(teams, 'equipe-1')).toBe(800); // tomou o castelo do líder
   });
@@ -114,6 +115,7 @@ describe('Tichr Wor — Risco Heroico: Recuperar HP × Catapulta', () => {
     ];
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
 
     expect(hp(teams, 'equipe-1')).toBe(500 + WOR.CURA_MASSIVA);
     expect(hp(teams, 'equipe-2')).toBe(WOR.HP_INICIAL);
@@ -131,6 +133,9 @@ describe('Tichr Wor — Risco Heroico: Recuperar HP × Catapulta', () => {
       efeito: 'CATAPULTA',
       alvoEquipeId: 'equipe-3',
     });
+    expect(hp(teams, 'equipe-3')).toBe(WOR.HP_INICIAL); // só no fechamento
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('c1', 'm1', 'Q', 'DICA');
 
     expect(hp(teams, 'equipe-3')).toBe(WOR.HP_INICIAL - WOR.DANO_CATAPULTA);
     expect(hp(teams, 'equipe-1')).toBe(500); // não cura
@@ -163,6 +168,7 @@ describe('Tichr Wor — Risco Heroico: Recuperar HP × Catapulta', () => {
       efeito: 'CATAPULTA',
       alvoEquipeId: 'equipe-2',
     });
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
 
     const grifos = teams.find((t) => t.id === 'equipe-2')!;
     expect(grifos.hp).toBe(0);
@@ -184,10 +190,12 @@ describe('Tichr Wor — Risco Heroico: Recuperar HP × Catapulta', () => {
       efeito: 'CATAPULTA',
       alvoEquipeId: 'equipe-2',
     });
+    await service.chutarLetra('a2', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
 
     expect(hp(teams, 'equipe-1')).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO);
     expect(hp(teams, 'equipe-2')).toBe(WOR.HP_INICIAL);
     expect(match.lastGlobalAction).toBeUndefined();
-    expect(match.feedRodada[0]?.tipo).toBe('DANO_CRITICO');
+    expect(match.resumoRodada!.resultados[0].arriscar?.acertou).toBe(false);
   });
 });

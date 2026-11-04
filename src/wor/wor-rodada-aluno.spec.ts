@@ -41,7 +41,7 @@ describe('Wor — rodada da equipe do aluno', () => {
     const { service } = cenario(teams);
     await service.arriscar('a1', 'm1', 'xyz');
     const r = await service.rodadaDaEquipe('a1', 'm1');
-    expect(r.fechou).toEqual({ ordem: 1, resultado: 'NADA' });
+    expect(r.fechou).toEqual({ ordem: 1, resultado: 'JOGOU' });
     expect(r.acoes).toEqual([{ alunoId: 'a1', nome: 'A1', tipo: 'ARRISCAR' }]);
   });
 

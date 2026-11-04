@@ -74,6 +74,14 @@ export class PartidaEntity {
   /** De onde veio cada ponto (spec 027 §1). Gravado só no encerramento. */
   logPontuacao?: LogPontuacaoJogador[];
 
+  /**
+   * Ociosidade (032 §3): limite do lobby (ausente = padrão 3), faltas por aluno
+   * (pergunta apurada sem resposta) e descontos aplicados no fim.
+   */
+  limiteOciosidade?: number;
+  ociosidade?: Record<string, number>;
+  descontosOciosidade?: Record<string, number>;
+
   constructor(partial: Partial<PartidaEntity> = {}) {
     Object.assign(this, partial);
   }

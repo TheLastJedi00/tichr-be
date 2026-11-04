@@ -19,6 +19,11 @@ import {
 } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
 import { XpService } from '../turma/xp.service';
+import {
+  aplicarDescontoNoLog,
+  DescontarOciosidadeDto,
+  planejarDesconto,
+} from '../common/ociosidade';
 import { EfeitoRisco } from './dto/arriscar.dto';
 import { CreditoPendente, MotorWor, VotoAcao } from './wor-motor';
 
@@ -203,6 +208,34 @@ export class WorGameService {
           ...(a.letra ? { letra: a.letra } : {}),
         })),
     };
+  }
+
+  // ===== Ociosidade (032 §3.4) =====
+
+  /**
+   * Fim da partida: o professor desconta o aluno marcado como ocioso (zera o
+   * que a partida deu a ele, ou um valor). Uma vez por aluno; nunca em partida
+   * casual. O log e o desconto registram o que de fato saiu do XP.
+   */
+  async descontarOciosidade(
+    professorId: string,
+    matchId: string,
+    dto: DescontarOciosidadeDto,
+  ): Promise<MatchView> {
+    const match = await this.carregar(matchId);
+    this.assertDono(match, professorId);
+    const pontos = planejarDesconto(match, dto);
+    const efetivo = await this.xp.penalizarJogo(
+      match.turmaId!,
+      dto.alunoId,
+      pontos,
+      'WOR_OCIOSIDADE',
+    );
+    await this.matches.atualizar(
+      matchId,
+      aplicarDescontoNoLog(match, dto.alunoId, efetivo),
+    );
+    return this.view(matchId);
   }
 
   // ===== Pausa (028 §4) =====

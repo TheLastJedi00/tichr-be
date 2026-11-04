@@ -459,6 +459,13 @@ export class IsolateusMatchEntity {
    */
   logPontuacao?: LogPontuacaoJogador[];
 
+  /**
+   * Ociosidade (032 §3): o limite do lobby (ausente = padrão 2) e os descontos
+   * aplicados no fim. As faltas em si ficam no cofre.
+   */
+  limiteOciosidade?: number;
+  descontosOciosidade?: Record<string, number>;
+
   constructor(partial: Partial<IsolateusMatchEntity> = {}) {
     Object.assign(this, partial);
   }

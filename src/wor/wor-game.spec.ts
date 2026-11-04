@@ -86,7 +86,7 @@ describe('Wor em paralelo — a rodada (029 §1)', () => {
     await service.chutarLetra('a1', 'm1', 'A', 'DICA'); // e1 fecha
     expect(match.mascara).toEqual(['_', '_', '_', '_']);
     expect(match.equipesFechadas).toEqual([
-      { equipeId: 'e1', ordem: 1, resultado: 'DICA' },
+      { equipeId: 'e1', ordem: 1, resultado: 'JOGOU' },
     ]);
     await service.chutarLetra('b1', 'm1', 'T', 'DICA'); // e2 fecha → rodada fecha
     expect(match.mascara).toEqual(['A', '_', 'T', '_']);
@@ -97,10 +97,13 @@ describe('Wor em paralelo — a rodada (029 §1)', () => {
 });
 
 describe('Wor em paralelo — ordem de chegada (029 §1.2)', () => {
-  it('quem fecha primeiro aplica o dano na hora', async () => {
+  it('o dano só entra no fechamento da rodada (032 #11)', async () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1', 'b2'])];
     const { service } = cenario(teams);
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
+    expect(teams[1].hp).toBe(WOR.HP_INICIAL);
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b2', 'm1', 'Z', 'DICA');
     expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE);
     expect(teams[0].pontos).toBe(WOR.DANO_ATAQUE * WOR.PONTOS_POR_DANO);
   });
@@ -125,24 +128,24 @@ describe('Wor em paralelo — ordem de chegada (029 §1.2)', () => {
     expect(r.resultados[0].acertadores).toEqual([{ nome: 'B1', letra: 'A' }]);
   });
 
-  it('castelo derrubado antes de fechar perde o ataque e fecha como CAIU', async () => {
+  it('castelo que cai na rodada ainda dá o golpe dela (032 #11)', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1', 'b2'], { hp: 100 }),
     ];
     const { service, match } = cenario(teams);
     await service.chutarLetra('b1', 'm1', 'R', 'ATACAR', 'e1'); // acertou, votou em e1
-    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2'); // e1 fecha e derruba e2
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2'); // e1 fecha
+    await service.chutarLetra('b2', 'm1', 'Z', 'ATACAR', 'e1'); // e2 fecha → rodada
 
     expect(teams[1].isHorde).toBe(true);
-    expect(teams[0].hp).toBe(WOR.HP_INICIAL); // o ataque de e2 foi cancelado
+    expect(teams[0].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE); // o golpe de e2 vale
     expect(match.lastGlobalAction?.tipo).toBe('QUEDA');
-    // e2 fechou como CAIU → a rodada fechou com as letras das duas equipes.
     expect(
-      match.resumoRodada!.resultados.map((r) => [r.equipeId, r.acao]),
+      match.resumoRodada!.resultados.map((r) => [r.equipeId, r.acao, !!r.caiu]),
     ).toEqual([
-      ['e1', 'ATACAR'],
-      ['e2', 'CAIU'],
+      ['e1', 'ATACAR', false],
+      ['e2', 'ATACAR', true],
     ]);
     expect(match.resumoRodada!.resultados[1].acertadores).toEqual([
       { nome: 'B1', letra: 'R' },
@@ -150,17 +153,16 @@ describe('Wor em paralelo — ordem de chegada (029 §1.2)', () => {
     expect(match.mascara).toEqual(['A', 'R', '_', '_']);
   });
 
-  it('o membro da equipe que caiu não joga mais na rodada (EQUIPE_FECHOU)', async () => {
+  it('a equipe atacada segue jogando a rodada: o golpe ainda não entrou (032)', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1', 'b2'], { hp: 100 }),
       equipe('e3', ['c1']),
     ];
     const { service } = cenario(teams);
-    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2'); // derruba e2
-    await expect(service.arriscar('b2', 'm1', 'xyz')).rejects.toMatchObject({
-      response: { code: 'EQUIPE_FECHOU' },
-    });
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
+    await expect(service.arriscar('b2', 'm1', 'xyz')).resolves.toBeDefined();
+    expect(teams[1].hp).toBe(100);
   });
 
   it('crítico: todos os membros acertam → 200; um erro → 100', async () => {
@@ -172,9 +174,9 @@ describe('Wor em paralelo — ordem de chegada (029 §1.2)', () => {
     const { service } = cenario(teams);
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e3');
     await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'e3');
-    expect(teams[2].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO);
     await service.chutarLetra('b1', 'm1', 'T', 'ATACAR', 'e3');
     await service.chutarLetra('b2', 'm1', 'Z', 'ATACAR', 'e3');
+    await service.chutarLetra('c1', 'm1', 'Q', 'DICA');
     expect(teams[2].hp).toBe(
       WOR.HP_INICIAL - WOR.DANO_CRITICO - WOR.DANO_ATAQUE,
     );
@@ -190,6 +192,8 @@ describe('Wor em paralelo — ordem de chegada (029 §1.2)', () => {
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
     await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'e3');
     await service.chutarLetra('a3', 'm1', 'T', 'ATACAR', 'e3');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('c1', 'm1', 'Q', 'DICA');
     expect(teams[2].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO);
     expect(teams[1].hp).toBe(WOR.HP_INICIAL);
   });
@@ -290,21 +294,25 @@ describe('Wor em paralelo — fechamento da rodada (029 §1.3)', () => {
 });
 
 describe('Wor em paralelo — Risco Heroico e Invasão (029 §1.4)', () => {
-  it('acerto: cura, bônus e a onda acaba para todos; o dano de quem já fechou fica', async () => {
+  it('acerto: cura e bônus no fechamento; a onda avança depois da rodada (032 #14)', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1', 'b2'], { hp: 500 }),
       equipe('e3', ['c1', 'c2']),
     ];
     const { service, match, rodada } = cenario(teams);
-    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e3'); // e1 fecha: 100 em e3
-    await service.chutarLetra('c1', 'm1', 'R', 'ATACAR', 'e1'); // pendente
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e3');
+    await service.chutarLetra('c1', 'm1', 'R', 'ATACAR', 'e1');
     await service.arriscar('b1', 'm1', 'arte');
+    expect(teams[1].hp).toBe(500);
+    expect(match.ondaIndex).toBe(0);
+    await service.chutarLetra('b2', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('c2', 'm1', 'Z', 'ATACAR', 'e1');
 
     expect(teams[1].hp).toBe(500 + WOR.CURA_MASSIVA);
     expect(teams[1].pontos).toBe(WOR.BONUS_ARRISCAR);
     expect(teams[2].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE);
-    expect(teams[0].hp).toBe(WOR.HP_INICIAL); // ataque pendente de e3 descartado
+    expect(teams[0].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE); // e3 também bate
     expect(match.ondaIndex).toBe(1);
     expect(match.lastGlobalAction?.tipo).toBe('CURA');
     expect(match.jaAgiram).toEqual([]);
@@ -318,36 +326,45 @@ describe('Wor em paralelo — Risco Heroico e Invasão (029 §1.4)', () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(match.rodadaIniciadaEm).toBe('2026-10-21T12:00:03.000Z');
     jest.restoreAllMocks();
   });
 
-  it('erro: Dano Crítico no próprio castelo vai para o feed, sem card nem freeze', async () => {
+  it('erro: Dano Crítico no próprio castelo só no fechamento, sem card', async () => {
     const teams = [equipe('e1', ['a1', 'a2']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
-    const inicio = match.rodadaIniciadaEm;
     await service.arriscar('a1', 'm1', 'rainha');
+    expect(teams[0].hp).toBe(WOR.HP_INICIAL);
+    expect(match.feedRodada).toEqual([]);
+    expect(match.jaAgiram).toEqual(['a1']);
+    await service.chutarLetra('a2', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].hp).toBe(WOR.HP_INICIAL - WOR.DANO_CRITICO);
     expect(match.lastGlobalAction).toBeUndefined();
-    expect(match.rodadaIniciadaEm).toBe(inicio);
-    expect(match.feedRodada).toEqual([
-      expect.objectContaining({ tipo: 'DANO_CRITICO', seq: 1 }),
-    ]);
-    expect(match.jaAgiram).toEqual(['a1']);
+    expect(match.resumoRodada!.resultados[0].arriscar).toEqual({
+      nome: 'A1',
+      acertou: false,
+    });
   });
 
-  it('erro que derruba o castelo: card de Queda e a equipe fecha como CAIU', async () => {
+  it('erro que derruba o castelo: card de Queda no fechamento', async () => {
     const teams = [
       equipe('e1', ['a1', 'a2'], { hp: 200 }),
       equipe('e2', ['b1', 'b2']),
     ];
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'rainha');
+    await service.chutarLetra('a2', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b2', 'm1', 'Z', 'DICA');
     expect(teams[0].isHorde).toBe(true);
     expect(match.lastGlobalAction?.tipo).toBe('QUEDA');
-    expect(match.equipesFechadas).toEqual([
-      { equipeId: 'e1', ordem: 1, resultado: 'CAIU' },
-    ]);
+    expect(match.resumoRodada!.resultados[0]).toMatchObject({
+      equipeId: 'e1',
+      caiu: true,
+      hpDepois: 0,
+    });
   });
 
   it('a Horda não chuta letra, só tenta a Invasão', async () => {
@@ -369,21 +386,26 @@ describe('Wor em paralelo — Risco Heroico e Invasão (029 §1.4)', () => {
     ];
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('c1', 'm1', 'Q', 'DICA');
     expect(teams[0]).toMatchObject({ hp: 800, isHorde: false });
     expect(teams[1]).toMatchObject({ hp: 0, isHorde: true });
     expect(match.lastGlobalAction?.tipo).toBe('USURPACAO');
   });
 
-  it('Invasão errada: feed, e a Horda fecha a rodada sem atacar', async () => {
+  it('Invasão errada: a Horda fecha a rodada sem dizer o resultado', async () => {
     const teams = [
       equipe('e1', ['a1'], { hp: 0, isHorde: true }),
       equipe('e2', ['b1', 'b2']),
     ];
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'xyz');
-    expect(match.feedRodada[0].mensagem).toBe('A1 tentou a Invasão e errou!');
+    expect(match.feedRodada[0]).toMatchObject({
+      tipo: 'JOGOU',
+      mensagem: 'A e1 já jogou.',
+    });
     expect(match.equipesFechadas).toEqual([
-      { equipeId: 'e1', ordem: 1, resultado: 'NADA' },
+      { equipeId: 'e1', ordem: 1, resultado: 'JOGOU' },
     ]);
   });
 
@@ -407,7 +429,7 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
   );
   afterEach(() => jest.restoreAllMocks());
 
-  it('ataque vai para o feed sem congelar o relógio', async () => {
+  it('durante a rodada o feed só diz que a equipe jogou, sem congelar (032)', async () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
     const inicio = match.rodadaIniciadaEm;
@@ -415,18 +437,15 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
     expect(match.lastGlobalAction).toBeUndefined();
     expect(match.rodadaIniciadaEm).toBe(inicio);
     expect(match.feedRodada).toEqual([
-      expect.objectContaining({
-        tipo: 'ATAQUE',
-        mensagem: 'A e1 fechou em 1º e causou 100 de dano no castelo da e2!',
-      }),
+      expect.objectContaining({ tipo: 'JOGOU', mensagem: 'A e1 já jogou.' }),
     ]);
   });
 
-  it('compra de dica vai para o feed', async () => {
+  it('a compra de dica também não aparece antes do fechamento', async () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
     await service.chutarLetra('a1', 'm1', 'A', 'DICA');
-    expect(match.feedRodada[0]).toMatchObject({ tipo: 'DICA' });
+    expect(match.feedRodada[0]).toMatchObject({ tipo: 'JOGOU' });
   });
 
   it('o feed zera na rodada nova, mas o seq continua', async () => {
@@ -438,7 +457,7 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
     expect(match.feedSeq).toBe(2);
   });
 
-  it('a queda congela: a rodada em curso ganha 3s, e o card chega a todas as equipes', async () => {
+  it('a queda congela: a rodada nova nasce 3s depois, e o card chega a todas as equipes', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1'], { hp: 100 }),
@@ -446,6 +465,8 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
     ];
     const { service, match } = cenario(teams);
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('c1', 'm1', 'Q', 'DICA');
     expect(match.lastGlobalAction).toMatchObject({
       tipo: 'QUEDA',
       seq: 1,
@@ -459,6 +480,7 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(match.placar.find((p) => p.id === 'e2')?.hp).toBe(900);
   });
 });
@@ -468,6 +490,7 @@ describe('Wor em paralelo — pontos, ranking e log', () => {
     const teams = [equipe('e1', ['a1'], { hp: 500 }), equipe('e2', ['b1'])];
     const { service } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].pontos).toBe(WOR.BONUS_ARRISCAR);
   });
 
@@ -520,10 +543,11 @@ describe('Wor em paralelo — pontos, ranking e log', () => {
     const { service } = cenario(teams, { multiplicador: 2 });
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
     await service.chutarLetra('a2', 'm1', 'R', 'ATACAR', 'e2');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     const item = teams[0].logPontos[0];
     expect(item).toMatchObject({ fonte: 'CRITICO', pontos: 400, rodada: 1 });
     expect(item.descricao).toBe(
-      'Rodada 1: a equipe fechou em 1º, acertou 2 letras (A1, A2) e deu um ataque crítico no castelo da e2, 200 de dano (×2)',
+      'Rodada 1: a equipe chegou em 1º, acertou 2 letras (A1, A2) e deu um ataque crítico no castelo da e2, 200 de dano (×2)',
     );
   });
 
@@ -554,12 +578,12 @@ describe('Wor em paralelo — pontos, ranking e log', () => {
   });
 
   it('multiplicador: dano e bônus de arriscar multiplicados; o dano no castelo não', async () => {
-    const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
+    const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'], { hp: 500 })];
     const { service } = cenario(teams, { multiplicador: 3 });
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
-    expect(teams[0].pontos).toBe(300);
-    expect(teams[1].hp).toBe(900);
     await service.arriscar('b1', 'm1', 'arte');
+    expect(teams[0].pontos).toBe(300);
+    expect(teams[1].hp).toBe(500 - WOR.DANO_ATAQUE + WOR.CURA_MASSIVA);
     expect(teams[1].pontos).toBe(WOR.BONUS_ARRISCAR * 3);
   });
 
@@ -568,6 +592,7 @@ describe('Wor em paralelo — pontos, ranking e log', () => {
     const { service, match } = cenario(teams);
     delete (match as Partial<WorMatchEntity>).multiplicador;
     await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].pontos).toBe(WOR.DANO_ATAQUE);
   });
 });

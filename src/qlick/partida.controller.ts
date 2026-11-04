@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import {
+  DefinirLimiteOciosidadeDto,
+  DescontarOciosidadeDto,
+} from '../common/ociosidade';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaService } from './partida.service';
@@ -38,6 +42,30 @@ export class PartidaController {
   }
 
   /** Lobby: embaralhar perguntas e/ou alternativas por aluno (spec 031). */
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
+  @Post('partidas/:id/ociosidade/limite')
+  limiteOciosidade(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirLimiteOciosidadeDto,
+  ) {
+    return this.partidaService.definirLimiteOciosidade(
+      professorId,
+      id,
+      dto.limite,
+    );
+  }
+
+  /** Fim da partida: desconta os pontos do aluno ocioso (032). */
+  @Post('partidas/:id/ociosidade/descontar')
+  descontarOciosidade(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DescontarOciosidadeDto,
+  ) {
+    return this.partidaService.descontarOciosidade(professorId, id, dto);
+  }
+
   @Post('partidas/:id/embaralhamento')
   embaralhamento(
     @ProfessorId() professorId: string,

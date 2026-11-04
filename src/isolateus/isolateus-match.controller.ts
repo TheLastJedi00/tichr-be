@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import {
+  DefinirLimiteOciosidadeDto,
+  DescontarOciosidadeDto,
+} from '../common/ociosidade';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { PularFaseDto } from './dto/pular-fase.dto';
 import {
@@ -39,6 +43,26 @@ export class IsolateusMatchController {
     @Param('alunoId') alunoId: string,
   ) {
     return this.matches.removerInscrito(professorId, id, alunoId);
+  }
+
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
+  @Post('matches/:id/ociosidade/limite')
+  limiteOciosidade(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirLimiteOciosidadeDto,
+  ) {
+    return this.matches.definirLimiteOciosidade(professorId, id, dto.limite);
+  }
+
+  /** Fim da partida: desconta os pontos do aluno ocioso (032). */
+  @Post('matches/:id/ociosidade/descontar')
+  descontarOciosidade(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DescontarOciosidadeDto,
+  ) {
+    return this.game.descontarOciosidade(professorId, id, dto);
   }
 
   /** Lobby: a partida vale para o ranking da turma ou é casual. */
