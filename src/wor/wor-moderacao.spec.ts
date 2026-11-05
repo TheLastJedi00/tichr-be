@@ -127,16 +127,17 @@ describe('Tichr Wor — penalidade de moderação (Task 4)', () => {
     expect(match.lastGlobalAction?.mensagem).not.toContain('HP');
   });
 
-  it('se derrubar o castelo de quem não fechou, a equipe fecha como CAIU', async () => {
+  it('se derrubar o castelo, a equipe vira Horda e segue na rodada (032)', async () => {
     const teams = [
       time('e1', 'Dragões', ['ana', 'duda'], 80),
       time('e2', 'Grifos', ['bia']),
     ];
     const { service, match } = cenario(teams);
     await service.penalizarModeracao('m1', 'ana');
-    expect(match.equipesFechadas).toEqual([
-      { equipeId: 'e1', ordem: 1, resultado: 'CAIU' },
-    ]);
+    expect(teams[0]).toMatchObject({ hp: 0, isHorde: true });
+    expect(match.equipesFechadas).toEqual([]);
+    // Horda: a única ação que sobra é a Invasão.
+    await expect(service.arriscar('duda', 'm1', 'xyz')).resolves.toBeDefined();
   });
 
   it('partida sem turma: sem ranking para debitar, só o HP', async () => {

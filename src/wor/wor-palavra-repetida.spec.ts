@@ -44,11 +44,13 @@ describe('Tichr Wor — palavra repetida no arsenal', () => {
       efeito: 'CATAPULTA',
       alvoEquipeId: 'equipe-2',
     });
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA'); // fecha a rodada (032)
     expect(match.ondaIndex).toBe(1);
     expect(match.mascara).toEqual(['_', '_', '_']);
 
     // A mesma resposta não vale de novo: vira erro (Dano Crítico), não Catapulta.
     await service.arriscar('b1', 'm1', 'arte');
+    await service.chutarLetra('a1', 'm1', 'Q', 'DICA');
     expect(teams.find((t) => t.id === 'equipe-1')!.hp).toBe(WOR.HP_INICIAL);
     expect(teams.find((t) => t.id === 'equipe-2')!.hp).toBe(
       WOR.HP_INICIAL - WOR.DANO_CATAPULTA - WOR.DANO_CRITICO,

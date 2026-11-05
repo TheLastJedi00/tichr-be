@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ProfessorId } from '../auth/current-user.decorator';
+import {
+  DefinirLimiteOciosidadeDto,
+  DescontarOciosidadeDto,
+} from '../common/ociosidade';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
 import { DefinirMultiplicadorDto } from './dto/definir-multiplicador.dto';
@@ -51,6 +55,26 @@ export class WorMatchController {
     @Body() dto: DefinirValeRankingDto,
   ) {
     return this.service.definirValeRanking(uid, id, dto.valeRanking);
+  }
+
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
+  @Post('matches/:id/ociosidade/limite')
+  limiteOciosidade(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirLimiteOciosidadeDto,
+  ) {
+    return this.service.definirLimiteOciosidade(uid, id, dto.limite);
+  }
+
+  /** Fim da partida: desconta os pontos do aluno ocioso (032). */
+  @Post('matches/:id/ociosidade/descontar')
+  descontarOciosidade(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DescontarOciosidadeDto,
+  ) {
+    return this.game.descontarOciosidade(uid, id, dto);
   }
 
   @Post('matches/:id/iniciar')

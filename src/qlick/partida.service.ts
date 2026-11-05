@@ -24,6 +24,15 @@ import {
   itemAcerto,
   LogPontuacaoJogador,
 } from '../common/log-pontuacao';
+import {
+  aplicarDescontoNoLog,
+  assertLobbyOciosidade,
+  DescontarOciosidadeDto,
+  limiteOciosidade,
+  marcarNoLog,
+  planejarDesconto,
+  registrarFaltas,
+} from '../common/ociosidade';
 import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
 import {
   assertNaoPausada,
@@ -145,6 +154,39 @@ export class PartidaService {
       throw new NotFoundException('Partida nao encontrada.');
     }
     return p;
+  }
+
+  /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
+  async definirLimiteOciosidade(
+    professorId: string,
+    partidaId: string,
+    limite: number,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyOciosidade(partida.status);
+    partida.limiteOciosidade = limite;
+    await this.partidaRepo.update(partidaId, { limiteOciosidade: limite });
+    return partida;
+  }
+
+  /** Fim da partida: desconta os pontos do aluno ocioso (032 §3.4). */
+  async descontarOciosidade(
+    professorId: string,
+    partidaId: string,
+    dto: DescontarOciosidadeDto,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    const pontos = planejarDesconto(partida, dto);
+    const efetivo = await this.xpService.penalizarJogo(
+      partida.turmaId!,
+      dto.alunoId,
+      pontos,
+      'QLICK_OCIOSIDADE',
+    );
+    const dados = aplicarDescontoNoLog(partida, dto.alunoId, efetivo);
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
+    return partida;
   }
 
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
@@ -342,7 +384,15 @@ export class PartidaService {
     if (partida.status === 'ENCERRADO') {
       throw new BadRequestException('A partida já foi encerrada.');
     }
-    const rankingFinal = [...partida.placar]
+    // Quem nunca respondeu não está no placar; se teve falta, entra com 0
+    // para o ranking final poder destacá-lo como ocioso (032 §3.4).
+    const noPlacar = new Set(partida.placar.map((p) => p.alunoId));
+    const semResposta = partida.inscritos
+      .filter(
+        (i) => !noPlacar.has(i.alunoId) && partida.ociosidade?.[i.alunoId],
+      )
+      .map((i) => ({ alunoId: i.alunoId, nome: i.nome, pontos: 0 }));
+    const rankingFinal = [...partida.placar, ...semResposta]
       .sort((a, b) => b.pontos - a.pontos)
       .map((p, i) => ({ posicao: i + 1, ...p }));
     // Converte os pontos da partida em XP do portal (só faz sentido com turma,
@@ -354,7 +404,11 @@ export class PartidaService {
     const dados: Partial<PartidaEntity> = {
       status: 'ENCERRADO',
       rankingFinal,
-      logPontuacao: await this.montarLog(partida, rankingFinal, creditos),
+      logPontuacao: marcarNoLog(
+        await this.montarLog(partida, rankingFinal, creditos),
+        (alunoId) => partida.ociosidade?.[alunoId] ?? 0,
+        limiteOciosidade(partida, 'QLICK'),
+      ),
       perguntaPublica: null,
       corretaIndex: null,
     };
@@ -597,6 +651,12 @@ export class PartidaService {
       corretaIndex: partida.embaralharPerguntas ? null : pergunta.corretaIndex,
       placar,
       rankingParcial,
+      // Falta (032 §3.2): inscrito sem resposta na pergunta apurada.
+      ociosidade: registrarFaltas(
+        partida.ociosidade,
+        partida.inscritos.map((i) => i.alunoId),
+        respostas.map((r) => r.alunoId),
+      ),
     };
     Object.assign(partida, dados);
     await this.partidaRepo.update(partida.id, dados);

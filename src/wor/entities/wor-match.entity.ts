@@ -105,20 +105,27 @@ export interface AcaoMembro {
   alunoId: string;
   /** Equipe do membro: todas as equipes jogam a mesma rodada (029 §1). */
   equipeId: string;
-  /** 'LETRA' = chutou uma letra; 'ARRISCAR' = tentou a palavra e errou. */
+  /** 'LETRA' = chutou uma letra; 'ARRISCAR' = tentou a palavra (certa ou errada). */
   tipo: 'LETRA' | 'ARRISCAR';
   letra?: string;
   acertou: boolean;
   /** Voto (atacar rival ou comprar dica); só apurado se `acertou`. */
   voto?: VotoRodada;
+  /** Arriscar (032): o efeito escolhido e o alvo da Catapulta, aplicados no fechamento. */
+  efeito?: 'CATAPULTA' | 'CURA';
+  alvoEquipeId?: string;
   /** Ordem de chegada na rodada (desempate da votação). */
   ordem: number;
   /** Hora da ação (ISO): ordena as equipes que fecham por tempo (029 #8). */
   em: string;
 }
 
-/** Como a equipe fechou a rodada (029 §1.2). `CAIU` = o castelo caiu antes. */
-export type ResultadoFechamento = 'ATACAR' | 'DICA' | 'NADA' | 'CAIU';
+/**
+ * Como a equipe fechou a rodada. Desde a 032 o lado público durante a rodada é
+ * só `JOGOU` (todos agiram): o efeito sai no fechamento, no `resumoRodada`.
+ * `CAIU` ficou só para partidas antigas.
+ */
+export type ResultadoFechamento = 'ATACAR' | 'DICA' | 'NADA' | 'CAIU' | 'JOGOU';
 
 /** Equipe que já fechou a rodada, na ordem de chegada (público). */
 export interface EquipeFechada {
@@ -131,9 +138,22 @@ export interface EquipeFechada {
 /** Evento da rodada que não congela o jogo (029 §3). */
 export interface ItemFeed {
   seq: number;
-  tipo: 'ATAQUE' | 'DICA' | 'DANO_CRITICO';
+  /** `JOGOU` (032): a equipe fechou; o que ela fez só aparece no fechamento. */
+  tipo: 'ATAQUE' | 'DICA' | 'DANO_CRITICO' | 'JOGOU';
   mensagem: string;
   em: string;
+}
+
+/** O arriscar da equipe na rodada (032), no reveal do fechamento. */
+export interface ArriscarRodada {
+  nome: string;
+  acertou: boolean;
+  /** Só no acerto: Catapulta, Recuperar HP ou Usurpação (Horda). */
+  efeito?: 'CATAPULTA' | 'CURA' | 'USURPACAO';
+  alvoEquipeId?: string;
+  alvoNome?: string;
+  /** Catapulta: dano que de fato saiu do castelo alvo. */
+  dano?: number;
 }
 
 /** O resultado de uma equipe na rodada (reveal do fechamento). */
@@ -148,6 +168,12 @@ export interface ResultadoRodadaEquipe {
   alvoNome?: string;
   dano?: number;
   critico?: boolean;
+  /** 032: o arriscar da equipe na rodada, se houve. */
+  arriscar?: ArriscarRodada;
+  /** 032: HP antes e depois do fechamento, e se o castelo caiu nele. */
+  hpAntes?: number;
+  hpDepois?: number;
+  caiu?: boolean;
 }
 
 /**
@@ -272,6 +298,15 @@ export class WorMatchEntity {
 
   /** De onde veio cada ponto, por aluno (spec 027 §1). Só no encerramento. */
   logPontuacao?: LogPontuacaoJogador[];
+
+  /**
+   * Ociosidade (032 §3): faltas a partir das quais o aluno é marcado (ausente =
+   * padrão do jogo), as faltas por aluno (só quem tem ao menos uma) e os
+   * descontos já aplicados no fim. Público: o celular mostra o alerta ao aluno.
+   */
+  limiteOciosidade?: number;
+  ociosidade?: Record<string, number>;
+  descontosOciosidade?: Record<string, number>;
 
   constructor(partial: Partial<WorMatchEntity> = {}) {
     Object.assign(this, partial);

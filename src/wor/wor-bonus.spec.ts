@@ -25,6 +25,8 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     const teams = [equipe('e1', ['a1', 'a2']), equipe('e2', ['b1'])];
     const { service } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('a2', 'm1', 'Q', 'DICA');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].pontosIndividuais).toEqual({ a1: 1000 });
     expect(teams[0].pontos).toBe(WOR.BONUS_ARRISCAR); // a equipe mantém o seu
     expect(teams[0].logIndividual.a1).toEqual([
@@ -43,6 +45,7 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     ];
     const { service } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].pontosIndividuais).toEqual({ a1: 1000 });
   });
 
@@ -50,6 +53,7 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service } = cenario(teams, { multiplicador: 2 });
     await service.arriscar('a1', 'm1', 'arte');
+    await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(teams[0].pontosIndividuais).toEqual({ a1: 2000 });
     expect(teams[0].logIndividual.a1[0].descricao).toContain('(×2)');
   });
@@ -82,7 +86,7 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     expect(teams[1].pontosIndividuais).toEqual({ b1: 300 });
   });
 
-  it('letra certa de equipe que caiu rende; letra descartada pela onda acabar, não', async () => {
+  it('letra certa de equipe que caiu rende; com a palavra acertada, as letras da rodada também (032)', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1', 'b2'], { hp: 100 }),
@@ -90,12 +94,14 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     ];
     const { service } = cenario(teams);
     await service.chutarLetra('b1', 'm1', 'R', 'ATACAR', 'e1');
-    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2'); // derruba e2
-    await service.chutarLetra('c1', 'm1', 'T', 'DICA'); // pendente
-    await service.arriscar('c2', 'm1', 'arte'); // a onda acaba
+    await service.chutarLetra('a1', 'm1', 'A', 'ATACAR', 'e2'); // derruba e2 no fechamento
+    await service.chutarLetra('c1', 'm1', 'T', 'DICA');
+    await service.arriscar('c2', 'm1', 'arte'); // a onda acaba depois da rodada
+    await service.chutarLetra('b2', 'm1', 'Z', 'DICA'); // rodada fecha
+    expect(teams[1].isHorde).toBe(true);
     expect(teams[1].pontosIndividuais).toEqual({ b1: 300 }); // caiu, mas acertou
     expect(teams[0].pontosIndividuais).toEqual({ a1: 300 });
-    expect(teams[2].pontosIndividuais).toEqual({ c2: 1000 }); // c1 descartado
+    expect(teams[2].pontosIndividuais).toEqual({ c1: 300, c2: 1000 });
   });
 
   it('crédito da não campeã: equipe ×0,5 + bônus inteiro, e o log soma igual (exemplo Ana/Bia)', async () => {
@@ -121,8 +127,8 @@ describe('Wor — bônus individual de acerto (029 §6A)', () => {
     ];
     const { service, creditos, match } = cenario(teams, ultimaOnda);
     await service.chutarLetra('c1', 'm1', 'I', 'DICA'); // completa REI
+    // Na Horda, quem arrisca fecha pela equipe (032 #13) → rodada fecha → encerra.
     await service.arriscar('ana', 'm1', 'xyz');
-    await service.arriscar('bia', 'm1', 'xyz'); // rodada fecha → encerra
 
     expect(match.vencedorEquipeId).toBe('e1');
     const de = (id: string) =>

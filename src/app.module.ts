@@ -17,6 +17,7 @@ import { FeedbackModule } from './feedback/feedback.module';
 import { CheckoutModule } from './checkout/checkout.module';
 import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
 import { InstituicaoModule } from './instituicao/instituicao.module';
+import { DenunciaModule } from './denuncia/denuncia.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { InstituicaoModule } from './instituicao/instituicao.module';
     CheckoutModule,
     IaGovernancaModule,
     InstituicaoModule,
+    DenunciaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
