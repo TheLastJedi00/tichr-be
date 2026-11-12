@@ -10,6 +10,11 @@ import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
 import { DenunciaJanelaRepository } from './denuncia-janela.repository';
+import { DenunciaGrupoRepository } from './denuncia-grupo.repository';
+import {
+  DenunciaGrupoEntity,
+  StatusGrupo,
+} from './entities/denuncia-grupo.entity';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaRepository } from './denuncia.repository';
 import { DenunciaEntity, StatusDenuncia } from './entities/denuncia.entity';
@@ -34,6 +39,8 @@ export interface DenunciaProfessorView {
   xpDenunciado: number;
   /** Janela de denúncia em que foi feita (033); ausente nas anteriores. */
   janelaId?: string;
+  /** Grupo de que faz parte (033). */
+  grupoId?: string;
   topicoId?: string;
   topicoTitulo?: string;
   /** Pontos sugeridos do tópico, se ele ainda existir. */
@@ -42,6 +49,33 @@ export interface DenunciaProfessorView {
   temImagem: boolean;
   pontos?: number;
   pontosTransferidos?: number;
+}
+
+/** Um grupo de denúncias contra o mesmo aluno, para o professor (033). */
+export interface GrupoProfessorView {
+  id: string;
+  status: StatusGrupo;
+  criadoEm: string;
+  resolvidoEm?: string;
+  denunciadoAlunoId: string;
+  denunciadoNome: string;
+  xpDenunciado: number;
+  topicoId?: string;
+  topicoTitulo?: string;
+  pontosSugeridos?: number;
+  /** Ordem cronológica: é a ordem da sobra na divisão. */
+  denunciaIds: string[];
+  pontos?: number;
+  pontosTransferidos?: number;
+}
+
+/** Pendentes avulsas com o mesmo denunciado e tópico: o professor confirma. */
+export interface SugestaoGrupoView {
+  denunciadoAlunoId: string;
+  denunciadoNome: string;
+  topicoId: string;
+  topicoTitulo?: string;
+  denunciaIds: string[];
 }
 
 /** O que o autor vê das próprias denúncias: nada de pontos nem do autor. */
@@ -69,6 +103,7 @@ export class DenunciaService {
     private readonly professorService: ProfessorService,
     private readonly imagens: DenunciaImagemStorage,
     private readonly janelaRepo: DenunciaJanelaRepository,
+    private readonly grupos: DenunciaGrupoRepository,
   ) {}
 
   // ===== Tópicos (professor) =====
@@ -240,6 +275,7 @@ export class DenunciaService {
       };
       if (d.resolvidaEm) v.resolvidaEm = d.resolvidaEm;
       if (d.janelaId) v.janelaId = d.janelaId;
+      if (d.grupoId) v.grupoId = d.grupoId;
       if (d.topicoId) {
         v.topicoId = d.topicoId;
         v.topicoTitulo = d.topicoTitulo;
@@ -277,6 +313,7 @@ export class DenunciaService {
     const d = await this.denunciaDoProfessor(professorId, turmaId, id, turma);
     DenunciaTopicoEntity.pontosValidos(pontos);
     d.assertPendente();
+    d.assertAvulsa();
     const imagem = d.imagemPath;
 
     const patch = (transferidos: number): Partial<DenunciaEntity> => ({
@@ -299,7 +336,9 @@ export class DenunciaService {
         motivo: 'DENUNCIA',
         noMesmoCommit: {
           ler: async (tx) => {
-            (await this.denuncias.lerNaTransacao(tx, id)).assertPendente();
+            const atual = await this.denuncias.lerNaTransacao(tx, id);
+            atual.assertPendente();
+            atual.assertAvulsa();
           },
           gravar: (tx, t) => this.denuncias.gravarNaTransacao(tx, id, patch(t)),
         },
@@ -318,6 +357,7 @@ export class DenunciaService {
   ): Promise<void> {
     const d = await this.denunciaDoProfessor(professorId, turmaId, id);
     d.assertPendente();
+    d.assertAvulsa();
     const imagem = d.imagemPath;
     await this.denuncias.resolverSePendente(id, {
       status: 'INVALIDADA',
@@ -325,6 +365,141 @@ export class DenunciaService {
       imagemPath: null as unknown as undefined,
     });
     if (imagem) await this.imagens.apagar(imagem);
+  }
+
+  // ===== Grupos (033) =====
+
+  /** Grupos da turma (todos os status) e sugestões entre as pendentes avulsas. */
+  async gruposDaTurma(
+    professorId: string,
+    turmaId: string,
+  ): Promise<{ grupos: GrupoProfessorView[]; sugestoes: SugestaoGrupoView[] }> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const nomes = await this.nomesDaTurma(turmaId);
+    const topicos = new Map(
+      (await this.topicos.findBy('professorId', professorId)).map((t) => [
+        t.id,
+        t,
+      ]),
+    );
+    const denuncias = await this.denuncias.findBy('turmaId', turmaId);
+    const tituloDe = (topicoId?: string) =>
+      topicoId
+        ? (denuncias.find((d) => d.topicoId === topicoId)?.topicoTitulo ??
+          topicos.get(topicoId)?.titulo)
+        : undefined;
+
+    const grupos = (await this.grupos.findBy('turmaId', turmaId))
+      .sort((a, b) => b.criadoEm.localeCompare(a.criadoEm))
+      .map((g) => {
+        const alvo = nomes.get(g.denunciadoAlunoId);
+        const v: GrupoProfessorView = {
+          id: g.id,
+          status: g.status,
+          criadoEm: g.criadoEm,
+          denunciadoAlunoId: g.denunciadoAlunoId,
+          denunciadoNome: alvo?.nome ?? 'Aluno removido',
+          xpDenunciado: alvo?.xpTotal ?? 0,
+          denunciaIds: g.denunciaIds,
+        };
+        if (g.resolvidoEm) v.resolvidoEm = g.resolvidoEm;
+        if (g.topicoId) {
+          v.topicoId = g.topicoId;
+          const titulo = tituloDe(g.topicoId);
+          if (titulo) v.topicoTitulo = titulo;
+          const t = topicos.get(g.topicoId);
+          if (t) v.pontosSugeridos = t.pontosSugeridos;
+        }
+        if (g.pontos !== undefined) v.pontos = g.pontos;
+        if (g.pontosTransferidos !== undefined) {
+          v.pontosTransferidos = g.pontosTransferidos;
+        }
+        return v;
+      });
+
+    const porChave = new Map<string, DenunciaEntity[]>();
+    for (const d of denuncias) {
+      if (!d.pendente || d.grupoId || !d.topicoId) continue;
+      const chave = `${d.denunciadoAlunoId}|${d.topicoId}`;
+      porChave.set(chave, [...(porChave.get(chave) ?? []), d]);
+    }
+    const sugestoes: SugestaoGrupoView[] = [...porChave.values()]
+      .filter((lista) => lista.length >= 2)
+      .map((lista) => {
+        const ordenadas = [...lista].sort(
+          (a, b) =>
+            a.criadaEm.localeCompare(b.criadaEm) || a.id.localeCompare(b.id),
+        );
+        const [primeira] = ordenadas;
+        const v: SugestaoGrupoView = {
+          denunciadoAlunoId: primeira.denunciadoAlunoId,
+          denunciadoNome:
+            nomes.get(primeira.denunciadoAlunoId)?.nome ?? 'Aluno removido',
+          topicoId: primeira.topicoId!,
+          denunciaIds: ordenadas.map((d) => d.id),
+        };
+        if (primeira.topicoTitulo) v.topicoTitulo = primeira.topicoTitulo;
+        return v;
+      });
+    return { grupos, sugestoes };
+  }
+
+  async criarGrupo(
+    professorId: string,
+    turmaId: string,
+    denunciaIds: string[],
+  ): Promise<DenunciaGrupoEntity> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    return this.grupos.transacao(async (tx) => {
+      const lidas: DenunciaEntity[] = [];
+      for (const id of new Set(denunciaIds)) {
+        lidas.push(await this.denunciaNaTransacao(tx, turmaId, id));
+      }
+      const g = DenunciaGrupoEntity.criar(lidas);
+      g.id = this.grupos.novoId();
+      this.grupos.gravarNaTransacao(tx, g);
+      for (const id of g.denunciaIds) {
+        this.denuncias.gravarNaTransacao(tx, id, { grupoId: g.id });
+      }
+      return g;
+    });
+  }
+
+  async associarAoGrupo(
+    professorId: string,
+    turmaId: string,
+    grupoId: string,
+    denunciaId: string,
+  ): Promise<{ motivoDiferente: boolean }> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    return this.grupos.transacao(async (tx) => {
+      const g = await this.grupoNaTransacao(tx, turmaId, grupoId);
+      const d = await this.denunciaNaTransacao(tx, turmaId, denunciaId);
+      const r = g.associar(d);
+      this.grupos.gravarNaTransacao(tx, g);
+      this.denuncias.gravarNaTransacao(tx, d.id, { grupoId: g.id });
+      return r;
+    });
+  }
+
+  async desassociarDoGrupo(
+    professorId: string,
+    turmaId: string,
+    grupoId: string,
+    denunciaId: string,
+  ): Promise<{ desfeito: boolean }> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    return this.grupos.transacao(async (tx) => {
+      const g = await this.grupoNaTransacao(tx, turmaId, grupoId);
+      const r = g.desassociar(denunciaId);
+      const livres = r.desfeito ? [denunciaId, ...g.denunciaIds] : [denunciaId];
+      for (const id of livres) {
+        this.denuncias.gravarNaTransacao(tx, id, { grupoId: null });
+      }
+      if (r.desfeito) this.grupos.apagarNaTransacao(tx, g.id);
+      else this.grupos.gravarNaTransacao(tx, g);
+      return r;
+    });
   }
 
   // ===== Janela de denúncia (033) =====
@@ -453,6 +628,30 @@ export class DenunciaService {
       throw new NotFoundException('Denúncia não encontrada.');
     }
     return d;
+  }
+
+  private async denunciaNaTransacao(
+    tx: Parameters<DenunciaRepository['lerNaTransacao']>[0],
+    turmaId: string,
+    id: string,
+  ): Promise<DenunciaEntity> {
+    const d = await this.denuncias.lerNaTransacao(tx, id);
+    if (!d || d.turmaId !== turmaId) {
+      throw new NotFoundException('Denúncia não encontrada.');
+    }
+    return d;
+  }
+
+  private async grupoNaTransacao(
+    tx: Parameters<DenunciaGrupoRepository['lerNaTransacao']>[0],
+    turmaId: string,
+    id: string,
+  ): Promise<DenunciaGrupoEntity> {
+    const g = await this.grupos.lerNaTransacao(tx, id);
+    if (!g || g.turmaId !== turmaId) {
+      throw new NotFoundException('Grupo não encontrado.');
+    }
+    return g;
   }
 
   private async nomesDaTurma(turmaId: string) {

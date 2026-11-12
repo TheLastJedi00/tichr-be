@@ -1,5 +1,8 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -62,6 +65,22 @@ export class CriarDenunciaDto {
   @IsString()
   @MaxLength(DENUNCIA.TEXTO_MAX)
   texto?: string;
+}
+
+export class CriarGrupoDto {
+  @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  denunciaIds: string[];
+}
+
+export class DenunciaDoGrupoDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  denunciaId: string;
 }
 
 export class ValidarDenunciaDto {

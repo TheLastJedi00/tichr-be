@@ -16,6 +16,11 @@ export class DenunciaGrupoRepository extends FirestoreRepository<DenunciaGrupoEn
     super(firebase);
   }
 
+  /** Grupo e denúncias mudam juntos: tudo numa transação só. */
+  transacao<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+    return this.firebase.firestore.runTransaction(fn);
+  }
+
   ref(id: string): DocumentReference {
     return this.collection.doc(id);
   }

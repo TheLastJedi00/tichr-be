@@ -115,6 +115,17 @@ export class DenunciaEntity {
     }
   }
 
+  /** Em grupo, só o grupo resolve (033): validar/invalidar avulsa é 409. */
+  assertAvulsa(): void {
+    if (this.grupoId) {
+      throw new ConflictException({
+        code: 'DENUNCIA_EM_GRUPO',
+        message:
+          'Essa denúncia está num grupo: resolva o grupo ou desassocie antes.',
+      });
+    }
+  }
+
   /** Quanto sai do denunciado: o pedido, limitado ao XP dele (#2). */
   static aTransferir(pontos: number, xpDenunciado: number): number {
     return Math.max(0, Math.min(pontos, xpDenunciado));

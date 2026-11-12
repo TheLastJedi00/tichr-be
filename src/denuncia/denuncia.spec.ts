@@ -13,6 +13,8 @@ import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
 import { DenunciaJanelaRepository } from './denuncia-janela.repository';
 import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
+import { DenunciaGrupoRepository } from './denuncia-grupo.repository';
+import { DenunciaGrupoEntity } from './entities/denuncia-grupo.entity';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
@@ -199,7 +201,8 @@ function montar(
 
   // O repo simulado precisa ler/gravar dentro do "commit" do XP.
   (denunciaRepo as unknown as { lerNaTransacao: unknown }).lerNaTransacao =
-    async (_tx: unknown, id: string) => denuncias.get(id)!;
+    async (_tx: unknown, id: string) =>
+      denuncias.get(id) ?? new DenunciaEntity({ id });
   (
     denunciaRepo as unknown as { gravarNaTransacao: unknown }
   ).gravarNaTransacao = (
@@ -207,6 +210,23 @@ function montar(
     id: string,
     patch: Partial<DenunciaEntity>,
   ) => Object.assign(denuncias.get(id)!, patch);
+
+  const grupos = new Map<string, DenunciaGrupoEntity>();
+  const grupoRepo = {
+    transacao: async <T>(fn: (tx: unknown) => Promise<T>) => fn(null),
+    novoId: () => `g${++seq}`,
+    findById: async (id: string) => grupos.get(id) ?? null,
+    findBy: async (campo: keyof DenunciaGrupoEntity, valor: unknown) =>
+      [...grupos.values()].filter((g) => g[campo] === valor),
+    lerNaTransacao: async (_tx: unknown, id: string) =>
+      grupos.get(id) ? new DenunciaGrupoEntity({ ...grupos.get(id)! }) : null,
+    gravarNaTransacao: (_tx: unknown, g: DenunciaGrupoEntity) => {
+      grupos.set(g.id, new DenunciaGrupoEntity({ ...g }));
+    },
+    apagarNaTransacao: (_tx: unknown, id: string) => {
+      grupos.delete(id);
+    },
+  } as unknown as DenunciaGrupoRepository;
 
   const service = new DenunciaService(
     denunciaRepo,
@@ -217,6 +237,7 @@ function montar(
     professorService,
     imagens as unknown as DenunciaImagemStorage,
     janelaRepo,
+    grupoRepo,
   );
   return {
     service,
@@ -227,6 +248,7 @@ function montar(
     imagens,
     turmas,
     janelas,
+    grupos,
   };
 }
 
@@ -627,5 +649,129 @@ describe('DenunciaService — janela de denúncia (033)', () => {
       texto: 'x',
     });
     expect((await service.listarDaTurma(PROF, TURMA))[0].janelaId).toBe('j0');
+  });
+});
+
+describe('DenunciaService — grupos (033)', () => {
+  /** Ana (a1), Caio (a3) e Duda (a4) denunciam Bruno (a2). */
+  async function tresContraBruno(opcoes?: { pontuacaoAtiva?: boolean }) {
+    const ctx = montar(opcoes);
+    ctx.alunos.a4 = new AlunoEntity({
+      id: 'a4',
+      turmaId: TURMA,
+      nome: 'Duda',
+      xpTotal: 0,
+    });
+    const celular = await ctx.service.criarTopico(PROF, {
+      titulo: 'Celular',
+      pontosSugeridos: 900,
+    });
+    const briga = await ctx.service.criarTopico(PROF, {
+      titulo: 'Briga',
+      pontosSugeridos: 300,
+    });
+    const ids: string[] = [];
+    for (const [autor, topicoId] of [
+      ['a1', celular.id],
+      ['a3', celular.id],
+      ['a4', briga.id],
+    ]) {
+      const { id } = await ctx.service.criarDoAluno(aluno(autor), {
+        denunciadoAlunoId: 'a2',
+        topicoId,
+      });
+      ids.push(id);
+      await new Promise((ok) => setTimeout(ok, 2));
+    }
+    return { ...ctx, ids, celular, briga };
+  }
+
+  it('sugere as pendentes avulsas com o mesmo denunciado e tópico', async () => {
+    const { service, ids, celular } = await tresContraBruno();
+    const { grupos, sugestoes } = await service.gruposDaTurma(PROF, TURMA);
+    expect(grupos).toEqual([]);
+    expect(sugestoes).toEqual([
+      expect.objectContaining({
+        denunciadoAlunoId: 'a2',
+        denunciadoNome: 'Bruno',
+        topicoId: celular.id,
+        topicoTitulo: 'Celular',
+        denunciaIds: [ids[0], ids[1]],
+      }),
+    ]);
+  });
+
+  it('agrupar marca as denúncias; a sugestão some; a lista traz o grupoId', async () => {
+    const { service, ids, denuncias } = await tresContraBruno();
+    const g = await service.criarGrupo(PROF, TURMA, [ids[1], ids[0]]);
+    expect(g.denunciaIds).toEqual([ids[0], ids[1]]);
+    expect(denuncias.get(ids[0])!.grupoId).toBe(g.id);
+    expect(denuncias.get(ids[1])!.grupoId).toBe(g.id);
+    const { grupos, sugestoes } = await service.gruposDaTurma(PROF, TURMA);
+    expect(sugestoes).toEqual([]);
+    expect(grupos[0]).toMatchObject({
+      id: g.id,
+      denunciadoNome: 'Bruno',
+      xpDenunciado: 500,
+      topicoTitulo: 'Celular',
+      pontosSugeridos: 900,
+      status: 'PENDENTE',
+    });
+    const lista = await service.listarDaTurma(PROF, TURMA);
+    expect(lista.find((d) => d.id === ids[0])!.grupoId).toBe(g.id);
+  });
+
+  it('associar uma de outro motivo avisa; desassociar até 1 desfaz o grupo', async () => {
+    const { service, ids, denuncias, grupos } = await tresContraBruno();
+    const g = await service.criarGrupo(PROF, TURMA, [ids[0], ids[1]]);
+    expect(await service.associarAoGrupo(PROF, TURMA, g.id, ids[2])).toEqual({
+      motivoDiferente: true,
+    });
+    expect(grupos.get(g.id)!.denunciaIds).toEqual(ids);
+    expect(denuncias.get(ids[2])!.grupoId).toBe(g.id);
+
+    expect(await service.desassociarDoGrupo(PROF, TURMA, g.id, ids[2])).toEqual(
+      { desfeito: false },
+    );
+    expect(denuncias.get(ids[2])!.grupoId).toBeNull();
+    expect(await service.desassociarDoGrupo(PROF, TURMA, g.id, ids[1])).toEqual(
+      { desfeito: true },
+    );
+    expect(grupos.has(g.id)).toBe(false);
+    expect(denuncias.get(ids[0])!.grupoId).toBeNull();
+    expect(denuncias.get(ids[1])!.grupoId).toBeNull();
+  });
+
+  it('recusa agrupar denunciado diferente, resolvida e de outra turma', async () => {
+    const { service, ids, alunos } = await tresContraBruno();
+    const outra = await service.criarDoAluno(aluno('a2'), {
+      denunciadoAlunoId: 'a3',
+      texto: 'x',
+    });
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], outra.id]),
+    ).rejects.toThrow(BadRequestException);
+    await service.invalidar(PROF, TURMA, ids[2]);
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], ids[2]]),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], 'nao-existe']),
+    ).rejects.toThrow(NotFoundException);
+    await expect(
+      service.criarGrupo('prof-2', TURMA, [ids[0], ids[1]]),
+    ).rejects.toThrow(NotFoundException);
+    expect(alunos.a2.xpTotal).toBe(500);
+  });
+
+  it('avulsa que está em grupo não é validada nem invalidada sozinha: 409', async () => {
+    const { service, ids } = await tresContraBruno();
+    await service.criarGrupo(PROF, TURMA, [ids[0], ids[1]]);
+    await expect(service.validar(PROF, TURMA, ids[0], 100)).rejects.toThrow(
+      ConflictException,
+    );
+    await expect(service.invalidar(PROF, TURMA, ids[0])).rejects.toThrow(
+      ConflictException,
+    );
   });
 });
