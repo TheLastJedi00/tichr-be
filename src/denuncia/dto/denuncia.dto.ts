@@ -44,8 +44,8 @@ export class EditarTopicoDto {
 }
 
 /**
- * Corpo multipart (a imagem vai no campo `imagem`): os campos chegam como
- * texto. O autor e a turma saem do JWT do aluno, nunca daqui.
+ * JSON ou multipart (de um front antigo; a imagem foi removida na 033). O
+ * autor e a turma saem do JWT do aluno, nunca daqui.
  */
 export class CriarDenunciaDto {
   @IsString()

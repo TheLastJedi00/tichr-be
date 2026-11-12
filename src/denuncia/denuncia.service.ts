@@ -3,13 +3,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  PayloadTooLargeException,
 } from '@nestjs/common';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
-import { DENUNCIA } from './denuncia.constants';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
 import { DenunciaJanelaRepository } from './denuncia-janela.repository';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
@@ -19,6 +17,7 @@ import { DenunciaTopicoEntity } from './entities/denuncia-topico.entity';
 import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
 
 type Aluno = { alunoId: string; turmaId: string };
+/** Arquivo multipart: só para recusar a foto que um front antigo ainda mande. */
 type Arquivo = { buffer: Buffer; mimetype: string; size: number };
 
 /** O que o professor vê de cada denúncia (sem o caminho da imagem). */
@@ -137,6 +136,14 @@ export class DenunciaService {
     dto: { denunciadoAlunoId: string; topicoId?: string; texto?: string },
     imagem?: Arquivo,
   ): Promise<{ id: string }> {
+    // 033 #1: a foto saiu. Recusar (em vez de ignorar) avisa o front antigo
+    // em cache de que a imagem não foi enviada.
+    if (imagem) {
+      throw new BadRequestException({
+        code: 'IMAGEM_REMOVIDA',
+        message: 'A denúncia não aceita mais imagem. Descreva o que aconteceu.',
+      });
+    }
     const turma = await this.turmaDoAluno(turmaId);
     if (turma.denunciasAbertas !== true) {
       throw new ForbiddenException({
@@ -160,7 +167,6 @@ export class DenunciaService {
         throw new NotFoundException('Tópico não encontrado.');
       }
     }
-    if (imagem) this.assertImagem(imagem);
 
     const doAutor = await this.denuncias.findBy('autorAlunoId', alunoId);
     const nova = DenunciaEntity.criar(
@@ -176,11 +182,6 @@ export class DenunciaService {
     );
     if (turma.denunciaJanelaId) nova.janelaId = turma.denunciaJanelaId;
     const criada = await this.denuncias.create(nova);
-    if (imagem) {
-      const path = `denuncias/${turmaId}/${criada.id}.jpg`;
-      await this.imagens.salvar(path, imagem.buffer);
-      await this.denuncias.update(criada.id, { imagemPath: path });
-    }
     return { id: criada.id };
   }
 
@@ -452,15 +453,6 @@ export class DenunciaService {
       throw new NotFoundException('Denúncia não encontrada.');
     }
     return d;
-  }
-
-  private assertImagem(imagem: Arquivo): void {
-    if (!imagem.mimetype.startsWith('image/')) {
-      throw new BadRequestException('O anexo precisa ser uma imagem.');
-    }
-    if (imagem.size > DENUNCIA.IMAGEM_MAX_BYTES) {
-      throw new PayloadTooLargeException('Imagem muito grande.');
-    }
   }
 
   private async nomesDaTurma(turmaId: string) {

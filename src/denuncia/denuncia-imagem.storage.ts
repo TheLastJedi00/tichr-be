@@ -6,19 +6,15 @@ import { DENUNCIA } from './denuncia.constants';
  * A imagem anexada à denúncia (spec 032 #5). Diferente do avatar, NÃO ganha
  * token de download público: é foto de menor, só o professor dono vê, por URL
  * assinada de curta duração. Apagada quando a denúncia é resolvida.
+ *
+ * Spec 033: o envio saiu; restam a leitura e a remoção das fotos de legado
+ * (pendentes criadas antes). Pode ser removido quando não houver mais nenhuma.
  */
 @Injectable()
 export class DenunciaImagemStorage {
   private readonly logger = new Logger(DenunciaImagemStorage.name);
 
   constructor(private readonly firebase: FirebaseService) {}
-
-  async salvar(path: string, buffer: Buffer): Promise<void> {
-    await this.firebase.bucket.file(path).save(buffer, {
-      resumable: false,
-      contentType: 'image/jpeg',
-    });
-  }
 
   /** Falhar ao apagar não desfaz a resolução: só registra. */
   async apagar(path: string): Promise<void> {

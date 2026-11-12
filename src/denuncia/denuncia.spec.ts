@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
-  PayloadTooLargeException,
 } from '@nestjs/common';
 import { AlunoEntity } from '../turma/entities/aluno.entity';
 import { DenunciaEntity } from './entities/denuncia.entity';
@@ -25,6 +24,9 @@ import { ProfessorService } from '../professor/professor.service';
  * - o aluno nunca recebe o autor de uma denúncia (#3);
  * - as travas de abuso (#4) e o teto de 10.000 (#6);
  * - a imagem some quando a denúncia é resolvida (#5).
+ *
+ * Spec 033: o aluno não envia mais foto (400 IMAGEM_REMOVIDA). As denúncias
+ * antigas que já têm foto (legado) seguem visíveis até serem resolvidas.
  */
 
 const PROF = 'prof-1';
@@ -285,17 +287,17 @@ describe('DenunciaService — aluno denuncia', () => {
     expect(op.topicos[0]).not.toHaveProperty('pontosSugeridos');
   });
 
-  it('cria com tópico, texto e imagem privada', async () => {
-    const { service, denuncias, imagens } = montar();
+  it('cria com tópico e texto, sem foto', async () => {
+    const { service, denuncias } = montar();
     const tp = await service.criarTopico(PROF, {
       titulo: 'Celular',
       pontosSugeridos: 100,
     });
-    await service.criarDoAluno(
-      aluno('a1'),
-      { denunciadoAlunoId: 'a2', topicoId: tp.id, texto: ' no recreio ' },
-      jpeg,
-    );
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      topicoId: tp.id,
+      texto: ' no recreio ',
+    });
     const d = [...denuncias.values()][0];
     expect(d).toMatchObject({
       autorAlunoId: 'a1',
@@ -305,8 +307,20 @@ describe('DenunciaService — aluno denuncia', () => {
       status: 'PENDENTE',
       professorId: PROF,
     });
-    expect(d.imagemPath).toBe(`denuncias/${TURMA}/${d.id}.jpg`);
-    expect(imagens.salvas.has(d.imagemPath!)).toBe(true);
+    expect(d.imagemPath).toBeUndefined();
+  });
+
+  it('com arquivo de imagem: 400 IMAGEM_REMOVIDA e nada é criado (033)', async () => {
+    const { service, denuncias, imagens } = montar();
+    const erro: unknown = await service
+      .criarDoAluno(aluno('a1'), { denunciadoAlunoId: 'a2', texto: 'x' }, jpeg)
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(BadRequestException);
+    expect((erro as BadRequestException).getResponse()).toMatchObject({
+      code: 'IMAGEM_REMOVIDA',
+    });
+    expect(denuncias.size).toBe(0);
+    expect(imagens.salvas.size).toBe(0);
   });
 
   it('exige tópico ou texto', async () => {
@@ -372,24 +386,6 @@ describe('DenunciaService — aluno denuncia', () => {
     ).rejects.toThrow(/aguardando/);
   });
 
-  it('recusa imagem que não é imagem ou é grande demais', async () => {
-    const { service } = montar();
-    await expect(
-      service.criarDoAluno(
-        aluno('a1'),
-        { denunciadoAlunoId: 'a2', texto: 'x' },
-        { ...jpeg, mimetype: 'text/plain' },
-      ),
-    ).rejects.toThrow(BadRequestException);
-    await expect(
-      service.criarDoAluno(
-        aluno('a1'),
-        { denunciadoAlunoId: 'a2', texto: 'x' },
-        { ...jpeg, size: 10 * 1024 * 1024 },
-      ),
-    ).rejects.toThrow(PayloadTooLargeException);
-  });
-
   it('minhas denúncias: só as do autor, com o nome do denunciado e sem pontos', async () => {
     const { service } = montar();
     await service.criarDoAluno(aluno('a1'), {
@@ -414,12 +410,16 @@ describe('DenunciaService — aluno denuncia', () => {
 describe('DenunciaService — professor resolve', () => {
   async function comDenuncia(opcoes?: { pontuacaoAtiva?: boolean }) {
     const ctx = montar(opcoes);
-    await ctx.service.criarDoAluno(
-      aluno('a1'),
-      { denunciadoAlunoId: 'a2', texto: 'celular' },
-      jpeg,
-    );
-    return { ...ctx, id: [...ctx.denuncias.keys()][0] };
+    await ctx.service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'celular',
+    });
+    const id = [...ctx.denuncias.keys()][0];
+    // Foto de legado (antes da 033): continua até a denúncia ser resolvida.
+    const path = `denuncias/${TURMA}/${id}.jpg`;
+    ctx.denuncias.get(id)!.imagemPath = path;
+    ctx.imagens.salvas.add(path);
+    return { ...ctx, id };
   }
 
   it('lista da turma com autor, denunciado e XP atual do denunciado', async () => {
