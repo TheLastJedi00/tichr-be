@@ -20,6 +20,8 @@ export class DenunciaEntity {
   texto?: string;
   /** Janela de denúncia em que foi feita (033). */
   janelaId?: string;
+  /** Grupo de denúncias contra o mesmo aluno (033); null ao sair dele. */
+  grupoId?: string | null;
   /** Caminho privado no Storage; apagado ao resolver (#5). */
   imagemPath?: string;
   status: StatusDenuncia = 'PENDENTE';
