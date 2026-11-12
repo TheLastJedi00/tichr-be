@@ -53,6 +53,7 @@ npm test               # testes unitários do motor (Jest)
 | `FIREBASE_SERVICE_ACCOUNT` | JSON da service account do Firebase Admin, **em base64**. |
 | `FIREBASE_WEB_API_KEY` | Web API key do Firebase (pública). Autentica o login por email/senha via Identity Toolkit REST. |
 | `FIREBASE_STORAGE_BUCKET` | Bucket do Storage das fotos de perfil (opcional). Default: `<project_id>.firebasestorage.app`; projetos antigos usam `<project_id>.appspot.com`. |
+| `FIREBASE_DATABASE_URL` | URL do Realtime Database (spec 034): canal da posição cosmética do Isolateus, lido por REST. Ex.: `https://tichr-293c8-default-rtdb.firebaseio.com`. Sem ela, o canal fica desabilitado (`passo`/`canal` respondem 503 `CANAL_INDISPONIVEL`) e o jogo segue só com o Firestore. |
 | `JWT_SECRET` | Segredo para assinar/validar o JWT do portal do aluno. **Defina em produção** (há um fallback de desenvolvimento). |
 | `CORS_ORIGINS` | Origens autorizadas, separadas por vírgula (ex.: `https://tichr.com.br,https://www.tichr.com.br`). **Obrigatória em produção:** o CORS agora usa credenciais (cookie de sessão) e `Allow-Origin: *` é incompatível — sem a env, nenhuma origem passa e o app para. É env, e não constante, porque os *preview deploys* da Vercel mudam de URL a cada branch. Default de dev: `http://localhost:4200`. |
 | `APP_BASE_URL` | URL pública do app (default `https://tichr.com.br`). É o `continueUrl` dos e-mails de confirmação/redefinição — traz o professor de volta depois do clique. O domínio precisa estar nos *authorized domains* do projeto Firebase, senão o link é rejeitado. |
@@ -1784,3 +1785,17 @@ Os pontos e o log (`logPontos`) ficam no cofre e viram XP **1:1** no encerrament
   **deny-all** — é isso que impede o DevTools de revelar o infiltrado. **Sem alteração nas specs 024 e 025**
   (as coleções novas caem no deny-all padrão; não há deploy de rules para o Isolateus).
 
+## Isolateus pixel art (spec 034)
+
+**Canal de posição (RTDB, só visual).** `pos/{partidaId}/{setorId}/{habitanteId} = { x, alvoX, t }`, escrito **só pelo backend** pela API REST do RTDB (sem `admin.database()`). Reais e NPCs gravam pelo mesmo caminho e formato. A posição nunca decide nada e é apagada no `ENCERRADO`. `database.rules.json` (no FE): leitura só de `pos/{p}/{s}` com o custom token `{ partidaId, setorId }`, escrita para ninguém.
+
+| Rota | O que faz |
+|---|---|
+| `POST /aluno/isolateus/:id/passo { alvoX }` | Destino da caminhada (vivo, solto, na vila; 1/s, 429 `PASSO_RAPIDO`; 400 `ALVO_FORA_DA_CENA`). |
+| `GET /aluno/isolateus/:id/canal` | Custom token do setor atual (renovado a cada amanhecer). |
+
+**Turnos.** A Quarentena é convocada **à noite** (`POST .../quarentena` só no `DESLOCAMENTO`; cofre `quarentenaConvocadaNoite`; 409 `QUARENTENA_JA_CONVOCADA`; confirmada no amanhecer depois da sabotagem). O Dia (`RESULTADO_RODADA`) deixou de ser gravado; a noite seguinte abre com `faseIniciadaEm` 6 s à frente (400 `NOITE_NAO_COMECOU`). `TURNO_AMEACA` saiu.
+
+**Partida = banco de questões.** Toda rodada tem questão (sem disputa só pontos); nada encerra antes da última; Esperança 0 = colapso; prender a última Ameaça livre sorteia um **infiltrado** (`papel: 'INFILTRADO'`); `TETO_NOITES` saiu; resgate com um só candidato volta sem votação (`resgateResultado.semVotacao`).
+
+**Energia alien.** `energiaAlien` no cofre: +1 por acerto de Ameaça (livre ou presa) até 3; cheia, `POST .../poder` (só na noite, Ameaça livre) zera a barra. `painel.energia` substitui `contagioAcertos`; saem `poderes[]`, `acertosDesdeContagio` e `ACERTOS_PARA_CONTAGIO`. Recusas devolvem `code` estável (`FORA_DA_NOITE`, `FORA_DA_VILA`, `REPARO_JA_ORGANIZADO`, `ENERGIA_INSUFICIENTE`...).
