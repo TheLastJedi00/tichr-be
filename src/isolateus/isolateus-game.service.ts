@@ -6,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -58,7 +59,9 @@ import {
   reescalarAgenda,
   sortearAgendaNpc,
 } from './isolateus-deslocamento';
+import { CENA, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
+import { IsolateusPosicaoService } from './isolateus-posicao.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import {
   SETOR_COMUNICACAO,
@@ -126,6 +129,9 @@ export class IsolateusGameService {
     // Só o encerramento lê o cadastro (nome real no placar, spec 030). Opcional
     // para as suítes que montam o serviço à mão sem ele.
     @Optional() private readonly alunos?: AlunoRepository,
+    // O canal de posição cosmética (034). Opcional: as suítes antigas montam o
+    // serviço sem ele, e sem RTDB configurado o jogo segue só com o Firestore.
+    @Optional() private readonly posicao?: IsolateusPosicaoService,
   ) {}
 
   /**
@@ -541,6 +547,94 @@ export class IsolateusGameService {
       segredo.posicoesNoite?.find((p) => p.habitanteId === habitante.id)
         ?.setorId ?? habitante.setorId
     );
+  }
+
+  // ===== O canal de posição (034) =====
+
+  /** Quem pode andar pela cena: vivo, solto, numa partida em andamento. */
+  private habitanteNaCena(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): Habitante {
+    if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
+      throw new BadRequestException({
+        code: 'FORA_DA_PARTIDA',
+        message: 'A investigação não está em andamento.',
+      });
+    }
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException({
+        code: 'FORA_DA_VILA',
+        message: 'Quem saiu da vila não anda pela cena.',
+      });
+    }
+    return habitante;
+  }
+
+  private canalIndisponivel(): never {
+    throw new ServiceUnavailableException({
+      code: 'CANAL_INDISPONIVEL',
+      message: 'O canal de posição não está configurado.',
+    });
+  }
+
+  /**
+   * Toque no chão: o destino da caminhada (nunca a posição contínua). A posição
+   * é só visual — nada aqui decide a partida. Grava no setor onde o habitante
+   * está na PARTIDA (na noite, o da origem até o amanhecer).
+   */
+  async passo(
+    alunoId: string,
+    partidaId: string,
+    alvoX: number,
+  ): Promise<{ ok: true }> {
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
+    const habitante = this.habitanteNaCena(partida, segredo, alunoId);
+    if (!alvoDentroDaCena(alvoX)) {
+      throw new BadRequestException({
+        code: 'ALVO_FORA_DA_CENA',
+        message: `O destino fica entre 0 e ${CENA.LARGURA}.`,
+      });
+    }
+    if (!this.posicao?.habilitado) this.canalIndisponivel();
+    await this.posicao.passo(
+      partida.id,
+      habitante.setorId,
+      habitante.id,
+      alvoX,
+      { limitar: true },
+    );
+    return { ok: true };
+  }
+
+  /**
+   * O custom token do canal do setor atual: só enxerga
+   * `pos/{partidaId}/{setorId}`. O celular pede outro a cada amanhecer.
+   */
+  async canal(
+    alunoId: string,
+    partidaId: string,
+  ): Promise<{ token: string; partidaId: string; setorId: string }> {
+    const { partida, segredo } = await this.carregar(partidaId);
+    const habitante = this.habitanteNaCena(partida, segredo, alunoId);
+    if (!this.posicao?.habilitado) this.canalIndisponivel();
+    const token = await this.posicao.token(
+      partida.id,
+      habitante.setorId,
+      alunoId,
+    );
+    return { token, partidaId: partida.id, setorId: habitante.setorId };
+  }
+
+  /** A posição é cosmética: uma falha do RTDB nunca derruba a partida. */
+  private async semFalhar(tarefa: () => Promise<unknown>): Promise<void> {
+    try {
+      await tarefa();
+    } catch {
+      /* só visual */
+    }
   }
 
   /**
@@ -3127,6 +3221,10 @@ export class IsolateusGameService {
     Object.assign(partida, dados);
     segredo.pontos = pontos;
     await this.matches.commitPartida(partida.id, dados, { pontos });
+    // As posições eram só visuais: não ficam guardadas depois da partida.
+    if (this.posicao) {
+      await this.semFalhar(() => this.posicao!.limpar(partida.id));
+    }
 
     if (partida.turmaId && valeRanking(partida)) {
       await this.xp.creditarPartida(partida.turmaId, creditos, 'ISOLATEUS');

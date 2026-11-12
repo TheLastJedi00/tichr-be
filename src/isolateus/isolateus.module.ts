@@ -10,6 +10,7 @@ import { IsolateusIaService } from './isolateus-ia.service';
 import { IsolateusJogoController } from './isolateus-jogo.controller';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusJogoService } from './isolateus-jogo.service';
+import { IsolateusPosicaoService } from './isolateus-posicao.service';
 import { IsolateusMatchController } from './isolateus-match.controller';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { IsolateusMatchService } from './isolateus-match.service';
@@ -27,6 +28,7 @@ import { IsolateusMatchService } from './isolateus-match.service';
     IsolateusJogoRepository,
     IsolateusMatchService,
     IsolateusMatchRepository,
+    IsolateusPosicaoService,
     IsolateusGameService,
     // GeminiService reprovido localmente (o WorModule não o exporta) + IA do Isolateus.
     GeminiService,
