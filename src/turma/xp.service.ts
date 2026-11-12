@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { FieldValue, Transaction } from 'firebase-admin/firestore';
 import { hojeISO } from '../common/date.util';
+import { dividirIgual } from '../common/dividir';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from './repositories/aluno.repository';
@@ -193,7 +194,52 @@ export class XpService {
       gravar: (tx: Transaction, transferido: number) => void;
     };
   }): Promise<number> {
-    for (const id of [op.deAlunoId, op.paraAlunoId]) {
+    const extra = op.noMesmoCommit;
+    const r = await this.transferirParaVarios({
+      turmaId: op.turmaId,
+      deAlunoId: op.deAlunoId,
+      paraAlunoIds: [op.paraAlunoId],
+      pontos: op.pontos,
+      motivo: op.motivo,
+      noMesmoCommit: extra && {
+        ler: extra.ler,
+        gravar: (tx, transferido) => extra.gravar(tx, transferido),
+      },
+    });
+    return r.transferido;
+  }
+
+  /**
+   * Transfere XP de um aluno para vários da mesma turma (spec 033, grupo de
+   * denúncias validado). Sai do doador uma vez só, no máximo o que ele tem, e o
+   * total é dividido igualmente entre os recebedores, com a sobra para os
+   * primeiros da lista (`dividirIgual`). Nenhum ponto é criado nem perdido.
+   * Um log de débito e um de crédito por recebedor com parte > 0.
+   */
+  async transferirParaVarios(op: {
+    turmaId: string;
+    deAlunoId: string;
+    /** Na ordem de prioridade da sobra (spec 033: cronológica). */
+    paraAlunoIds: string[];
+    pontos: number;
+    motivo: string;
+    noMesmoCommit?: {
+      ler: (tx: Transaction) => Promise<void>;
+      gravar: (
+        tx: Transaction,
+        transferido: number,
+        partes: Array<{ alunoId: string; pontos: number }>,
+      ) => void;
+    };
+  }): Promise<{
+    transferido: number;
+    partes: Array<{ alunoId: string; pontos: number }>;
+  }> {
+    const para = [...new Set(op.paraAlunoIds)];
+    if (para.length === 0 || para.includes(op.deAlunoId)) {
+      throw new BadRequestException('Recebedores invalidos.');
+    }
+    for (const id of [op.deAlunoId, ...para]) {
       const aluno = await this.alunoRepo.findById(id);
       if (!aluno || aluno.turmaId !== op.turmaId) {
         throw new NotFoundException('Aluno nao encontrado.');
@@ -201,19 +247,26 @@ export class XpService {
     }
     const db = this.firebase.firestore;
     const deRef = db.collection('alunos').doc(op.deAlunoId);
-    const paraRef = db.collection('alunos').doc(op.paraAlunoId);
+    const paraRefs = para.map((id) => db.collection('alunos').doc(id));
     return db.runTransaction(async (tx) => {
       // Todas as leituras antes de qualquer escrita (regra do Firestore).
       await op.noMesmoCommit?.ler(tx);
       const de = await tx.get(deRef);
-      const para = await tx.get(paraRef);
+      const xpPara: number[] = [];
+      for (const ref of paraRefs) {
+        const snap = await tx.get(ref);
+        xpPara.push((snap.data()?.xpTotal as number | undefined) ?? 0);
+      }
       const xpDe = (de.data()?.xpTotal as number | undefined) ?? 0;
-      const xpPara = (para.data()?.xpTotal as number | undefined) ?? 0;
       const transferido = Math.max(0, Math.min(op.pontos, xpDe));
+      const valores = dividirIgual(transferido, para.length);
+      const partes = para.map((alunoId, i) => ({
+        alunoId,
+        pontos: valores[i],
+      }));
       if (transferido > 0) {
         const data = new Date().toISOString();
         tx.update(deRef, { xpTotal: xpDe - transferido });
-        tx.update(paraRef, { xpTotal: xpPara + transferido });
         tx.set(db.collection('xp_logs').doc(), {
           alunoId: op.deAlunoId,
           turmaId: op.turmaId,
@@ -221,16 +274,20 @@ export class XpService {
           motivo: op.motivo,
           data,
         });
-        tx.set(db.collection('xp_logs').doc(), {
-          alunoId: op.paraAlunoId,
-          turmaId: op.turmaId,
-          pontos: transferido,
-          motivo: op.motivo,
-          data,
+        partes.forEach((p, i) => {
+          if (p.pontos <= 0) return;
+          tx.update(paraRefs[i], { xpTotal: xpPara[i] + p.pontos });
+          tx.set(db.collection('xp_logs').doc(), {
+            alunoId: p.alunoId,
+            turmaId: op.turmaId,
+            pontos: p.pontos,
+            motivo: op.motivo,
+            data,
+          });
         });
       }
-      op.noMesmoCommit?.gravar(tx, transferido);
-      return transferido;
+      op.noMesmoCommit?.gravar(tx, transferido, partes);
+      return { transferido, partes };
     });
   }
 

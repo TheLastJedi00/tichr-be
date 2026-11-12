@@ -15,6 +15,7 @@ import { DenunciaJanelaRepository } from './denuncia-janela.repository';
 import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
 import { DenunciaGrupoRepository } from './denuncia-grupo.repository';
 import { DenunciaGrupoEntity } from './entities/denuncia-grupo.entity';
+import { dividirIgual } from '../common/dividir';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
@@ -181,6 +182,45 @@ function montar(
       }
       op.noMesmoCommit?.gravar(null, t);
       return t;
+    },
+    transferirParaVarios: async (op: {
+      deAlunoId: string;
+      paraAlunoIds: string[];
+      pontos: number;
+      motivo: string;
+      noMesmoCommit?: {
+        ler: (tx: unknown) => Promise<void>;
+        gravar: (
+          tx: unknown,
+          t: number,
+          partes: Array<{ alunoId: string; pontos: number }>,
+        ) => void;
+      };
+    }) => {
+      await op.noMesmoCommit?.ler(null);
+      const de = alunos[op.deAlunoId];
+      const t = DenunciaEntity.aTransferir(op.pontos, de.xpTotal);
+      const valores = dividirIgual(t, op.paraAlunoIds.length);
+      const partes = op.paraAlunoIds.map((alunoId, i) => ({
+        alunoId,
+        pontos: valores[i],
+      }));
+      de.xpTotal -= t;
+      if (t > 0) {
+        xpLogs.push({ alunoId: op.deAlunoId, pontos: -t, motivo: op.motivo });
+      }
+      for (const p of partes) {
+        alunos[p.alunoId].xpTotal += p.pontos;
+        if (p.pontos > 0) {
+          xpLogs.push({
+            alunoId: p.alunoId,
+            pontos: p.pontos,
+            motivo: op.motivo,
+          });
+        }
+      }
+      op.noMesmoCommit?.gravar(null, t, partes);
+      return { transferido: t, partes };
     },
   } as unknown as XpService;
 
@@ -773,5 +813,152 @@ describe('DenunciaService — grupos (033)', () => {
     await expect(service.invalidar(PROF, TURMA, ids[0])).rejects.toThrow(
       ConflictException,
     );
+  });
+});
+
+describe('DenunciaService — validar e invalidar grupo (033)', () => {
+  /** Ana (a1, 5000 XP), Caio (a3) e Duda (a4) denunciam Bruno (a2, 500 XP). */
+  async function grupoDeTres(opcoes?: { pontuacaoAtiva?: boolean }) {
+    const ctx = montar(opcoes);
+    ctx.alunos.a4 = new AlunoEntity({
+      id: 'a4',
+      turmaId: TURMA,
+      nome: 'Duda',
+      xpTotal: 0,
+    });
+    ctx.alunos.a2.xpTotal = 5000;
+    const ids: string[] = [];
+    for (const autor of ['a1', 'a3', 'a4']) {
+      ids.push(
+        (
+          await ctx.service.criarDoAluno(aluno(autor), {
+            denunciadoAlunoId: 'a2',
+            texto: `vi o celular (${autor})`,
+          })
+        ).id,
+      );
+      await new Promise((ok) => setTimeout(ok, 2));
+    }
+    // a segunda denúncia tem foto de legado
+    const path = `denuncias/${TURMA}/${ids[1]}.jpg`;
+    ctx.denuncias.get(ids[1])!.imagemPath = path;
+    ctx.imagens.salvas.add(path);
+    const g = await ctx.service.criarGrupo(PROF, TURMA, ids);
+    return { ...ctx, ids, grupoId: g.id, path };
+  }
+
+  it('tira uma pontuação do denunciado e divide entre os autores (1000 → 334/333/333)', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids, xpLogs } =
+      await grupoDeTres();
+    const r = await service.validarGrupo(PROF, TURMA, grupoId, 1000);
+    expect(r.pontosTransferidos).toBe(1000);
+    expect(r.partes).toEqual([
+      { alunoId: 'a1', pontos: 334 },
+      { alunoId: 'a3', pontos: 333 },
+      { alunoId: 'a4', pontos: 333 },
+    ]);
+    expect(alunos.a2.xpTotal).toBe(4000);
+    expect(alunos.a1.xpTotal).toBe(5334);
+    expect(alunos.a3.xpTotal).toBe(333);
+    expect(alunos.a4.xpTotal).toBe(333);
+    expect(xpLogs.filter((l) => l.alunoId === 'a2')).toEqual([
+      { alunoId: 'a2', pontos: -1000, motivo: 'DENUNCIA' },
+    ]);
+    expect(grupos.get(grupoId)).toMatchObject({
+      status: 'VALIDADO',
+      pontos: 1000,
+      pontosTransferidos: 1000,
+    });
+    expect(ids.map((id) => denuncias.get(id)!.status)).toEqual([
+      'VALIDADA',
+      'VALIDADA',
+      'VALIDADA',
+    ]);
+    expect(ids.map((id) => denuncias.get(id)!.pontosTransferidos)).toEqual([
+      334, 333, 333,
+    ]);
+  });
+
+  it('o que sai é limitado ao XP do denunciado', async () => {
+    const { service, alunos, grupoId } = await grupoDeTres();
+    alunos.a2.xpTotal = 100;
+    const r = await service.validarGrupo(PROF, TURMA, grupoId, 9000);
+    expect(r.pontosTransferidos).toBe(100);
+    expect(alunos.a2.xpTotal).toBe(0);
+    expect(r.partes.map((p) => p.pontos)).toEqual([34, 33, 33]);
+  });
+
+  it('apaga a foto de legado ao validar e ao invalidar', async () => {
+    const a = await grupoDeTres();
+    await a.service.validarGrupo(PROF, TURMA, a.grupoId, 10);
+    expect(a.imagens.salvas.has(a.path)).toBe(false);
+    expect(a.denuncias.get(a.ids[1])!.imagemPath).toBeNull();
+
+    const b = await grupoDeTres();
+    await b.service.invalidarGrupo(PROF, TURMA, b.grupoId);
+    expect(b.imagens.salvas.has(b.path)).toBe(false);
+  });
+
+  it('invalidar invalida todas e não mexe no XP', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids, xpLogs } =
+      await grupoDeTres();
+    await service.invalidarGrupo(PROF, TURMA, grupoId);
+    expect(grupos.get(grupoId)!.status).toBe('INVALIDADO');
+    expect(ids.every((id) => denuncias.get(id)!.status === 'INVALIDADA')).toBe(
+      true,
+    );
+    expect(alunos.a2.xpTotal).toBe(5000);
+    expect(xpLogs).toEqual([]);
+  });
+
+  it('resolver o grupo duas vezes é 409 e não transfere de novo', async () => {
+    const { service, alunos, grupoId } = await grupoDeTres();
+    await service.validarGrupo(PROF, TURMA, grupoId, 300);
+    await expect(
+      service.validarGrupo(PROF, TURMA, grupoId, 300),
+    ).rejects.toThrow(ConflictException);
+    await expect(service.invalidarGrupo(PROF, TURMA, grupoId)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(alunos.a2.xpTotal).toBe(4700);
+  });
+
+  it('recusa acima de 10.000, grupo de outra turma e de outro professor', async () => {
+    const { service, grupoId } = await grupoDeTres();
+    await expect(
+      service.validarGrupo(PROF, TURMA, grupoId, 10001),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.validarGrupo(PROF, TURMA, 'nao-existe', 10),
+    ).rejects.toThrow(NotFoundException);
+    await expect(
+      service.validarGrupo('prof-2', TURMA, grupoId, 10),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('turma sem pontuação: valida o grupo sem mexer no XP', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids } =
+      await grupoDeTres({ pontuacaoAtiva: false });
+    await service.validarGrupo(PROF, TURMA, grupoId, 600);
+    expect(alunos.a2.xpTotal).toBe(5000);
+    expect(grupos.get(grupoId)).toMatchObject({
+      status: 'VALIDADO',
+      pontosTransferidos: 0,
+    });
+    expect(ids.map((id) => denuncias.get(id)!.pontosTransferidos)).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
+  it('anonimato: o autor vê só a dele, sem grupo nem outros autores; o denunciado tem um só lançamento', async () => {
+    const { service, grupoId, xpLogs } = await grupoDeTres();
+    await service.validarGrupo(PROF, TURMA, grupoId, 900);
+    const minhas = await service.minhasDoAluno(aluno('a3'));
+    expect(minhas).toHaveLength(1);
+    expect(minhas[0]).not.toHaveProperty('grupoId');
+    expect(minhas[0]).not.toHaveProperty('autorAlunoId');
+    expect(JSON.stringify(minhas)).not.toMatch(/Ana|Duda/);
+    expect(await service.minhasDoAluno(aluno('a2'))).toEqual([]);
+    expect(xpLogs.filter((l) => l.alunoId === 'a2')).toHaveLength(1);
   });
 });

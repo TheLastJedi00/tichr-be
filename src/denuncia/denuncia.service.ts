@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -502,6 +503,129 @@ export class DenunciaService {
     });
   }
 
+  /**
+   * Valida o grupo (033 #6): uma pontuação só sai do denunciado (no máximo o
+   * XP dele) e é dividida igualmente entre os autores, com a sobra para quem
+   * denunciou primeiro. Grupo, denúncias e XP no mesmo commit.
+   */
+  async validarGrupo(
+    professorId: string,
+    turmaId: string,
+    grupoId: string,
+    pontos: number,
+  ): Promise<{
+    pontosTransferidos: number;
+    partes: Array<{ alunoId: string; pontos: number }>;
+  }> {
+    const turma = await this.turmaDoProfessor(professorId, turmaId);
+    DenunciaTopicoEntity.pontosValidos(pontos);
+    const g = await this.grupoDoProfessor(turmaId, grupoId);
+    g.assertPendente();
+    const denuncias = await this.denunciasDoGrupo(g);
+    const autores = denuncias.map((d) => d.autorAlunoId);
+    const fotos = this.fotosDeLegado(denuncias);
+    const agora = new Date().toISOString();
+
+    const ler = async (
+      tx: Parameters<DenunciaGrupoRepository['lerNaTransacao']>[0],
+    ) => {
+      const atual = await this.grupoNaTransacao(tx, turmaId, grupoId);
+      atual.assertPendente();
+      // Alguém mexeu no grupo entre a leitura e o commit: refazer a conta.
+      if (atual.denunciaIds.join() !== g.denunciaIds.join()) {
+        throw new ConflictException({
+          code: 'GRUPO_ALTERADO',
+          message: 'O grupo mudou enquanto você validava. Tente de novo.',
+        });
+      }
+    };
+    const gravar = (
+      tx: Parameters<DenunciaGrupoRepository['lerNaTransacao']>[0],
+      transferido: number,
+      partes: Array<{ alunoId: string; pontos: number }>,
+    ) => {
+      this.grupos.gravarNaTransacao(
+        tx,
+        new DenunciaGrupoEntity({
+          ...g,
+          status: 'VALIDADO',
+          resolvidoEm: agora,
+          pontos,
+          pontosTransferidos: transferido,
+        }),
+      );
+      denuncias.forEach((d, i) => {
+        this.denuncias.gravarNaTransacao(tx, d.id, {
+          status: 'VALIDADA',
+          resolvidaEm: agora,
+          pontos,
+          pontosTransferidos: partes[i]?.pontos ?? 0,
+          imagemPath: null as unknown as undefined,
+        });
+      });
+    };
+
+    let resultado: {
+      transferido: number;
+      partes: Array<{ alunoId: string; pontos: number }>;
+    };
+    if (turma.configPontuacao.pontuacaoAtiva && pontos > 0) {
+      resultado = await this.xp.transferirParaVarios({
+        turmaId,
+        deAlunoId: g.denunciadoAlunoId,
+        paraAlunoIds: autores,
+        pontos,
+        motivo: 'DENUNCIA',
+        noMesmoCommit: { ler, gravar },
+      });
+    } else {
+      const partes = autores.map((alunoId) => ({ alunoId, pontos: 0 }));
+      await this.grupos.transacao(async (tx) => {
+        await ler(tx);
+        gravar(tx, 0, partes);
+      });
+      resultado = { transferido: 0, partes };
+    }
+    await this.apagarImagens(fotos);
+    return {
+      pontosTransferidos: resultado.transferido,
+      partes: resultado.partes,
+    };
+  }
+
+  /** Invalida o grupo inteiro (033 #7). Para invalidar só uma, desassocie antes. */
+  async invalidarGrupo(
+    professorId: string,
+    turmaId: string,
+    grupoId: string,
+  ): Promise<void> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const g = await this.grupoDoProfessor(turmaId, grupoId);
+    g.assertPendente();
+    const fotos = this.fotosDeLegado(await this.denunciasDoGrupo(g));
+    const agora = new Date().toISOString();
+    await this.grupos.transacao(async (tx) => {
+      const atual = await this.grupoNaTransacao(tx, turmaId, grupoId);
+      atual.assertPendente();
+      this.grupos.gravarNaTransacao(
+        tx,
+        new DenunciaGrupoEntity({
+          ...atual,
+          status: 'INVALIDADO',
+          resolvidoEm: agora,
+        }),
+      );
+      for (const id of atual.denunciaIds) {
+        this.denuncias.gravarNaTransacao(tx, id, {
+          status: 'INVALIDADA',
+          resolvidaEm: agora,
+          imagemPath: null as unknown as undefined,
+        });
+      }
+    });
+    await this.apagarImagens(fotos);
+  }
+
   // ===== Janela de denúncia (033) =====
 
   /** Abre a janela; abrir já aberta devolve a atual (não cria outra). */
@@ -628,6 +752,39 @@ export class DenunciaService {
       throw new NotFoundException('Denúncia não encontrada.');
     }
     return d;
+  }
+
+  private async grupoDoProfessor(
+    turmaId: string,
+    grupoId: string,
+  ): Promise<DenunciaGrupoEntity> {
+    const g = await this.grupos.findById(grupoId);
+    if (!g || g.turmaId !== turmaId) {
+      throw new NotFoundException('Grupo não encontrado.');
+    }
+    return g;
+  }
+
+  /** As denúncias do grupo, na ordem do grupo (cronológica). */
+  private async denunciasDoGrupo(
+    g: DenunciaGrupoEntity,
+  ): Promise<DenunciaEntity[]> {
+    const lista: DenunciaEntity[] = [];
+    for (const id of g.denunciaIds) {
+      const d = await this.denuncias.findById(id);
+      if (d) lista.push(d);
+    }
+    return lista;
+  }
+
+  /** Fotos de legado (anteriores à 033), lidas antes do commit que as zera. */
+  private fotosDeLegado(denuncias: DenunciaEntity[]): string[] {
+    return denuncias.flatMap((d) => (d.imagemPath ? [d.imagemPath] : []));
+  }
+
+  /** Apagadas depois do commit; falhar só gera log (o storage não lança). */
+  private async apagarImagens(fotos: string[]): Promise<void> {
+    for (const path of fotos) await this.imagens.apagar(path);
   }
 
   private async denunciaNaTransacao(

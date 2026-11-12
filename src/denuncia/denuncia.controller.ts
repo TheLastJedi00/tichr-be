@@ -103,6 +103,26 @@ export class DenunciaController {
     );
   }
 
+  @Post('turmas/:turmaId/denuncias/grupos/:grupoId/validar')
+  validarGrupo(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+    @Param('grupoId') grupoId: string,
+    @Body() dto: ValidarDenunciaDto,
+  ) {
+    return this.service.validarGrupo(professorId, turmaId, grupoId, dto.pontos);
+  }
+
+  @Post('turmas/:turmaId/denuncias/grupos/:grupoId/invalidar')
+  async invalidarGrupo(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+    @Param('grupoId') grupoId: string,
+  ) {
+    await this.service.invalidarGrupo(professorId, turmaId, grupoId);
+    return { ok: true };
+  }
+
   @Get('turmas/:turmaId/denuncias/janelas')
   janelas(
     @ProfessorId() professorId: string,
