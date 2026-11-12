@@ -247,10 +247,10 @@ describe('Isolateus — resolução da invasão e fuga', () => {
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     expect(ctx.segredo.acoesRodada?.some((j) => j.alunoId === 'a1')).toBe(true);
 
-    // Acertando a próxima questão, ganha poder como antes de ser presa.
+    // Acertou na questão da fuga (presa: soma) e acerta a próxima (livre).
     ctx.partida.status = 'QUESTAO_ATIVA';
     await responder(ctx, { a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 });
-    expect(ctx.segredo.poderes?.some((p) => p.alunoId === 'a1')).toBe(true);
+    expect(ctx.segredo.energiaAlien?.a1).toBe(2);
   });
 
   it('a fugitiva conta no veredito: prendê-la de novo não encerra a partida se outra está livre', async () => {

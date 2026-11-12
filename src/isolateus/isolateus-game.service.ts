@@ -91,12 +91,12 @@ export interface PainelHabitante {
   // ===== Só para a Ameaça =====
   /** Codinomes das outras Ameaças livres (para não se abduzirem nem acusarem). */
   aliados?: string[];
-  /** O poder ganho no acerto e o que ela pode escolher; `null` = sem poder. */
+  /** O que ela pode escolher com a barra cheia; `null` = barra incompleta. */
   poder?: Record<PoderAlienigena, boolean> | null;
   /** Só para a Ameaça presa: a invasão forçada desta noite (028 §2.4). */
   invasao?: { disponivel: boolean; declarada: boolean };
-  /** Só para a original: a recarga do Contágio (028 §3.2). */
-  contagioAcertos?: { atual: number; necessario: number };
+  /** A barra de energia alien (034 #57): acertos acumulados até o poder. */
+  energia?: { atual: number; necessario: number };
   /** O habitante sob Controle Mental nesta rodada, se houver. */
   controle?: { habitanteId: string; nome: string } | null;
   /**
@@ -239,7 +239,8 @@ export class IsolateusGameService {
 
     // A visão da Ameaça. É também o ÚNICO canal do papel de quem foi
     // contagiado: o celular faz polling daqui, e o doc público não muda.
-    const temPoder = segredo.poderes?.some((p) => p.alunoId === alunoId);
+    const energia = this.energiaDe(segredo, alunoId);
+    const cheia = energia >= ISOLATEUS.ENERGIA_PARA_PODER;
     const origem = this.origemDaAmeaca(partida, segredo, alunoId);
     const original = alunoId === segredo.alienAlunoId;
     return {
@@ -252,24 +253,17 @@ export class IsolateusGameService {
         )
         .filter((h): h is Habitante => !!h && h.vivo && !h.preso)
         .map((h) => h.nome),
-      poder: temPoder
+      // A barra de energia (034 #61): todas as Ameaças a veem; as opções de
+      // poder só vêm com ela cheia.
+      energia: { atual: energia, necessario: ISOLATEUS.ENERGIA_PARA_PODER },
+      poder: cheia
         ? {
             CONTROLE: true,
             CONTAGIO:
-              original &&
-              this.contagioCarregado(segredo) &&
-              this.alvosDeContagio(partida, segredo).length > 0,
+              original && this.alvosDeContagio(partida, segredo).length > 0,
             DELIRIO: true,
           }
         : null,
-      ...(original
-        ? {
-            contagioAcertos: {
-              atual: segredo.acertosDesdeContagio ?? 0,
-              necessario: ISOLATEUS.ACERTOS_PARA_CONTAGIO,
-            },
-          }
-        : {}),
       ...(habitante.preso
         ? { invasao: this.estadoDaInvasao(partida, segredo, alunoId) }
         : {}),
@@ -367,10 +361,11 @@ export class IsolateusGameService {
     return partida;
   }
 
-  /** A original já somou os acertos que o Contágio pede (028 §3). */
-  private contagioCarregado(segredo: IsolateusSegredoEntity): boolean {
-    return (
-      (segredo.acertosDesdeContagio ?? 0) >= ISOLATEUS.ACERTOS_PARA_CONTAGIO
+  /** A energia alien da Ameaça (034 #57): 0 até `ENERGIA_PARA_PODER`. */
+  private energiaDe(segredo: IsolateusSegredoEntity, alunoId: string): number {
+    return Math.min(
+      ISOLATEUS.ENERGIA_PARA_PODER,
+      segredo.energiaAlien?.[alunoId] ?? 0,
     );
   }
 
@@ -981,14 +976,11 @@ export class IsolateusGameService {
     const brilho = this.brilhoDaNoite(partida, segredo);
     if (brilho) partida.brilho = brilho;
 
-    // O prazo dos poderes: o ganho numa rodada vale até ESTE fechamento (o da
-    // noite seguinte). Controles de rodadas passadas também saem.
+    // Controles de rodadas passadas saem. A energia alien não expira: a barra
+    // fica cheia até o poder ser usado (034 #58).
     Object.assign(segredo, {
       confirmacoesNoite: [],
       posicoesNoite: [],
-      poderes: (segredo.poderes ?? []).filter(
-        (p) => p.ganhoNaRodada >= partida.rodada,
-      ),
       controles: (segredo.controles ?? []).filter(
         (c) => c.rodada >= partida.rodada,
       ),
@@ -1029,7 +1021,6 @@ export class IsolateusGameService {
         posicoesNoite: segredo.posicoesNoite,
         ...(comAgenda ? { agendaNpc: [] } : {}),
         delirioNaNoite: false,
-        poderes: segredo.poderes,
         controles: segredo.controles,
         ...(delirou
           ? {
@@ -1600,11 +1591,19 @@ export class IsolateusGameService {
     if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
       throw new BadRequestException('A investigação não está em andamento.');
     }
-    const poderes = segredo.poderes ?? [];
-    if (!poderes.some((p) => p.alunoId === alunoId)) {
+    // Superpoder só se escolhe NA NOITE (034 #60); o efeito sai no amanhecer.
+    if (partida.status !== 'DESLOCAMENTO') {
       throw new BadRequestException({
-        code: 'SEM_PODER',
-        message: 'Você não tem um poder para usar agora.',
+        code: 'FORA_DA_NOITE',
+        message: 'Superpoderes só são escolhidos à noite.',
+      });
+    }
+    this.assertNoiteComecou(partida);
+    const energia = this.energiaDe(segredo, alunoId);
+    if (energia < ISOLATEUS.ENERGIA_PARA_PODER) {
+      throw new BadRequestException({
+        code: 'ENERGIA_INSUFICIENTE',
+        message: `Energia alien ${energia}/${ISOLATEUS.ENERGIA_PARA_PODER}: faltam ${ISOLATEUS.ENERGIA_PARA_PODER - energia} acertos para um superpoder.`,
       });
     }
 
@@ -1616,12 +1615,6 @@ export class IsolateusGameService {
           message: 'Só a Ameaça original pode contagiar.',
         });
       }
-      if (!this.contagioCarregado(segredo)) {
-        throw new BadRequestException({
-          code: 'CONTAGIO_RECARREGANDO',
-          message: `O Contágio pede ${ISOLATEUS.ACERTOS_PARA_CONTAGIO} acertos desde o último.`,
-        });
-      }
       if (!this.alvosDeContagio(partida, segredo).length) {
         throw new BadRequestException({
           code: 'SEM_ALVO',
@@ -1629,7 +1622,6 @@ export class IsolateusGameService {
         });
       }
       mudancas.contagioPendente = true;
-      mudancas.acertosDesdeContagio = 0;
     } else if (dto.poder === 'DELIRIO') {
       mudancas.delirioPendente = true;
     } else {
@@ -1643,15 +1635,18 @@ export class IsolateusGameService {
           'Escolha um habitante na vila que não seja uma Ameaça.',
         );
       }
-      // Escolhido na noite, vale para ela; escolhido de dia, para a próxima.
-      const rodada =
-        partida.status === 'DESLOCAMENTO' ? partida.rodada : partida.rodada + 1;
+      // Escolhido na noite, vale para ela mesma (034 #60).
       mudancas.controles = [
         ...(segredo.controles ?? []).filter((c) => c.ameacaAlunoId !== alunoId),
-        { ameacaAlunoId: alunoId, habitanteId: alvo.id, rodada },
+        {
+          ameacaAlunoId: alunoId,
+          habitanteId: alvo.id,
+          rodada: partida.rodada,
+        },
       ];
     }
-    mudancas.poderes = poderes.filter((p) => p.alunoId !== alunoId);
+    // Usar o poder zera a barra.
+    mudancas.energiaAlien = { ...(segredo.energiaAlien ?? {}), [alunoId]: 0 };
 
     Object.assign(segredo, mudancas);
     await this.matches.commitPartida(partidaId, {}, mudancas);
@@ -2328,9 +2323,10 @@ export class IsolateusGameService {
     const resgate = this.resolverResgate(partida, votantes, respostas, questao);
     partes.push(resgate?.texto ?? null);
 
-    // Os poderes saem ANTES da fuga: quem foge nesta questão não ganha poder
-    // por ela (ainda estava presa ao responder).
-    const poderes = this.concederPoderes(partida, segredo, respostas);
+    // A energia alien: +1 por acerto de Ameaça, livre OU presa (034 #58) —
+    // presa, o saldo fica para depois da fuga. Conta também nas rodadas sem
+    // disputa. A barra para quando cheia.
+    const energiaAlien = this.somarEnergia(segredo, respostas);
     // A invasão é a última (028 §2.3): quem foge não salva nem é salvo nesta
     // mesma questão.
     partes.push(
@@ -2339,14 +2335,6 @@ export class IsolateusGameService {
 
     // O erro da vila não pontua a Ameaça: Aldeões e Ameaças pontuam só pelo
     // acerto, em `responder` (spec 027 §2).
-
-    // A recarga do Contágio conta à parte dos poderes: o acerto da original
-    // soma livre OU presa (028 §3) — preso, o saldo fica para depois da fuga.
-    const acertosDesdeContagio =
-      (segredo.acertosDesdeContagio ?? 0) +
-      (respostas.find((r) => r.alunoId === segredo.alienAlunoId)?.correta
-        ? 1
-        : 0);
 
     // Sem disputa, a rodada vale só os pontos (034 #48): o card diz o que a
     // noite deixou à vista, sem mexer em Esperança nem em setores.
@@ -2377,8 +2365,7 @@ export class IsolateusGameService {
     const dadosSegredo: Partial<IsolateusSegredoEntity> = {
       acaoRodada: null,
       acoesRodada: [],
-      poderes,
-      acertosDesdeContagio,
+      energiaAlien,
       invasoesNoite: [],
       reparoPor: null,
     };
@@ -2457,27 +2444,23 @@ export class IsolateusGameService {
   }
 
   /**
-   * Toda Ameaça livre que ACERTOU a questão ganha um Poder Alienígena — acertou
-   * a vila ou não. Um por acerto, sem acúmulo: o novo substitui o que sobrou.
-   * Só o cofre sabe; nada muda no doc público.
+   * A barra de energia alien (034 #57–#58): cada Ameaça (original, contagiada
+   * ou infiltrada) que ACERTOU a questão ganha +1, livre ou presa, até
+   * `ENERGIA_PARA_PODER`. Só o cofre sabe; nada muda no doc público.
    */
-  private concederPoderes(
-    partida: IsolateusMatchEntity,
+  private somarEnergia(
     segredo: IsolateusSegredoEntity,
     respostas: Array<{ alunoId: string; correta: boolean }>,
-  ): Array<{ alunoId: string; ganhoNaRodada: number }> {
-    const acertaram = new Set(
-      this.ameacasLivres(partida, segredo).filter(
-        (a) => respostas.find((r) => r.alunoId === a)?.correta,
-      ),
-    );
-    return [
-      ...(segredo.poderes ?? []).filter((p) => !acertaram.has(p.alunoId)),
-      ...[...acertaram].map((alunoId) => ({
-        alunoId,
-        ganhoNaRodada: partida.rodada,
-      })),
-    ];
+  ): Record<string, number> {
+    const energia = { ...(segredo.energiaAlien ?? {}) };
+    for (const alunoId of segredo.ameacasIds()) {
+      if (!respostas.find((r) => r.alunoId === alunoId)?.correta) continue;
+      energia[alunoId] = Math.min(
+        ISOLATEUS.ENERGIA_PARA_PODER,
+        (energia[alunoId] ?? 0) + 1,
+      );
+    }
+    return energia;
   }
 
   /**

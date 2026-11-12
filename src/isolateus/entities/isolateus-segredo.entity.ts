@@ -100,13 +100,6 @@ export class IsolateusSegredoEntity {
   posicoesNoite: Array<{ habitanteId: string; setorId: string }> = [];
 
   /**
-   * Poderes Alienígenas ganhos e ainda não usados — um por Ameaça, sem acúmulo
-   * (o acerto novo substitui o que sobrou). `ganhoNaRodada` marca o prazo: vale
-   * até o fechamento da noite seguinte. Lista, pelo mesmo motivo do merge.
-   */
-  poderes?: Array<{ alunoId: string; ganhoNaRodada: number }>;
-
-  /**
    * Controles Mentais ativos: na `rodada` indicada (a noite e o dia dela), as
    * jogadas da Ameaça partem do setor do habitante controlado. Um por Ameaça.
    */
@@ -139,13 +132,6 @@ export class IsolateusSegredoEntity {
    * posições da noite.
    */
   noiteFechada?: number;
-
-  /**
-   * Questões que a Ameaça original acertou desde o último Contágio (ou o
-   * início), livre ou presa (028 §3). O Contágio só aparece com
-   * `ACERTOS_PARA_CONTAGIO`; usá-lo zera a conta. Ausente = 0.
-   */
-  acertosDesdeContagio?: number;
 
   /**
    * Energia alien por Ameaça (034 #57): +1 por questão acertada (livre ou
