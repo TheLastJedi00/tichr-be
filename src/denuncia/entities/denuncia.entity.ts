@@ -18,6 +18,8 @@ export class DenunciaEntity {
   /** Cópia do título: sobrevive à edição e ao arquivamento do tópico. */
   topicoTitulo?: string;
   texto?: string;
+  /** Janela de denúncia em que foi feita (033). */
+  janelaId?: string;
   /** Caminho privado no Storage; apagado ao resolver (#5). */
   imagemPath?: string;
   status: StatusDenuncia = 'PENDENTE';

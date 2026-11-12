@@ -54,6 +54,27 @@ export class DenunciaController {
     return this.service.listarDaTurma(professorId, turmaId, query.status);
   }
 
+  @Get('turmas/:turmaId/denuncias/janelas')
+  janelas(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+  ) {
+    return this.service.janelas(professorId, turmaId);
+  }
+
+  @Post('turmas/:turmaId/denuncias/abrir')
+  abrir(@ProfessorId() professorId: string, @Param('turmaId') turmaId: string) {
+    return this.service.abrirJanela(professorId, turmaId);
+  }
+
+  @Post('turmas/:turmaId/denuncias/fechar')
+  fechar(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+  ) {
+    return this.service.fecharJanela(professorId, turmaId);
+  }
+
   @Get('turmas/:turmaId/denuncias/:id/imagem')
   imagem(
     @ProfessorId() professorId: string,

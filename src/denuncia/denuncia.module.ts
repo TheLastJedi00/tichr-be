@@ -4,6 +4,7 @@ import { TurmaModule } from '../turma/turma.module';
 import { AlunoDenunciaController } from './aluno-denuncia.controller';
 import { DenunciaController } from './denuncia.controller';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
+import { DenunciaJanelaRepository } from './denuncia-janela.repository';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaRepository } from './denuncia.repository';
 import { DenunciaService } from './denuncia.service';
@@ -17,6 +18,7 @@ import { DenunciaService } from './denuncia.service';
     DenunciaRepository,
     DenunciaTopicoRepository,
     DenunciaImagemStorage,
+    DenunciaJanelaRepository,
   ],
 })
 export class DenunciaModule {}

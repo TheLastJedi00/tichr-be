@@ -12,6 +12,8 @@ import { DenunciaService } from './denuncia.service';
 import { DenunciaRepository } from './denuncia.repository';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
+import { DenunciaJanelaRepository } from './denuncia-janela.repository';
+import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
@@ -29,7 +31,12 @@ const PROF = 'prof-1';
 const TURMA = 't1';
 
 function montar(
-  opcoes: { pontuacaoAtiva?: boolean; podeGamificar?: boolean } = {},
+  opcoes: {
+    pontuacaoAtiva?: boolean;
+    podeGamificar?: boolean;
+    /** Fixture: a maioria dos testes parte com a janela aberta (033). */
+    denunciasAbertas?: boolean;
+  } = {},
 ) {
   const alunos: Record<string, AlunoEntity> = {
     a1: new AlunoEntity({
@@ -94,16 +101,52 @@ function montar(
     },
   } as unknown as DenunciaTopicoRepository;
 
+  const turmas: Record<string, Record<string, unknown>> = {
+    [TURMA]: {
+      id: TURMA,
+      professorId: PROF,
+      configPontuacao: { pontuacaoAtiva: opcoes.pontuacaoAtiva ?? true },
+      denunciasAbertas: opcoes.denunciasAbertas ?? true,
+      denunciaJanelaId: (opcoes.denunciasAbertas ?? true) ? 'j0' : undefined,
+    },
+    outra: {
+      id: 'outra',
+      professorId: 'prof-2',
+      configPontuacao: { pontuacaoAtiva: true },
+    },
+  };
   const turmaRepo = {
-    findById: async (id: string) =>
-      id === TURMA || id === 'outra'
-        ? {
-            id,
-            professorId: id === TURMA ? PROF : 'prof-2',
-            configPontuacao: { pontuacaoAtiva: opcoes.pontuacaoAtiva ?? true },
-          }
-        : null,
+    findById: async (id: string) => (turmas[id] ? { ...turmas[id] } : null),
+    update: async (id: string, patch: Record<string, unknown>) => {
+      Object.assign(turmas[id], patch);
+    },
   } as unknown as TurmaRepository;
+
+  const janelas = new Map<string, DenunciaJanelaEntity>();
+  if (opcoes.denunciasAbertas ?? true) {
+    janelas.set(
+      'j0',
+      new DenunciaJanelaEntity({
+        id: 'j0',
+        turmaId: TURMA,
+        professorId: PROF,
+        abertaEm: '2026-11-12T10:00:00.000Z',
+      }),
+    );
+  }
+  const janelaRepo = {
+    create: async (j: Omit<DenunciaJanelaEntity, 'id'>) => {
+      const e = new DenunciaJanelaEntity({ ...j, id: `j${++seq}` });
+      janelas.set(e.id, e);
+      return e;
+    },
+    findById: async (id: string) => janelas.get(id) ?? null,
+    findBy: async (campo: keyof DenunciaJanelaEntity, valor: unknown) =>
+      [...janelas.values()].filter((j) => j[campo] === valor),
+    update: async (id: string, patch: Partial<DenunciaJanelaEntity>) => {
+      Object.assign(janelas.get(id)!, patch);
+    },
+  } as unknown as DenunciaJanelaRepository;
 
   const alunoRepo = {
     findById: async (id: string) => alunos[id] ?? null,
@@ -171,8 +214,18 @@ function montar(
     xp,
     professorService,
     imagens as unknown as DenunciaImagemStorage,
+    janelaRepo,
   );
-  return { service, alunos, denuncias, topicos, xpLogs, imagens };
+  return {
+    service,
+    alunos,
+    denuncias,
+    topicos,
+    xpLogs,
+    imagens,
+    turmas,
+    janelas,
+  };
 }
 
 const aluno = (alunoId: string) => ({ alunoId, turmaId: TURMA });
@@ -477,5 +530,102 @@ describe('DenunciaService — professor resolve', () => {
     expect(await service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 2 });
     await service.invalidar(PROF, TURMA, id);
     expect(await service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 1 });
+  });
+});
+
+describe('DenunciaService — janela de denúncia (033)', () => {
+  it('turma sem o campo começa fechada: o aluno recebe 403 DENUNCIAS_FECHADAS', async () => {
+    const { service, turmas } = montar();
+    delete turmas[TURMA].denunciasAbertas;
+    delete turmas[TURMA].denunciaJanelaId;
+    expect((await service.opcoesAluno(aluno('a1'))).abertas).toBe(false);
+    const erro: unknown = await service
+      .criarDoAluno(aluno('a1'), { denunciadoAlunoId: 'a2', texto: 'x' })
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ForbiddenException);
+    expect((erro as ForbiddenException).getResponse()).toMatchObject({
+      code: 'DENUNCIAS_FECHADAS',
+    });
+  });
+
+  it('abrir cria uma janela, a denúncia guarda o janelaId e fechar registra o fim', async () => {
+    const { service, denuncias, janelas } = montar({ denunciasAbertas: false });
+    const aberta = await service.abrirJanela(PROF, TURMA);
+    expect(aberta.abertas).toBe(true);
+    expect(janelas.size).toBe(1);
+    const jid = [...janelas.keys()][0];
+    expect(janelas.get(jid)).toMatchObject({
+      turmaId: TURMA,
+      professorId: PROF,
+    });
+    expect(janelas.get(jid)!.fechadaEm).toBeUndefined();
+
+    expect((await service.opcoesAluno(aluno('a1'))).abertas).toBe(true);
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    expect([...denuncias.values()][0].janelaId).toBe(jid);
+
+    const fechada = await service.fecharJanela(PROF, TURMA);
+    expect(fechada.abertas).toBe(false);
+    expect(janelas.get(jid)!.fechadaEm).toEqual(expect.any(String));
+    await expect(
+      service.criarDoAluno(aluno('a3'), {
+        denunciadoAlunoId: 'a2',
+        texto: 'y',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('abrir já aberta e fechar já fechada não criam janela nova', async () => {
+    const { service, janelas } = montar({ denunciasAbertas: false });
+    await service.abrirJanela(PROF, TURMA);
+    await service.abrirJanela(PROF, TURMA);
+    expect(janelas.size).toBe(1);
+    await service.fecharJanela(PROF, TURMA);
+    const fim = [...janelas.values()][0].fechadaEm;
+    await service.fecharJanela(PROF, TURMA);
+    expect([...janelas.values()][0].fechadaEm).toBe(fim);
+  });
+
+  it('fechar não impede resolver as pendentes', async () => {
+    const { service, denuncias } = montar();
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    await service.fecharJanela(PROF, TURMA);
+    const id = [...denuncias.keys()][0];
+    await service.validar(PROF, TURMA, id, 100);
+    expect(denuncias.get(id)!.status).toBe('VALIDADA');
+  });
+
+  it('histórico de janelas: mais nova primeiro, com o estado atual; só o dono', async () => {
+    const { service } = montar({ denunciasAbertas: false });
+    await service.abrirJanela(PROF, TURMA);
+    await service.fecharJanela(PROF, TURMA);
+    await service.abrirJanela(PROF, TURMA);
+    const h = await service.janelas(PROF, TURMA);
+    expect(h.abertas).toBe(true);
+    expect(h.janelas).toHaveLength(2);
+    expect(h.janelas[0].fechadaEm).toBeUndefined();
+    expect(h.janelas[1].fechadaEm).toEqual(expect.any(String));
+    expect(h.janelaAtualId).toBe(h.janelas[0].id);
+    await expect(service.janelas('prof-2', TURMA)).rejects.toThrow(
+      NotFoundException,
+    );
+    await expect(service.abrirJanela('prof-2', TURMA)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('a lista do professor traz o janelaId de cada denúncia', async () => {
+    const { service } = montar();
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    expect((await service.listarDaTurma(PROF, TURMA))[0].janelaId).toBe('j0');
   });
 });

@@ -11,10 +11,12 @@ import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
 import { DENUNCIA } from './denuncia.constants';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
+import { DenunciaJanelaRepository } from './denuncia-janela.repository';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaRepository } from './denuncia.repository';
 import { DenunciaEntity, StatusDenuncia } from './entities/denuncia.entity';
 import { DenunciaTopicoEntity } from './entities/denuncia-topico.entity';
+import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
 
 type Aluno = { alunoId: string; turmaId: string };
 type Arquivo = { buffer: Buffer; mimetype: string; size: number };
@@ -31,6 +33,8 @@ export interface DenunciaProfessorView {
   denunciadoNome: string;
   /** XP atual do denunciado: a tela avisa quando a punição passa dele (#2). */
   xpDenunciado: number;
+  /** Janela de denúncia em que foi feita (033); ausente nas anteriores. */
+  janelaId?: string;
   topicoId?: string;
   topicoTitulo?: string;
   /** Pontos sugeridos do tópico, se ele ainda existir. */
@@ -65,6 +69,7 @@ export class DenunciaService {
     private readonly xp: XpService,
     private readonly professorService: ProfessorService,
     private readonly imagens: DenunciaImagemStorage,
+    private readonly janelaRepo: DenunciaJanelaRepository,
   ) {}
 
   // ===== Tópicos (professor) =====
@@ -109,6 +114,7 @@ export class DenunciaService {
   // ===== Aluno =====
 
   async opcoesAluno({ alunoId, turmaId }: Aluno): Promise<{
+    abertas: boolean;
     colegas: Array<{ id: string; nome: string }>;
     topicos: Array<{ id: string; titulo: string }>;
   }> {
@@ -123,7 +129,7 @@ export class DenunciaService {
       id: t.id,
       titulo: t.titulo,
     }));
-    return { colegas, topicos };
+    return { abertas: turma.denunciasAbertas === true, colegas, topicos };
   }
 
   async criarDoAluno(
@@ -132,6 +138,13 @@ export class DenunciaService {
     imagem?: Arquivo,
   ): Promise<{ id: string }> {
     const turma = await this.turmaDoAluno(turmaId);
+    if (turma.denunciasAbertas !== true) {
+      throw new ForbiddenException({
+        code: 'DENUNCIAS_FECHADAS',
+        message:
+          'As denúncias estão fechadas. O professor abre durante a aula.',
+      });
+    }
     const denunciado = await this.alunoRepo.findById(dto.denunciadoAlunoId);
     if (!denunciado || denunciado.turmaId !== turmaId) {
       throw new NotFoundException('Colega não encontrado nesta turma.');
@@ -161,6 +174,7 @@ export class DenunciaService {
       },
       doAutor,
     );
+    if (turma.denunciaJanelaId) nova.janelaId = turma.denunciaJanelaId;
     const criada = await this.denuncias.create(nova);
     if (imagem) {
       const path = `denuncias/${turmaId}/${criada.id}.jpg`;
@@ -224,6 +238,7 @@ export class DenunciaService {
         temImagem: !!d.imagemPath,
       };
       if (d.resolvidaEm) v.resolvidaEm = d.resolvidaEm;
+      if (d.janelaId) v.janelaId = d.janelaId;
       if (d.topicoId) {
         v.topicoId = d.topicoId;
         v.topicoTitulo = d.topicoTitulo;
@@ -309,6 +324,71 @@ export class DenunciaService {
       imagemPath: null as unknown as undefined,
     });
     if (imagem) await this.imagens.apagar(imagem);
+  }
+
+  // ===== Janela de denúncia (033) =====
+
+  /** Abre a janela; abrir já aberta devolve a atual (não cria outra). */
+  async abrirJanela(
+    professorId: string,
+    turmaId: string,
+  ): Promise<{ abertas: boolean; janela: DenunciaJanelaEntity }> {
+    const turma = await this.turmaDoProfessor(professorId, turmaId);
+    if (turma.denunciasAbertas === true && turma.denunciaJanelaId) {
+      const atual = await this.janelaRepo.findById(turma.denunciaJanelaId);
+      if (atual) return { abertas: true, janela: atual };
+    }
+    const janela = await this.janelaRepo.create({
+      turmaId,
+      professorId,
+      abertaEm: new Date().toISOString(),
+    });
+    await this.turmaRepo.update(turmaId, {
+      denunciasAbertas: true,
+      denunciaJanelaId: janela.id,
+    });
+    return { abertas: true, janela };
+  }
+
+  /** Fecha a janela; fechar já fechada não muda nada. Pendentes seguem resolvíveis. */
+  async fecharJanela(
+    professorId: string,
+    turmaId: string,
+  ): Promise<{ abertas: boolean }> {
+    const turma = await this.turmaDoProfessor(professorId, turmaId);
+    if (turma.denunciasAbertas !== true) return { abertas: false };
+    if (turma.denunciaJanelaId) {
+      await this.janelaRepo.update(turma.denunciaJanelaId, {
+        fechadaEm: new Date().toISOString(),
+      });
+    }
+    await this.turmaRepo.update(turmaId, {
+      denunciasAbertas: false,
+      denunciaJanelaId: null,
+    });
+    return { abertas: false };
+  }
+
+  /** Estado atual + histórico de janelas, mais nova primeiro. */
+  async janelas(
+    professorId: string,
+    turmaId: string,
+  ): Promise<{
+    abertas: boolean;
+    janelaAtualId: string | null;
+    janelas: DenunciaJanelaEntity[];
+  }> {
+    const turma = await this.turmaDoProfessor(professorId, turmaId);
+    const janelas = (await this.janelaRepo.findBy('turmaId', turmaId)).sort(
+      (a, b) =>
+        b.abertaEm.localeCompare(a.abertaEm) || b.id.localeCompare(a.id),
+    );
+    const abertas = turma.denunciasAbertas === true;
+    return {
+      abertas,
+      janelaAtualId: abertas ? (turma.denunciaJanelaId ?? null) : null,
+      janelas,
+    };
   }
 
   /** `{ turmaId: pendentes }` para os badges da lista e do detalhe da turma. */
