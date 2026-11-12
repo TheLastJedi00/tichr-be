@@ -135,7 +135,6 @@ export type StatusIsolateus =
    * o dia começava, e demorar a agir era um *tell* dela.
    */
   | 'DESLOCAMENTO'
-  | 'TURNO_AMEACA'
   | 'QUESTAO_ATIVA'
   | 'RESULTADO_RODADA'
   | 'QUARENTENA_DEBATE'
