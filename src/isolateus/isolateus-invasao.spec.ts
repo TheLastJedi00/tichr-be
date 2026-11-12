@@ -116,10 +116,11 @@ describe('Isolateus — a invasão é disputa e abre a questão', () => {
     expect(ctx.partida.alerta?.texto).not.toContain('Real 1');
   });
 
-  it('sem invasão, a noite calma continua sem questão', async () => {
+  it('sem invasão, a noite calma abre a questão neutra (034 #48)', async () => {
     const ctx = comPresa();
     await ctx.service.pularFase('prof', 'p1');
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.partida.alerta?.tipo).toBe('NEUTRA');
   });
 
   it('com abdução, a mesma questão decide tudo e o alerta ganha a linha', async () => {
@@ -179,7 +180,7 @@ describe('Isolateus — resolução da invasão e fuga', () => {
     const ctx = await invasaoNoAr();
     await responder(ctx, { a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 });
 
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(h1(ctx).preso).toBe(true);
     expect(textos(ctx)).toContain(CONTIDA);
     expect(ctx.partida.resumoRodada?.texto).toContain(CONTIDA);
@@ -204,10 +205,9 @@ describe('Isolateus — resolução da invasão e fuga', () => {
       vivo: true,
       setorId: SETOR_IDS[SETOR_IDS.length - 1],
     });
-    expect(ctx.partida.acontecimentos.at(-1)).toMatchObject({
-      tipo: 'INVASAO',
-      texto: FUGA,
-    });
+    expect(
+      ctx.partida.acontecimentos.filter((e) => e.tipo === 'INVASAO').at(-1),
+    ).toMatchObject({ texto: FUGA });
     expect(ctx.partida.resumoRodada?.texto).toContain(FUGA);
   });
 
@@ -223,7 +223,7 @@ describe('Isolateus — resolução da invasão e fuga', () => {
     await responder(ctx, { a2: 1, a3: 0, a4: 0, a5: 0 });
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
     await responder(ctx, { a1: 1 });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 
   it('invasoesNoite é zerado na resolução', async () => {
@@ -242,8 +242,8 @@ describe('Isolateus — resolução da invasão e fuga', () => {
     expect(await ctx.service.painel('a1', 'p1')).not.toHaveProperty('invasao');
 
     // Age na noite seguinte.
-    ctx.partida.status = 'DESLOCAMENTO';
-    ctx.partida.rodada = 1;
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    ctx.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     expect(ctx.segredo.acoesRodada?.some((j) => j.alunoId === 'a1')).toBe(true);
 
@@ -272,7 +272,7 @@ describe('Isolateus — resolução da invasão e fuga', () => {
     await responder(ctx, { a1: 1, a2: 0, a3: 0, a4: 0, a5: 1 });
 
     expect(h1(ctx).preso).toBe(false);
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(textos(ctx)).toContain('O resgate fracassou.');
   });
 });

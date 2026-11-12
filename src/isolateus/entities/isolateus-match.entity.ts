@@ -34,21 +34,6 @@ export const ISOLATEUS = {
   /** Teto do Diário da Vila (mesma disciplina dos 40 rumores). */
   MAX_ACONTECIMENTOS: 60,
 
-  /**
-   * Teto de noites da partida. **Válvula de segurança, não orçamento.**
-   *
-   * As questões deixaram de contar as noites: elas só são consumidas quando há
-   * abdução ou reparo. Uma Ameaça que só sabota e uma vila que nunca reage
-   * fariam a partida girar para sempre — o teto fecha essa porta.
-   *
-   * Começou em 15 e subiu para 25 depois da validação em navegador: com 15, uma
-   * partida encerrou tendo usado **4 das 10 questões**. O teto estava cortando a
-   * aula antes do banco pedagógico acabar, que é justamente o critério de fim
-   * que deveria mandar. Com 25, ele volta a ser o que a spec diz que é: o que
-   * impede a partida infinita, e nada além disso.
-   */
-  TETO_NOITES: 25,
-
   /** Janelas cronometradas (contadas pelo cliente; o servidor só revalida). */
   LIMITE_DEBATE_MS: 90_000,
   LIMITE_VOTO_MS: 60_000,
@@ -77,6 +62,13 @@ export const ISOLATEUS = {
    * Quarentena inconvocável.
    */
   JANELA_DECISAO_MS: 15_000,
+  /**
+   * A noite espera o card de resultado da rodada anterior (034 #55): a nova
+   * noite grava `faseIniciadaEm` tantos ms no futuro, e só então os 60s correm.
+   */
+  JANELA_RESULTADO_MS: 6_000,
+  /** A barra de energia alien (034 #58): acertos para um superpoder. */
+  ENERGIA_PARA_PODER: 3,
 
   /**
    * Chance de um NPC trocar de setor a cada noite.
@@ -200,7 +192,7 @@ export interface MensagemDebate {
 /** O alerta global que abre a rodada. */
 export interface AlertaRodada {
   /** `INVASAO`: só uma Ameaça presa tentando fugir abriu a questão (028 §2). */
-  tipo: 'SABOTAGEM' | 'ABDUCAO' | 'INVASAO';
+  tipo: 'SABOTAGEM' | 'ABDUCAO' | 'INVASAO' | 'NEUTRA';
   texto: string;
 }
 
@@ -282,7 +274,7 @@ export interface PlacarItem {
    * as convertidas pelo Contágio são `CONTAGIADO`. Ausente = aldeão (ou partida
    * encerrada antes da spec).
    */
-  papel?: 'ALIEN' | 'CONTAGIADO';
+  papel?: 'ALIEN' | 'CONTAGIADO' | 'INFILTRADO';
 }
 
 /**
@@ -422,7 +414,12 @@ export class IsolateusMatchEntity {
   /** Quantos já votaram no resgate (contagem apenas — o voto é secreto). */
   votosResgateRecebidos = 0;
   /** Quem o último resgate trouxe de volta (o papel dele continua secreto). */
-  resgateResultado: { habitanteId: string; nome: string } | null = null;
+  resgateResultado: {
+    habitanteId: string;
+    nome: string;
+    /** Voltou sem votação: era o único fora da vila (034 #68). */
+    semVotacao?: boolean;
+  } | null = null;
   vereditoQuarentena: VereditoQuarentena | null;
   /** Quantos já votaram (contagem apenas — o voto em si é secreto). */
   votosRecebidos: number;

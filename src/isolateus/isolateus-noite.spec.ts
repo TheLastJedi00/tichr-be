@@ -298,7 +298,7 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.status).toBe('DESLOCAMENTO');
 
     await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('QUESTAO_ATIVA');
   });
 
   it('vencida a carência, o prazo fecha a noite sem a Ameaça', async () => {
@@ -311,21 +311,28 @@ describe('Isolateus — o amanhecer', () => {
     ).toISOString();
 
     await service.resolverPorTempo('p1', { alunoId: 'a2' });
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('QUESTAO_ATIVA');
   });
 
-  it('sabotagem fecha a noite SEM questão: ela não é contestada', async () => {
+  it('sabotagem não é contestada: o setor cai na hora e a questão só rende pontos', async () => {
     const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
 
     // O setor cai na hora; o que a vila pode fazer é marchar até lá e reconstruir.
-    expect(partida.status).toBe('RESULTADO_RODADA');
-    expect(partida.questaoPublica).toBeNull();
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    // Toda rodada tem questão (034 #48), mas sem disputa o alerta é neutro.
+    expect(partida.questaoPublica).not.toBeNull();
+    expect(partida.alerta?.tipo).toBe('NEUTRA');
     expect(partida.setores.find((s) => s.id === 'seguranca')!.intacto).toBe(false);
     expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
-    // Nenhuma questão consumida: o banco só é gasto por disputa.
-    expect(partida.questaoIndex).toBe(0);
+
+    // Fechada a questão, o card diz o que a noite deixou à vista.
+    await service.pularFase('prof', 'p1');
+    expect(partida.questaoIndex).toBe(1);
+    expect(partida.resumoRodada?.texto).toContain('em ruínas');
+    // Esperança e setores não mudam por uma questão sem disputa.
+    expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
   });
 
   it('abdução fecha a noite ABRINDO a questão de defesa', async () => {
@@ -364,10 +371,11 @@ describe('Isolateus — o amanhecer', () => {
 
     await service.resolverPorTempo('p1', { professorId: 'prof' });
 
-    // Sem jogada e sem reparo, nao ha o que perguntar: o dia abre direto no card.
-    // E o texto e o mesmo de uma noite calma — dizer "a Ameaca nao agiu"
-    // denunciaria quem sumiu do jogo.
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    // Sem jogada e sem reparo, a questão é neutra. E o texto do card é o mesmo
+    // de uma noite calma — dizer "a Ameaça não agiu" denunciaria quem sumiu.
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    expect(partida.alerta?.tipo).toBe('NEUTRA');
+    await service.pularFase('prof', 'p1');
     expect(partida.resumoRodada?.texto).toContain('sem incidentes');
   });
 
@@ -436,9 +444,9 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.faseIniciadaEm).not.toBeNull();
   });
 
-  it('o veredito da Quarentena não atravessa a noite', async () => {
-    // Regressão: o card "Vocês aprisionaram um INOCENTE" seguia na janela de
-    // decisão das noites seguintes, até a próxima convocação.
+  it('o veredito da Quarentena fica só até a questão seguinte abrir', async () => {
+    // O card do inocente preso é lido na espera da noite (034 #55); a questão
+    // nova o limpa, e ele não atravessa as noites seguintes.
     const { service, partida } = noite({ reais: 4 });
     partida.status = 'RESULTADO_RODADA';
     partida.vereditoQuarentena = {
@@ -447,9 +455,13 @@ describe('Isolateus — o amanhecer', () => {
       texto: 'Vocês aprisionaram um INOCENTE.',
     };
 
-    await service.pularFase('prof', 'p1');
-
+    await service.pularFase('prof', 'p1'); // Dia legado → noite seguinte
     expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.vereditoQuarentena).not.toBeNull();
+
+    partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
+    await service.pularFase('prof', 'p1'); // amanhecer → questão
+    expect(partida.status).toBe('QUESTAO_ATIVA');
     expect(partida.vereditoQuarentena).toBeNull();
   });
 });
@@ -467,7 +479,7 @@ describe('Isolateus — o relógio é de todos, não só do telão', () => {
     const c = noite({ reais: 4 });
     vencida(c);
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
-    expect(c.partida.status).toBe('RESULTADO_RODADA');
+    expect(c.partida.status).toBe('QUESTAO_ATIVA');
   });
 
   it('quem não é da partida não mexe no relógio dela', async () => {
@@ -485,7 +497,7 @@ describe('Isolateus — o relógio é de todos, não só do telão', () => {
     c.partida.habitantes.find((h) => h.id === 'h3')!.vivo = false;
     vencida(c);
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
-    expect(c.partida.status).toBe('RESULTADO_RODADA');
+    expect(c.partida.status).toBe('QUESTAO_ATIVA');
   });
 
   it('dois clientes cobrando o mesmo prazo viram a fase UMA vez', async () => {
@@ -495,7 +507,7 @@ describe('Isolateus — o relógio é de todos, não só do telão', () => {
       c.service.resolverPorTempo('p1', { professorId: 'prof' }),
       c.service.resolverPorTempo('p1', { alunoId: 'a2' }),
     ]);
-    expect(c.partida.status).toBe('RESULTADO_RODADA');
+    expect(c.partida.status).toBe('QUESTAO_ATIVA');
     expect(c.partida.rodada).toBe(0);
   });
 

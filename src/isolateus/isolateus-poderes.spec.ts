@@ -27,7 +27,7 @@ describe('Isolateus — o voto da Ameaça não defende a vila', () => {
     ];
     await responder(ctx, { a1: 0, a2: 1, a3: 1, a4: 0 });
 
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(ctx.partida.resumoRodada?.defendida).toBe(true);
     expect(ctx.partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(true);
   });
@@ -45,7 +45,7 @@ describe('Isolateus — o voto da Ameaça não defende a vila', () => {
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
 
     await responder(ctx, { a1: 3 });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 
   it('ela responde e pontua pelo acerto como qualquer um', async () => {
@@ -191,7 +191,7 @@ describe('Isolateus — usar um poder', () => {
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
 
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA'); // a noite fechou
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA'); // a noite fechou
     expect(ctx.segredo.poderes).toEqual([]);
   });
 });
@@ -335,7 +335,7 @@ describe('Isolateus — Controle Mental', () => {
     }
     expect(ctx.partida.vereditoQuarentena?.eraAmeaca).toBe(false);
     expect(ctx.partida.esperanca).toBe(100 - ISOLATEUS.DANO_INOCENTE);
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 });
 
@@ -388,12 +388,13 @@ describe('Isolateus — Contágio', () => {
     );
   });
 
-  it('Esperança zerada pelo contágio entrega a partida à Ameaça', async () => {
+  it('Esperança zerada pelo contágio é colapso, não fim (034 #50)', async () => {
     const ctx = comContagio();
     ctx.partida.esperanca = ISOLATEUS.DANO_CONTAGIO;
     await fecharNoite(ctx);
-    expect(ctx.partida.status).toBe('ENCERRADO');
-    expect(ctx.partida.veredito?.lado).toBe('AMEACA');
+    expect(ctx.partida.esperanca).toBe(0);
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.partida.veredito).toBeNull();
   });
 
   it('original presa antes do amanhecer: o contágio não acontece', async () => {
@@ -410,8 +411,9 @@ describe('Isolateus — Contágio', () => {
     const ctx = comContagio();
     await fecharNoite(ctx);
     const contagiado = ctx.segredo.ameacasIds().find((a) => a !== 'a1')!;
-    await ctx.service.pularFase('prof', 'p1'); // janela de decisão → noite 2
+    await ctx.service.pularFase('prof', 'p1'); // fim da questão → noite 2
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    ctx.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
 
     const aldeoes = ['a2', 'a3', 'a4', 'a5'].filter((a) => a !== contagiado);
     for (const a of aldeoes) await ctx.service.confirmarPosicao(a, 'p1');
@@ -419,7 +421,7 @@ describe('Isolateus — Contágio', () => {
     await ctx.service.confirmarPosicao(contagiado, 'p1');
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
     await ctx.service.acaoAmeaca(contagiado, 'p1', { tipo: 'AGUARDAR' });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
   });
 });
 

@@ -147,6 +147,25 @@ export class IsolateusSegredoEntity {
    */
   acertosDesdeContagio?: number;
 
+  /**
+   * Energia alien por Ameaça (034 #57): +1 por questão acertada (livre ou
+   * presa) até . Cheia, a Ameaça escolhe um superpoder na
+   * noite e a barra zera. No cofre: invisível a todos os outros. Ausente = 0.
+   */
+  energiaAlien?: Record<string, number>;
+
+  /** Quem organizou o reparo desta noite (só para recusar com o motivo certo). */
+  reparoPor?: string | null;
+
+  /** Ameaças sorteadas depois de uma prisão (034 #51); o rótulo da revelação. */
+  infiltrados?: string[];
+
+  /**
+   * A Quarentena convocada nesta noite (034 #40): fica no cofre até o
+   * amanhecer, que a confirma depois da sabotagem. Uma por rodada.
+   */
+  quarentenaConvocadaNoite?: { habitanteId: string } | null;
+
   /** Contágio escolhido, materializado no próximo fechamento da noite. */
   contagioPendente?: boolean;
 

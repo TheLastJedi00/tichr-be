@@ -65,7 +65,7 @@ describe('Isolateus — várias Ameaças: a noite', () => {
     expect(partida.status).toBe('DESLOCAMENTO'); // falta a jogada da a2
 
     await service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('QUESTAO_ATIVA'); // amanheceu
   });
 
   it('a carência vale enquanto faltar a jogada de QUALQUER Ameaça', async () => {
@@ -180,7 +180,7 @@ describe('Isolateus — várias Ameaças: a Quarentena', () => {
     await prender(ctx, 'h2', ['a1', 'a2', 'a3', 'a4', 'a5']);
 
     expect(ctx.partida.vereditoQuarentena?.eraAmeaca).toBe(true);
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(ctx.partida.faseIniciadaEm).not.toBeNull(); // a noite cai sozinha
     expect(ctx.partida.esperanca).toBe(100); // acertar não custa Esperança
     const texto = ctx.partida.vereditoQuarentena!.texto;
@@ -190,8 +190,21 @@ describe('Isolateus — várias Ameaças: a Quarentena', () => {
     expect(texto.replace('Real 2', '')).not.toMatch(/\d/);
   });
 
-  it('prender a última Ameaça livre dá a vitória à vila', async () => {
+  it('prender a última Ameaça livre NÃO encerra: nasce um infiltrado (034 #51)', async () => {
     const ctx = vilaComAmeacas({ reais: 5 });
+    ctx.partida.habitantes.find((h) => h.id === 'h2')!.preso = true;
+    await prender(ctx, 'h1', ['a1', 'a3', 'a4', 'a5']);
+
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    expect(ctx.segredo.infiltrados).toHaveLength(1);
+    // O infiltrado sai dos aldeões reais livres (a2 está preso).
+    expect(['a3', 'a4', 'a5']).toContain(ctx.segredo.infiltrados![0]);
+    expect(ctx.partida.vereditoQuarentena?.texto).toContain('não acabou');
+  });
+
+  it('prender a última Ameaça na última questão: a Vila vence por resistência', async () => {
+    const ctx = vilaComAmeacas({ reais: 5 });
+    ctx.partida.questaoIndex = ctx.partida.totalRodadas;
     ctx.partida.habitantes.find((h) => h.id === 'h2')!.preso = true;
     await prender(ctx, 'h1', ['a1', 'a3', 'a4', 'a5']);
 
@@ -203,6 +216,7 @@ describe('Isolateus — várias Ameaças: a Quarentena', () => {
     const ctx = vilaComAmeacas({ reais: 5 });
     ctx.segredo.pontos = { a2: 1200, a3: 1000 };
     ctx.partida.esperanca = ISOLATEUS.DANO_INOCENTE;
+    ctx.partida.questaoIndex = ctx.partida.totalRodadas; // a última questão
     await prender(ctx, 'h3', ['a1', 'a2', 'a3', 'a4', 'a5']); // inocente
 
     expect(ctx.partida.veredito?.lado).toBe('AMEACA');
