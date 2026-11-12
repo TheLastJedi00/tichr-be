@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { CENA } from './isolateus-cena';
+import { CENA, xDaPorta } from './isolateus-cena';
 import { IsolateusPosicaoService } from './isolateus-posicao.service';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 import { IsolateusGameService } from './isolateus-game.service';
@@ -181,5 +181,84 @@ describe('Isolateus 034 — limpeza (Task 3)', () => {
     expect([...c.rtdb.dados.keys()].some((k) => k.startsWith('pos/p1'))).toBe(
       false,
     );
+  });
+});
+
+describe('Isolateus 034 — NPCs no mesmo canal (Task 3)', () => {
+  const chaves = (o: unknown) => Object.keys(o as object).sort();
+
+  it('no pulso do /tempo, o NPC grava o MESMO formato de um aluno', async () => {
+    const c = montar({ npcs: 2 });
+    jest.spyOn(Math, 'random').mockReturnValue(0.1);
+    await c.service.passo('a3', 'p1', 250);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    const real = c.rtdb.dados.get('pos/p1/seguranca/h3');
+    const npc = c.rtdb.dados.get('pos/p1/seguranca/n1');
+    expect(npc).toBeDefined();
+    expect(chaves(npc)).toEqual(chaves(real));
+    expect(chaves(npc)).toEqual(['alvoX', 't', 'x']);
+    jest.restoreAllMocks();
+  });
+
+  it('o pulso não repassa os NPCs antes da janela', async () => {
+    const c = montar({ npcs: 1 });
+    jest.spyOn(Math, 'random').mockReturnValue(0.1);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    const chamadas = c.rtdb.gravar.mock.calls.length;
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.rtdb.gravar.mock.calls.length).toBe(chamadas);
+    jest.restoreAllMocks();
+  });
+
+  it('no horário do aviso de saída, o alvoX do NPC é a porta do destino', async () => {
+    const c = montar({ npcs: 1 });
+    c.segredo.agendaNpc = [
+      { habitanteId: 'n1', para: 'energia', em: new Date(agora).toISOString() },
+    ];
+    jest.spyOn(Math, 'random').mockReturnValue(0.99);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
+    expect(npc.alvoX).toBe(xDaPorta('seguranca', 'energia'));
+    jest.restoreAllMocks();
+  });
+
+  it('mudar de ideia tira o NPC da luz: alvoX sai da porta', async () => {
+    const c = montar({ npcs: 1 });
+    c.segredo.agendaNpc = [
+      { habitanteId: 'n1', para: null, em: new Date(agora).toISOString() },
+    ];
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
+    expect(npc.alvoX).toBe(CENA.X_INICIAL);
+    jest.restoreAllMocks();
+  });
+
+  it('NPC já na luz de uma porta não é desviado pelo passeio', async () => {
+    const c = montar({ npcs: 1 });
+    c.partida.deslocamentosNoite = [{ habitanteId: 'n1', para: 'energia' }];
+    jest.spyOn(Math, 'random').mockReturnValue(0.1);
+    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.rtdb.dados.has('pos/p1/seguranca/n1')).toBe(false);
+    jest.restoreAllMocks();
+  });
+
+  it('ENCERRADO apaga pos/{partida}', async () => {
+    const c = montar();
+    await c.service.passo('a3', 'p1', 250);
+    await c.service.encerrarPeloProfessor('prof', 'p1');
+    expect([...c.rtdb.dados.keys()].some((k) => k.startsWith('pos/p1'))).toBe(
+      false,
+    );
+  });
+
+  it('o RTDB fora do ar nunca derruba o pulso', async () => {
+    const c = montar({ npcs: 1 });
+    c.rtdb.ler.mockRejectedValue(new Error('RTDB fora'));
+    jest.spyOn(Math, 'random').mockReturnValue(0.1);
+    await expect(
+      c.service.resolverPorTempo('p1', { alunoId: 'a3' }),
+    ).resolves.toBeDefined();
+    jest.restoreAllMocks();
   });
 });

@@ -18,6 +18,10 @@ export const CENA = {
   X_INICIAL: 160,
   /** Um passo por segundo por habitante (429 `PASSO_RAPIDO`). */
   PASSO_INTERVALO_MS: 1_000,
+  /** NPCs: no máximo uma rodada de passeio a cada tanto, por partida. */
+  NPC_PULSO_MS: 3_000,
+  /** Chance de um NPC solto escolher um novo alvo a cada rodada de passeio. */
+  NPC_CHANCE_PASSEAR: 0.3,
 } as const;
 
 export type LadoPorta = 'esquerda' | 'direita' | 'fundo';

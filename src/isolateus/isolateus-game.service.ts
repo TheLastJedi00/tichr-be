@@ -54,6 +54,7 @@ import {
   IsolateusSegredoEntity,
 } from './entities/isolateus-segredo.entity';
 import {
+  AvisoNpc,
   aplicarAviso,
   movimentosDaNoite,
   reescalarAgenda,
@@ -670,6 +671,9 @@ export class IsolateusGameService {
     if (!(segredo.agendaNpc ?? []).some((a) => Date.parse(a.em) <= agora)) {
       return;
     }
+    const vencidos = (segredo.agendaNpc ?? []).filter(
+      (a) => Date.parse(a.em) <= agora,
+    );
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
       if (p.status !== 'DESLOCAMENTO' || p.pausadaEm) return null;
       if (!this.liberarAgenda(p, s, agora)) return null;
@@ -678,7 +682,65 @@ export class IsolateusGameService {
         segredo: { posicoesNoite: s.posicoesNoite, agendaNpc: s.agendaNpc },
       };
     });
-    if (fresco) this.sincronizarNoite(partida, segredo, fresco);
+    if (!fresco) return;
+    this.sincronizarNoite(partida, segredo, fresco);
+    await this.andarAteAsPortas(partida, vencidos);
+  }
+
+  /**
+   * Os NPCs que avisaram a saída andam até a porta do destino (034 §2.2): o
+   * mesmo `passo` de um aluno. Quem desistiu (`para: null`) sai da luz e volta
+   * ao meio da cena. Visual apenas: falha do RTDB não derruba o pulso.
+   */
+  private async andarAteAsPortas(
+    partida: IsolateusMatchEntity,
+    avisos: AvisoNpc[],
+  ): Promise<void> {
+    if (!this.posicao?.habilitado) return;
+    for (const a of avisos) {
+      const h = partida.habitantes.find((x) => x.id === a.habitanteId);
+      if (!h || !h.vivo || h.preso) continue;
+      const alvoX = (a.para && xDaPorta(h.setorId, a.para)) || CENA.X_INICIAL;
+      await this.semFalhar(() =>
+        this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
+          limitar: false,
+        }),
+      );
+    }
+  }
+
+  /** Último passeio dos NPCs por partida (limita a rodada a uma por janela). */
+  private readonly ultimoPasseioNpc = new Map<string, number>();
+
+  /**
+   * No pulso do `/tempo`, alguns NPCs soltos sorteiam um novo alvo, com o mesmo
+   * caminho e formato dos alunos (034 §2.2): na Névoa de Guerra, ninguém
+   * distingue real de NPC pelo canal. Quem já está na luz de uma porta fica.
+   */
+  private async passearNpcs(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+  ): Promise<void> {
+    if (!this.posicao?.habilitado) return;
+    const agora = Date.now();
+    const ultimo = this.ultimoPasseioNpc.get(partida.id) ?? 0;
+    if (agora - ultimo < CENA.NPC_PULSO_MS) return;
+    this.ultimoPasseioNpc.set(partida.id, agora);
+
+    const npcs = new Set(segredo.npcIds);
+    const naLuz = new Set(
+      (partida.deslocamentosNoite ?? []).map((a) => a.habitanteId),
+    );
+    for (const h of partida.habitantes) {
+      if (!npcs.has(h.id) || !h.vivo || h.preso || naLuz.has(h.id)) continue;
+      if (Math.random() >= CENA.NPC_CHANCE_PASSEAR) continue;
+      const alvoX = Math.floor(Math.random() * (CENA.LARGURA + 1));
+      await this.semFalhar(() =>
+        this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
+          limitar: false,
+        }),
+      );
+    }
   }
 
   /** O habitante do aluno, exigindo que ele esteja na vila e que seja noite. */
@@ -1983,6 +2045,7 @@ export class IsolateusGameService {
     if (decorrido < limite - ISOLATEUS.MARGEM_TEMPO_MS) {
       // Antes do prazo, o /tempo da noite é o pulso da agenda dos NPCs.
       await this.pulsoDaAgenda(partida, segredo);
+      await this.passearNpcs(partida, segredo);
       return partida;
     }
     return this.encerrarFase(partida, segredo);
