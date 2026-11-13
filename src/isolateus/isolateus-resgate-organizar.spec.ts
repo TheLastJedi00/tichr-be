@@ -110,7 +110,10 @@ describe('Isolateus — organizar o resgate (Task 16)', () => {
     await fecharNoite(ctx);
     expect(ctx.partida.resgatePendente).toBe(true);
     expect(ctx.partida.alerta?.texto).not.toMatch(/reconstruir/);
-    expect(ctx.partida.alerta).toEqual({ tipo: 'NEUTRA', texto: 'Questão do Comando Central.' });
+    expect(ctx.partida.alerta).toEqual({
+      tipo: 'NEUTRA',
+      texto: 'Questão do Comando Central.',
+    });
   });
 
   it('cancelado sem gente suficiente na Saúde', async () => {

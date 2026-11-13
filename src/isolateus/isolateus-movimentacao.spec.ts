@@ -82,7 +82,9 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
         return fn(p, s);
       }),
     );
-    const erro = await ctx.service.mover('a3', 'p1', 'energia').catch((e: unknown) => e);
+    const erro = await ctx.service
+      .mover('a3', 'p1', 'energia')
+      .catch((e: unknown) => e);
     expect(erro).toBeInstanceOf(BadRequestException);
     expect(codigo(erro)).toBe('FORA_DA_NOITE');
   });
