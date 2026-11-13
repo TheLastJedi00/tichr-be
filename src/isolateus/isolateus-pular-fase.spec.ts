@@ -115,17 +115,17 @@ function vila(status: StatusIsolateus) {
 }
 
 describe('Isolateus — o professor pula qualquer cronômetro', () => {
-  it('noite: fecha o deslocamento na hora (a noite calma abre a janela de decisão)', async () => {
+  it('noite: fecha o deslocamento na hora (o amanhecer abre a questão)', async () => {
     const { service, partida } = vila('DESLOCAMENTO');
     await service.pularFase('prof', 'p1');
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('QUESTAO_ATIVA');
     expect(partida.faseIniciadaEm).not.toBeNull();
   });
 
   it('questão: apura com as respostas recebidas até ali', async () => {
     const { service, partida } = vila('QUESTAO_ATIVA');
     await service.pularFase('prof', 'p1');
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('DESLOCAMENTO');
     expect(partida.corretaIndex).toBe(1);
     expect(partida.questaoIndex).toBe(1);
   });

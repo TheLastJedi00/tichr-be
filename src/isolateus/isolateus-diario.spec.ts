@@ -211,9 +211,13 @@ describe('Isolateus — o Diário da Vila', () => {
     expect(falhou.tipos()).toContain('REPARO_FALHOU');
   });
 
-  it('a Quarentena convocada entra no diário', async () => {
-    const c = cenario({ status: 'RESULTADO_RODADA' });
+  it('a Quarentena convocada entra no diário (confirmada no amanhecer)', async () => {
+    const c = cenario({ status: 'DESLOCAMENTO' });
+    c.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
     await c.service.convocarQuarentena('p1', 'a2');
+    // Só o amanhecer confirma: a convocação ainda não é pública.
+    expect(c.tipos()).not.toContain('QUARENTENA');
+    await c.service.pularFase('prof', 'p1');
     expect(c.tipos()).toContain('QUARENTENA');
   });
 
@@ -246,7 +250,8 @@ describe('Isolateus — o Diário da Vila', () => {
   });
 
   it('o diário é aparado no teto e mantém as entradas mais recentes', async () => {
-    const c = cenario({ status: 'RESULTADO_RODADA' });
+    const c = cenario({ status: 'DESLOCAMENTO' });
+    c.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
     // Enche além do teto pelo caminho normal (convocar/encerrar a Quarentena
     // seria lento; aqui basta empurrar direto na lista publicada).
     c.partida.acontecimentos = Array.from(
@@ -260,11 +265,12 @@ describe('Isolateus — o Diário da Vila', () => {
       }),
     );
     await c.service.convocarQuarentena('p1', 'a2');
+    await c.service.pularFase('prof', 'p1'); // o amanhecer confirma
 
     expect(c.diario()).toHaveLength(
       ISOLATEUS.MAX_ACONTECIMENTOS,
     );
     expect(c.ultimo().tipo).toBe('QUARENTENA');
-    expect(c.diario()[0].texto).toBe('antigo 1'); // o mais velho caiu
+    expect(c.diario()[0].texto).toBe('antigo 2'); // os mais velhos caíram (o amanhecer registra 2)
   });
 });
