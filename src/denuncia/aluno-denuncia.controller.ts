@@ -31,6 +31,7 @@ export class AlunoDenunciaController {
     return this.service.minhasDoAluno(aluno);
   }
 
+  /** A foto saiu (033): o arquivo `imagem` ainda é lido só para ser recusado. */
   @Post()
   @UseInterceptors(
     FileInterceptor('imagem', {

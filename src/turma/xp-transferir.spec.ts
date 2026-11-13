@@ -54,6 +54,8 @@ function montar(xp: Record<string, number>) {
   const alunos: Record<string, { id: string; turmaId: string }> = {
     a1: { id: 'a1', turmaId: 't1' },
     a2: { id: 'a2', turmaId: 't1' },
+    a3: { id: 'a3', turmaId: 't1' },
+    a4: { id: 'a4', turmaId: 't1' },
     x9: { id: 'x9', turmaId: 'outra' },
   };
   const service = new XpService(
@@ -163,5 +165,93 @@ describe('XpService.transferir', () => {
         motivo: 'DENUNCIA',
       }),
     ).rejects.toThrow(/nao encontrado/);
+  });
+});
+
+describe('XpService.transferirParaVarios (033)', () => {
+  it('tira uma vez do doador e divide igual; a sobra vai aos primeiros', async () => {
+    const xp = { a1: 0, a2: 5000, a3: 10, a4: 0 };
+    const { service, logs } = montar(xp);
+    const r = await service.transferirParaVarios({
+      turmaId: 't1',
+      deAlunoId: 'a2',
+      paraAlunoIds: ['a1', 'a3', 'a4'],
+      pontos: 1000,
+      motivo: 'DENUNCIA',
+    });
+    expect(r.transferido).toBe(1000);
+    expect(r.partes).toEqual([
+      { alunoId: 'a1', pontos: 334 },
+      { alunoId: 'a3', pontos: 333 },
+      { alunoId: 'a4', pontos: 333 },
+    ]);
+    expect(xp).toEqual({ a1: 334, a2: 4000, a3: 343, a4: 333 });
+    expect(logs.map((l) => [l.alunoId, l.pontos, l.motivo])).toEqual([
+      ['a2', -1000, 'DENUNCIA'],
+      ['a1', 334, 'DENUNCIA'],
+      ['a3', 333, 'DENUNCIA'],
+      ['a4', 333, 'DENUNCIA'],
+    ]);
+  });
+
+  it('doador com menos XP: divide o que saiu; parte zero não gera log', async () => {
+    const xp = { a1: 0, a2: 2, a3: 0, a4: 0 };
+    const { service, logs } = montar(xp);
+    const r = await service.transferirParaVarios({
+      turmaId: 't1',
+      deAlunoId: 'a2',
+      paraAlunoIds: ['a1', 'a3', 'a4'],
+      pontos: 900,
+      motivo: 'DENUNCIA',
+    });
+    expect(r.transferido).toBe(2);
+    expect(xp).toEqual({ a1: 1, a2: 0, a3: 1, a4: 0 });
+    expect(logs).toHaveLength(3);
+  });
+
+  it('entrega o total e as partes ao extra, no mesmo commit', async () => {
+    const xp = { a1: 0, a2: 100, a3: 0 };
+    const { service, extra } = montar(xp);
+    const visto: unknown[] = [];
+    await service.transferirParaVarios({
+      turmaId: 't1',
+      deAlunoId: 'a2',
+      paraAlunoIds: ['a1', 'a3'],
+      pontos: 51,
+      motivo: 'DENUNCIA',
+      noMesmoCommit: {
+        ler: async () => undefined,
+        gravar: (tx, t, partes) => {
+          visto.push(t, partes);
+          (tx as { update: (r: unknown, d: unknown) => void }).update(
+            { col: 'denuncia_grupos', id: 'g1' },
+            {},
+          );
+        },
+      },
+    });
+    expect(visto).toEqual([
+      51,
+      [
+        { alunoId: 'a1', pontos: 26 },
+        { alunoId: 'a3', pontos: 25 },
+      ],
+    ]);
+    expect(extra).toEqual(['g1']);
+  });
+
+  it('autor de outra turma é 404 e nada muda', async () => {
+    const xp = { a1: 0, a2: 100, x9: 0 };
+    const { service, logs } = montar(xp);
+    await expect(
+      service.transferirParaVarios({
+        turmaId: 't1',
+        deAlunoId: 'a2',
+        paraAlunoIds: ['a1', 'x9'],
+        pontos: 10,
+        motivo: 'DENUNCIA',
+      }),
+    ).rejects.toThrow(/nao encontrado/);
+    expect(logs).toEqual([]);
   });
 });
