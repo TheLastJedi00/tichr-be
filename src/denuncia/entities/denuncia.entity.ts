@@ -18,6 +18,10 @@ export class DenunciaEntity {
   /** Cópia do título: sobrevive à edição e ao arquivamento do tópico. */
   topicoTitulo?: string;
   texto?: string;
+  /** Janela de denúncia em que foi feita (033). */
+  janelaId?: string;
+  /** Grupo de denúncias contra o mesmo aluno (033); null ao sair dele. */
+  grupoId?: string | null;
   /** Caminho privado no Storage; apagado ao resolver (#5). */
   imagemPath?: string;
   status: StatusDenuncia = 'PENDENTE';
@@ -107,6 +111,17 @@ export class DenunciaEntity {
       throw new ConflictException({
         code: 'DENUNCIA_RESOLVIDA',
         message: 'Essa denúncia já foi resolvida.',
+      });
+    }
+  }
+
+  /** Em grupo, só o grupo resolve (033): validar/invalidar avulsa é 409. */
+  assertAvulsa(): void {
+    if (this.grupoId) {
+      throw new ConflictException({
+        code: 'DENUNCIA_EM_GRUPO',
+        message:
+          'Essa denúncia está num grupo: resolva o grupo ou desassocie antes.',
       });
     }
   }

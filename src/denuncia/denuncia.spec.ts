@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
-  PayloadTooLargeException,
 } from '@nestjs/common';
 import { AlunoEntity } from '../turma/entities/aluno.entity';
 import { DenunciaEntity } from './entities/denuncia.entity';
@@ -12,6 +11,11 @@ import { DenunciaService } from './denuncia.service';
 import { DenunciaRepository } from './denuncia.repository';
 import { DenunciaTopicoRepository } from './denuncia-topico.repository';
 import { DenunciaImagemStorage } from './denuncia-imagem.storage';
+import { DenunciaJanelaRepository } from './denuncia-janela.repository';
+import { DenunciaJanelaEntity } from './entities/denuncia-janela.entity';
+import { DenunciaGrupoRepository } from './denuncia-grupo.repository';
+import { DenunciaGrupoEntity } from './entities/denuncia-grupo.entity';
+import { dividirIgual } from '../common/dividir';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { XpService } from '../turma/xp.service';
@@ -23,13 +27,21 @@ import { ProfessorService } from '../professor/professor.service';
  * - o aluno nunca recebe o autor de uma denúncia (#3);
  * - as travas de abuso (#4) e o teto de 10.000 (#6);
  * - a imagem some quando a denúncia é resolvida (#5).
+ *
+ * Spec 033: o aluno não envia mais foto (400 IMAGEM_REMOVIDA). As denúncias
+ * antigas que já têm foto (legado) seguem visíveis até serem resolvidas.
  */
 
 const PROF = 'prof-1';
 const TURMA = 't1';
 
 function montar(
-  opcoes: { pontuacaoAtiva?: boolean; podeGamificar?: boolean } = {},
+  opcoes: {
+    pontuacaoAtiva?: boolean;
+    podeGamificar?: boolean;
+    /** Fixture: a maioria dos testes parte com a janela aberta (033). */
+    denunciasAbertas?: boolean;
+  } = {},
 ) {
   const alunos: Record<string, AlunoEntity> = {
     a1: new AlunoEntity({
@@ -94,16 +106,52 @@ function montar(
     },
   } as unknown as DenunciaTopicoRepository;
 
+  const turmas: Record<string, Record<string, unknown>> = {
+    [TURMA]: {
+      id: TURMA,
+      professorId: PROF,
+      configPontuacao: { pontuacaoAtiva: opcoes.pontuacaoAtiva ?? true },
+      denunciasAbertas: opcoes.denunciasAbertas ?? true,
+      denunciaJanelaId: (opcoes.denunciasAbertas ?? true) ? 'j0' : undefined,
+    },
+    outra: {
+      id: 'outra',
+      professorId: 'prof-2',
+      configPontuacao: { pontuacaoAtiva: true },
+    },
+  };
   const turmaRepo = {
-    findById: async (id: string) =>
-      id === TURMA || id === 'outra'
-        ? {
-            id,
-            professorId: id === TURMA ? PROF : 'prof-2',
-            configPontuacao: { pontuacaoAtiva: opcoes.pontuacaoAtiva ?? true },
-          }
-        : null,
+    findById: async (id: string) => (turmas[id] ? { ...turmas[id] } : null),
+    update: async (id: string, patch: Record<string, unknown>) => {
+      Object.assign(turmas[id], patch);
+    },
   } as unknown as TurmaRepository;
+
+  const janelas = new Map<string, DenunciaJanelaEntity>();
+  if (opcoes.denunciasAbertas ?? true) {
+    janelas.set(
+      'j0',
+      new DenunciaJanelaEntity({
+        id: 'j0',
+        turmaId: TURMA,
+        professorId: PROF,
+        abertaEm: '2026-11-12T10:00:00.000Z',
+      }),
+    );
+  }
+  const janelaRepo = {
+    create: async (j: Omit<DenunciaJanelaEntity, 'id'>) => {
+      const e = new DenunciaJanelaEntity({ ...j, id: `j${++seq}` });
+      janelas.set(e.id, e);
+      return e;
+    },
+    findById: async (id: string) => janelas.get(id) ?? null,
+    findBy: async (campo: keyof DenunciaJanelaEntity, valor: unknown) =>
+      [...janelas.values()].filter((j) => j[campo] === valor),
+    update: async (id: string, patch: Partial<DenunciaJanelaEntity>) => {
+      Object.assign(janelas.get(id)!, patch);
+    },
+  } as unknown as DenunciaJanelaRepository;
 
   const alunoRepo = {
     findById: async (id: string) => alunos[id] ?? null,
@@ -135,6 +183,45 @@ function montar(
       op.noMesmoCommit?.gravar(null, t);
       return t;
     },
+    transferirParaVarios: async (op: {
+      deAlunoId: string;
+      paraAlunoIds: string[];
+      pontos: number;
+      motivo: string;
+      noMesmoCommit?: {
+        ler: (tx: unknown) => Promise<void>;
+        gravar: (
+          tx: unknown,
+          t: number,
+          partes: Array<{ alunoId: string; pontos: number }>,
+        ) => void;
+      };
+    }) => {
+      await op.noMesmoCommit?.ler(null);
+      const de = alunos[op.deAlunoId];
+      const t = DenunciaEntity.aTransferir(op.pontos, de.xpTotal);
+      const valores = dividirIgual(t, op.paraAlunoIds.length);
+      const partes = op.paraAlunoIds.map((alunoId, i) => ({
+        alunoId,
+        pontos: valores[i],
+      }));
+      de.xpTotal -= t;
+      if (t > 0) {
+        xpLogs.push({ alunoId: op.deAlunoId, pontos: -t, motivo: op.motivo });
+      }
+      for (const p of partes) {
+        alunos[p.alunoId].xpTotal += p.pontos;
+        if (p.pontos > 0) {
+          xpLogs.push({
+            alunoId: p.alunoId,
+            pontos: p.pontos,
+            motivo: op.motivo,
+          });
+        }
+      }
+      op.noMesmoCommit?.gravar(null, t, partes);
+      return { transferido: t, partes };
+    },
   } as unknown as XpService;
 
   const professorService = {
@@ -154,7 +241,8 @@ function montar(
 
   // O repo simulado precisa ler/gravar dentro do "commit" do XP.
   (denunciaRepo as unknown as { lerNaTransacao: unknown }).lerNaTransacao =
-    async (_tx: unknown, id: string) => denuncias.get(id)!;
+    async (_tx: unknown, id: string) =>
+      denuncias.get(id) ?? new DenunciaEntity({ id });
   (
     denunciaRepo as unknown as { gravarNaTransacao: unknown }
   ).gravarNaTransacao = (
@@ -162,6 +250,23 @@ function montar(
     id: string,
     patch: Partial<DenunciaEntity>,
   ) => Object.assign(denuncias.get(id)!, patch);
+
+  const grupos = new Map<string, DenunciaGrupoEntity>();
+  const grupoRepo = {
+    transacao: async <T>(fn: (tx: unknown) => Promise<T>) => fn(null),
+    novoId: () => `g${++seq}`,
+    findById: async (id: string) => grupos.get(id) ?? null,
+    findBy: async (campo: keyof DenunciaGrupoEntity, valor: unknown) =>
+      [...grupos.values()].filter((g) => g[campo] === valor),
+    lerNaTransacao: async (_tx: unknown, id: string) =>
+      grupos.get(id) ? new DenunciaGrupoEntity({ ...grupos.get(id)! }) : null,
+    gravarNaTransacao: (_tx: unknown, g: DenunciaGrupoEntity) => {
+      grupos.set(g.id, new DenunciaGrupoEntity({ ...g }));
+    },
+    apagarNaTransacao: (_tx: unknown, id: string) => {
+      grupos.delete(id);
+    },
+  } as unknown as DenunciaGrupoRepository;
 
   const service = new DenunciaService(
     denunciaRepo,
@@ -171,8 +276,20 @@ function montar(
     xp,
     professorService,
     imagens as unknown as DenunciaImagemStorage,
+    janelaRepo,
+    grupoRepo,
   );
-  return { service, alunos, denuncias, topicos, xpLogs, imagens };
+  return {
+    service,
+    alunos,
+    denuncias,
+    topicos,
+    xpLogs,
+    imagens,
+    turmas,
+    janelas,
+    grupos,
+  };
 }
 
 const aluno = (alunoId: string) => ({ alunoId, turmaId: TURMA });
@@ -232,17 +349,17 @@ describe('DenunciaService — aluno denuncia', () => {
     expect(op.topicos[0]).not.toHaveProperty('pontosSugeridos');
   });
 
-  it('cria com tópico, texto e imagem privada', async () => {
-    const { service, denuncias, imagens } = montar();
+  it('cria com tópico e texto, sem foto', async () => {
+    const { service, denuncias } = montar();
     const tp = await service.criarTopico(PROF, {
       titulo: 'Celular',
       pontosSugeridos: 100,
     });
-    await service.criarDoAluno(
-      aluno('a1'),
-      { denunciadoAlunoId: 'a2', topicoId: tp.id, texto: ' no recreio ' },
-      jpeg,
-    );
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      topicoId: tp.id,
+      texto: ' no recreio ',
+    });
     const d = [...denuncias.values()][0];
     expect(d).toMatchObject({
       autorAlunoId: 'a1',
@@ -252,8 +369,20 @@ describe('DenunciaService — aluno denuncia', () => {
       status: 'PENDENTE',
       professorId: PROF,
     });
-    expect(d.imagemPath).toBe(`denuncias/${TURMA}/${d.id}.jpg`);
-    expect(imagens.salvas.has(d.imagemPath!)).toBe(true);
+    expect(d.imagemPath).toBeUndefined();
+  });
+
+  it('com arquivo de imagem: 400 IMAGEM_REMOVIDA e nada é criado (033)', async () => {
+    const { service, denuncias, imagens } = montar();
+    const erro: unknown = await service
+      .criarDoAluno(aluno('a1'), { denunciadoAlunoId: 'a2', texto: 'x' }, jpeg)
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(BadRequestException);
+    expect((erro as BadRequestException).getResponse()).toMatchObject({
+      code: 'IMAGEM_REMOVIDA',
+    });
+    expect(denuncias.size).toBe(0);
+    expect(imagens.salvas.size).toBe(0);
   });
 
   it('exige tópico ou texto', async () => {
@@ -319,24 +448,6 @@ describe('DenunciaService — aluno denuncia', () => {
     ).rejects.toThrow(/aguardando/);
   });
 
-  it('recusa imagem que não é imagem ou é grande demais', async () => {
-    const { service } = montar();
-    await expect(
-      service.criarDoAluno(
-        aluno('a1'),
-        { denunciadoAlunoId: 'a2', texto: 'x' },
-        { ...jpeg, mimetype: 'text/plain' },
-      ),
-    ).rejects.toThrow(BadRequestException);
-    await expect(
-      service.criarDoAluno(
-        aluno('a1'),
-        { denunciadoAlunoId: 'a2', texto: 'x' },
-        { ...jpeg, size: 10 * 1024 * 1024 },
-      ),
-    ).rejects.toThrow(PayloadTooLargeException);
-  });
-
   it('minhas denúncias: só as do autor, com o nome do denunciado e sem pontos', async () => {
     const { service } = montar();
     await service.criarDoAluno(aluno('a1'), {
@@ -361,12 +472,16 @@ describe('DenunciaService — aluno denuncia', () => {
 describe('DenunciaService — professor resolve', () => {
   async function comDenuncia(opcoes?: { pontuacaoAtiva?: boolean }) {
     const ctx = montar(opcoes);
-    await ctx.service.criarDoAluno(
-      aluno('a1'),
-      { denunciadoAlunoId: 'a2', texto: 'celular' },
-      jpeg,
-    );
-    return { ...ctx, id: [...ctx.denuncias.keys()][0] };
+    await ctx.service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'celular',
+    });
+    const id = [...ctx.denuncias.keys()][0];
+    // Foto de legado (antes da 033): continua até a denúncia ser resolvida.
+    const path = `denuncias/${TURMA}/${id}.jpg`;
+    ctx.denuncias.get(id)!.imagemPath = path;
+    ctx.imagens.salvas.add(path);
+    return { ...ctx, id };
   }
 
   it('lista da turma com autor, denunciado e XP atual do denunciado', async () => {
@@ -477,5 +592,373 @@ describe('DenunciaService — professor resolve', () => {
     expect(await service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 2 });
     await service.invalidar(PROF, TURMA, id);
     expect(await service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 1 });
+  });
+});
+
+describe('DenunciaService — janela de denúncia (033)', () => {
+  it('turma sem o campo começa fechada: o aluno recebe 403 DENUNCIAS_FECHADAS', async () => {
+    const { service, turmas } = montar();
+    delete turmas[TURMA].denunciasAbertas;
+    delete turmas[TURMA].denunciaJanelaId;
+    expect((await service.opcoesAluno(aluno('a1'))).abertas).toBe(false);
+    const erro: unknown = await service
+      .criarDoAluno(aluno('a1'), { denunciadoAlunoId: 'a2', texto: 'x' })
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ForbiddenException);
+    expect((erro as ForbiddenException).getResponse()).toMatchObject({
+      code: 'DENUNCIAS_FECHADAS',
+    });
+  });
+
+  it('abrir cria uma janela, a denúncia guarda o janelaId e fechar registra o fim', async () => {
+    const { service, denuncias, janelas } = montar({ denunciasAbertas: false });
+    const aberta = await service.abrirJanela(PROF, TURMA);
+    expect(aberta.abertas).toBe(true);
+    expect(janelas.size).toBe(1);
+    const jid = [...janelas.keys()][0];
+    expect(janelas.get(jid)).toMatchObject({
+      turmaId: TURMA,
+      professorId: PROF,
+    });
+    expect(janelas.get(jid)!.fechadaEm).toBeUndefined();
+
+    expect((await service.opcoesAluno(aluno('a1'))).abertas).toBe(true);
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    expect([...denuncias.values()][0].janelaId).toBe(jid);
+
+    const fechada = await service.fecharJanela(PROF, TURMA);
+    expect(fechada.abertas).toBe(false);
+    expect(janelas.get(jid)!.fechadaEm).toEqual(expect.any(String));
+    await expect(
+      service.criarDoAluno(aluno('a3'), {
+        denunciadoAlunoId: 'a2',
+        texto: 'y',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('abrir já aberta e fechar já fechada não criam janela nova', async () => {
+    const { service, janelas } = montar({ denunciasAbertas: false });
+    await service.abrirJanela(PROF, TURMA);
+    await service.abrirJanela(PROF, TURMA);
+    expect(janelas.size).toBe(1);
+    await service.fecharJanela(PROF, TURMA);
+    const fim = [...janelas.values()][0].fechadaEm;
+    await service.fecharJanela(PROF, TURMA);
+    expect([...janelas.values()][0].fechadaEm).toBe(fim);
+  });
+
+  it('fechar não impede resolver as pendentes', async () => {
+    const { service, denuncias } = montar();
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    await service.fecharJanela(PROF, TURMA);
+    const id = [...denuncias.keys()][0];
+    await service.validar(PROF, TURMA, id, 100);
+    expect(denuncias.get(id)!.status).toBe('VALIDADA');
+  });
+
+  it('histórico de janelas: mais nova primeiro, com o estado atual; só o dono', async () => {
+    const { service } = montar({ denunciasAbertas: false });
+    await service.abrirJanela(PROF, TURMA);
+    await service.fecharJanela(PROF, TURMA);
+    await service.abrirJanela(PROF, TURMA);
+    const h = await service.janelas(PROF, TURMA);
+    expect(h.abertas).toBe(true);
+    expect(h.janelas).toHaveLength(2);
+    expect(h.janelas[0].fechadaEm).toBeUndefined();
+    expect(h.janelas[1].fechadaEm).toEqual(expect.any(String));
+    expect(h.janelaAtualId).toBe(h.janelas[0].id);
+    await expect(service.janelas('prof-2', TURMA)).rejects.toThrow(
+      NotFoundException,
+    );
+    await expect(service.abrirJanela('prof-2', TURMA)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('a lista do professor traz o janelaId de cada denúncia', async () => {
+    const { service } = montar();
+    await service.criarDoAluno(aluno('a1'), {
+      denunciadoAlunoId: 'a2',
+      texto: 'x',
+    });
+    expect((await service.listarDaTurma(PROF, TURMA))[0].janelaId).toBe('j0');
+  });
+});
+
+describe('DenunciaService — grupos (033)', () => {
+  /** Ana (a1), Caio (a3) e Duda (a4) denunciam Bruno (a2). */
+  async function tresContraBruno(opcoes?: { pontuacaoAtiva?: boolean }) {
+    const ctx = montar(opcoes);
+    ctx.alunos.a4 = new AlunoEntity({
+      id: 'a4',
+      turmaId: TURMA,
+      nome: 'Duda',
+      xpTotal: 0,
+    });
+    const celular = await ctx.service.criarTopico(PROF, {
+      titulo: 'Celular',
+      pontosSugeridos: 900,
+    });
+    const briga = await ctx.service.criarTopico(PROF, {
+      titulo: 'Briga',
+      pontosSugeridos: 300,
+    });
+    const ids: string[] = [];
+    for (const [autor, topicoId] of [
+      ['a1', celular.id],
+      ['a3', celular.id],
+      ['a4', briga.id],
+    ]) {
+      const { id } = await ctx.service.criarDoAluno(aluno(autor), {
+        denunciadoAlunoId: 'a2',
+        topicoId,
+      });
+      ids.push(id);
+      await new Promise((ok) => setTimeout(ok, 2));
+    }
+    return { ...ctx, ids, celular, briga };
+  }
+
+  it('sugere as pendentes avulsas com o mesmo denunciado e tópico', async () => {
+    const { service, ids, celular } = await tresContraBruno();
+    const { grupos, sugestoes } = await service.gruposDaTurma(PROF, TURMA);
+    expect(grupos).toEqual([]);
+    expect(sugestoes).toEqual([
+      expect.objectContaining({
+        denunciadoAlunoId: 'a2',
+        denunciadoNome: 'Bruno',
+        topicoId: celular.id,
+        topicoTitulo: 'Celular',
+        denunciaIds: [ids[0], ids[1]],
+      }),
+    ]);
+  });
+
+  it('agrupar marca as denúncias; a sugestão some; a lista traz o grupoId', async () => {
+    const { service, ids, denuncias } = await tresContraBruno();
+    const g = await service.criarGrupo(PROF, TURMA, [ids[1], ids[0]]);
+    expect(g.denunciaIds).toEqual([ids[0], ids[1]]);
+    expect(denuncias.get(ids[0])!.grupoId).toBe(g.id);
+    expect(denuncias.get(ids[1])!.grupoId).toBe(g.id);
+    const { grupos, sugestoes } = await service.gruposDaTurma(PROF, TURMA);
+    expect(sugestoes).toEqual([]);
+    expect(grupos[0]).toMatchObject({
+      id: g.id,
+      denunciadoNome: 'Bruno',
+      xpDenunciado: 500,
+      topicoTitulo: 'Celular',
+      pontosSugeridos: 900,
+      status: 'PENDENTE',
+    });
+    const lista = await service.listarDaTurma(PROF, TURMA);
+    expect(lista.find((d) => d.id === ids[0])!.grupoId).toBe(g.id);
+  });
+
+  it('associar uma de outro motivo avisa; desassociar até 1 desfaz o grupo', async () => {
+    const { service, ids, denuncias, grupos } = await tresContraBruno();
+    const g = await service.criarGrupo(PROF, TURMA, [ids[0], ids[1]]);
+    expect(await service.associarAoGrupo(PROF, TURMA, g.id, ids[2])).toEqual({
+      motivoDiferente: true,
+    });
+    expect(grupos.get(g.id)!.denunciaIds).toEqual(ids);
+    expect(denuncias.get(ids[2])!.grupoId).toBe(g.id);
+
+    expect(await service.desassociarDoGrupo(PROF, TURMA, g.id, ids[2])).toEqual(
+      { desfeito: false },
+    );
+    expect(denuncias.get(ids[2])!.grupoId).toBeNull();
+    expect(await service.desassociarDoGrupo(PROF, TURMA, g.id, ids[1])).toEqual(
+      { desfeito: true },
+    );
+    expect(grupos.has(g.id)).toBe(false);
+    expect(denuncias.get(ids[0])!.grupoId).toBeNull();
+    expect(denuncias.get(ids[1])!.grupoId).toBeNull();
+  });
+
+  it('recusa agrupar denunciado diferente, resolvida e de outra turma', async () => {
+    const { service, ids, alunos } = await tresContraBruno();
+    const outra = await service.criarDoAluno(aluno('a2'), {
+      denunciadoAlunoId: 'a3',
+      texto: 'x',
+    });
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], outra.id]),
+    ).rejects.toThrow(BadRequestException);
+    await service.invalidar(PROF, TURMA, ids[2]);
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], ids[2]]),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.criarGrupo(PROF, TURMA, [ids[0], 'nao-existe']),
+    ).rejects.toThrow(NotFoundException);
+    await expect(
+      service.criarGrupo('prof-2', TURMA, [ids[0], ids[1]]),
+    ).rejects.toThrow(NotFoundException);
+    expect(alunos.a2.xpTotal).toBe(500);
+  });
+
+  it('avulsa que está em grupo não é validada nem invalidada sozinha: 409', async () => {
+    const { service, ids } = await tresContraBruno();
+    await service.criarGrupo(PROF, TURMA, [ids[0], ids[1]]);
+    await expect(service.validar(PROF, TURMA, ids[0], 100)).rejects.toThrow(
+      ConflictException,
+    );
+    await expect(service.invalidar(PROF, TURMA, ids[0])).rejects.toThrow(
+      ConflictException,
+    );
+  });
+});
+
+describe('DenunciaService — validar e invalidar grupo (033)', () => {
+  /** Ana (a1, 5000 XP), Caio (a3) e Duda (a4) denunciam Bruno (a2, 500 XP). */
+  async function grupoDeTres(opcoes?: { pontuacaoAtiva?: boolean }) {
+    const ctx = montar(opcoes);
+    ctx.alunos.a4 = new AlunoEntity({
+      id: 'a4',
+      turmaId: TURMA,
+      nome: 'Duda',
+      xpTotal: 0,
+    });
+    ctx.alunos.a2.xpTotal = 5000;
+    const ids: string[] = [];
+    for (const autor of ['a1', 'a3', 'a4']) {
+      ids.push(
+        (
+          await ctx.service.criarDoAluno(aluno(autor), {
+            denunciadoAlunoId: 'a2',
+            texto: `vi o celular (${autor})`,
+          })
+        ).id,
+      );
+      await new Promise((ok) => setTimeout(ok, 2));
+    }
+    // a segunda denúncia tem foto de legado
+    const path = `denuncias/${TURMA}/${ids[1]}.jpg`;
+    ctx.denuncias.get(ids[1])!.imagemPath = path;
+    ctx.imagens.salvas.add(path);
+    const g = await ctx.service.criarGrupo(PROF, TURMA, ids);
+    return { ...ctx, ids, grupoId: g.id, path };
+  }
+
+  it('tira uma pontuação do denunciado e divide entre os autores (1000 → 334/333/333)', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids, xpLogs } =
+      await grupoDeTres();
+    const r = await service.validarGrupo(PROF, TURMA, grupoId, 1000);
+    expect(r.pontosTransferidos).toBe(1000);
+    expect(r.partes).toEqual([
+      { alunoId: 'a1', pontos: 334 },
+      { alunoId: 'a3', pontos: 333 },
+      { alunoId: 'a4', pontos: 333 },
+    ]);
+    expect(alunos.a2.xpTotal).toBe(4000);
+    expect(alunos.a1.xpTotal).toBe(5334);
+    expect(alunos.a3.xpTotal).toBe(333);
+    expect(alunos.a4.xpTotal).toBe(333);
+    expect(xpLogs.filter((l) => l.alunoId === 'a2')).toEqual([
+      { alunoId: 'a2', pontos: -1000, motivo: 'DENUNCIA' },
+    ]);
+    expect(grupos.get(grupoId)).toMatchObject({
+      status: 'VALIDADO',
+      pontos: 1000,
+      pontosTransferidos: 1000,
+    });
+    expect(ids.map((id) => denuncias.get(id)!.status)).toEqual([
+      'VALIDADA',
+      'VALIDADA',
+      'VALIDADA',
+    ]);
+    expect(ids.map((id) => denuncias.get(id)!.pontosTransferidos)).toEqual([
+      334, 333, 333,
+    ]);
+  });
+
+  it('o que sai é limitado ao XP do denunciado', async () => {
+    const { service, alunos, grupoId } = await grupoDeTres();
+    alunos.a2.xpTotal = 100;
+    const r = await service.validarGrupo(PROF, TURMA, grupoId, 9000);
+    expect(r.pontosTransferidos).toBe(100);
+    expect(alunos.a2.xpTotal).toBe(0);
+    expect(r.partes.map((p) => p.pontos)).toEqual([34, 33, 33]);
+  });
+
+  it('apaga a foto de legado ao validar e ao invalidar', async () => {
+    const a = await grupoDeTres();
+    await a.service.validarGrupo(PROF, TURMA, a.grupoId, 10);
+    expect(a.imagens.salvas.has(a.path)).toBe(false);
+    expect(a.denuncias.get(a.ids[1])!.imagemPath).toBeNull();
+
+    const b = await grupoDeTres();
+    await b.service.invalidarGrupo(PROF, TURMA, b.grupoId);
+    expect(b.imagens.salvas.has(b.path)).toBe(false);
+  });
+
+  it('invalidar invalida todas e não mexe no XP', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids, xpLogs } =
+      await grupoDeTres();
+    await service.invalidarGrupo(PROF, TURMA, grupoId);
+    expect(grupos.get(grupoId)!.status).toBe('INVALIDADO');
+    expect(ids.every((id) => denuncias.get(id)!.status === 'INVALIDADA')).toBe(
+      true,
+    );
+    expect(alunos.a2.xpTotal).toBe(5000);
+    expect(xpLogs).toEqual([]);
+  });
+
+  it('resolver o grupo duas vezes é 409 e não transfere de novo', async () => {
+    const { service, alunos, grupoId } = await grupoDeTres();
+    await service.validarGrupo(PROF, TURMA, grupoId, 300);
+    await expect(
+      service.validarGrupo(PROF, TURMA, grupoId, 300),
+    ).rejects.toThrow(ConflictException);
+    await expect(service.invalidarGrupo(PROF, TURMA, grupoId)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(alunos.a2.xpTotal).toBe(4700);
+  });
+
+  it('recusa acima de 10.000, grupo de outra turma e de outro professor', async () => {
+    const { service, grupoId } = await grupoDeTres();
+    await expect(
+      service.validarGrupo(PROF, TURMA, grupoId, 10001),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.validarGrupo(PROF, TURMA, 'nao-existe', 10),
+    ).rejects.toThrow(NotFoundException);
+    await expect(
+      service.validarGrupo('prof-2', TURMA, grupoId, 10),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('turma sem pontuação: valida o grupo sem mexer no XP', async () => {
+    const { service, alunos, denuncias, grupos, grupoId, ids } =
+      await grupoDeTres({ pontuacaoAtiva: false });
+    await service.validarGrupo(PROF, TURMA, grupoId, 600);
+    expect(alunos.a2.xpTotal).toBe(5000);
+    expect(grupos.get(grupoId)).toMatchObject({
+      status: 'VALIDADO',
+      pontosTransferidos: 0,
+    });
+    expect(ids.map((id) => denuncias.get(id)!.pontosTransferidos)).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
+  it('anonimato: o autor vê só a dele, sem grupo nem outros autores; o denunciado tem um só lançamento', async () => {
+    const { service, grupoId, xpLogs } = await grupoDeTres();
+    await service.validarGrupo(PROF, TURMA, grupoId, 900);
+    const minhas = await service.minhasDoAluno(aluno('a3'));
+    expect(minhas).toHaveLength(1);
+    expect(minhas[0]).not.toHaveProperty('grupoId');
+    expect(minhas[0]).not.toHaveProperty('autorAlunoId');
+    expect(JSON.stringify(minhas)).not.toMatch(/Ana|Duda/);
+    expect(await service.minhasDoAluno(aluno('a2'))).toEqual([]);
+    expect(xpLogs.filter((l) => l.alunoId === 'a2')).toHaveLength(1);
   });
 });

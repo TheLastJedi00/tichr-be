@@ -30,7 +30,7 @@ Padrão **Controller → Service → Repository**, com as regras de negócio nas
   - [Tichr Qlick (quiz em tempo real, CQRS)](#tichr-qlick-quiz-em-tempo-real-cqrs)
   - [Painel Administrativo e feedback](#painel-administrativo-backoffice-e-cupons)
 - [Log de pontuação e partida casual](#log-de-pontuação-e-partida-casual-spec-027-todos-os-jogos)
-- [Denúncia entre alunos](#denúncia-entre-alunos-spec-032)
+- [Denúncia entre alunos](#denúncia-entre-alunos-specs-032-e-033)
 - [Ociosidade nos jogos](#ociosidade-nos-jogos-spec-032-qlick-wor-e-isolateus)
 - [Tichr Wor (guerra de castelos)](#tichr-wor-guerra-de-castelos-pvp-em-tempo-real)
 - [Tichr Isolateus (dedução social)](#tichr-isolateus-dedução-social--defesa-pedagógica)
@@ -1090,18 +1090,24 @@ Isolateus `POST /<jogo>/matches/:id/vale-ranking`), body `{ valeRanking: boolean
 `XpService.creditarPartida`: placar e log saem normais. A penalidade de moderação do Wor
 continua debitando.
 
-## Denúncia entre alunos (spec 032)
+## Denúncia entre alunos (specs 032 e 033)
 
 Pelo portal (PIN), o aluno denuncia um colega da própria turma com um **tópico** criado pelo
-professor e/ou um texto, e pode anexar **uma foto**. O professor valida ou invalida. Mesmo gating
-do portal (`podeGamificar`, hoje só PhD; senão 403 `GAMIFICACAO_LOCKED`). Módulo `denuncia/`.
+professor e/ou um texto, **só com a janela de denúncia aberta** pelo professor. O professor valida
+ou invalida, sozinha ou **em grupo** (várias denúncias contra o mesmo aluno). Mesmo gating do
+portal (`podeGamificar`, hoje só PhD; senão 403 `GAMIFICACAO_LOCKED`). Módulo `denuncia/`.
 
 **Coleções** (fechadas ao cliente):
 
 | Coleção | Campos |
 |---|---|
 | `denuncia_topicos` | `professorId`, `titulo` (3–80), `pontosSugeridos` (0–10.000), `ativo` (remover arquiva: as denúncias antigas citam o tópico), `criadoEm` |
-| `denuncias` | `turmaId`, `professorId`, `autorAlunoId`, `denunciadoAlunoId`, `topicoId?`, `topicoTitulo?` (cópia), `texto?` (≤1000), `imagemPath?`, `status` (`PENDENTE`/`VALIDADA`/`INVALIDADA`), `criadaEm`, `resolvidaEm?`, `pontos?`, `pontosTransferidos?` |
+| `denuncias` | `turmaId`, `professorId`, `autorAlunoId`, `denunciadoAlunoId`, `topicoId?`, `topicoTitulo?` (cópia), `texto?` (≤1000), `janelaId?` (033), `grupoId?` (033; `null` ao sair do grupo), `imagemPath?` (só legado, anterior à 033), `status` (`PENDENTE`/`VALIDADA`/`INVALIDADA`), `criadaEm`, `resolvidaEm?`, `pontos?`, `pontosTransferidos?` (em grupo: a parte do autor) |
+| `denuncia_grupos` (033) | `turmaId`, `professorId`, `denunciadoAlunoId`, `topicoId?` (o da denúncia mais antiga com tópico), `denunciaIds` (ordem cronológica, ≥ 2), `status` (`PENDENTE`/`VALIDADO`/`INVALIDADO`), `criadoEm`, `resolvidoEm?`, `pontos?`, `pontosTransferidos?` (total que saiu) |
+| `denuncia_janelas` (033) | `turmaId`, `professorId`, `abertaEm`, `fechadaEm?` |
+
+Na `turma`: `denunciasAbertas?` (ausente = **fechada**) e `denunciaJanelaId?` (a janela aberta
+agora). Alternados só pelas rotas de abrir/fechar, nunca pelo PATCH da turma.
 
 **Endpoints — professor**
 
@@ -1110,27 +1116,47 @@ do portal (`podeGamificar`, hoje só PhD; senão 403 `GAMIFICACAO_LOCKED`). Mód
 | `GET`/`POST` | `/denuncias/topicos` | lista os ativos / cria `{ titulo, pontosSugeridos }` |
 | `PATCH` | `/denuncias/topicos/:id` | edita ou arquiva (`{ ativo: false }`) |
 | `GET` | `/denuncias/pendentes` | `{ [turmaId]: pendentes }` para os badges |
-| `GET` | `/turmas/:turmaId/denuncias?status=` | com nomes, XP atual do denunciado, pontos sugeridos e `temImagem` (o caminho não sai) |
-| `GET` | `/turmas/:turmaId/denuncias/:id/imagem` | `{ url }` assinada por 5 min |
-| `POST` | `/turmas/:turmaId/denuncias/:id/validar` | `{ pontos }` (0–10.000) → `{ pontosTransferidos }` |
-| `POST` | `/turmas/:turmaId/denuncias/:id/invalidar` | só arquiva |
+| `GET` | `/turmas/:turmaId/denuncias?status=` | com nomes, XP atual do denunciado, pontos sugeridos, `janelaId`, `grupoId` e `temImagem` (o caminho não sai) |
+| `GET` | `/turmas/:turmaId/denuncias/:id/imagem` | `{ url }` assinada por 5 min (só fotos de legado) |
+| `POST` | `/turmas/:turmaId/denuncias/:id/validar` | `{ pontos }` (0–10.000) → `{ pontosTransferidos }`; em grupo: 409 `DENUNCIA_EM_GRUPO` |
+| `POST` | `/turmas/:turmaId/denuncias/:id/invalidar` | só arquiva; em grupo: 409 `DENUNCIA_EM_GRUPO` |
+| `GET` | `/turmas/:turmaId/denuncias/grupos` | `{ grupos, sugestoes }`: sugestão = pendentes avulsas com o mesmo denunciado e tópico (≥ 2) |
+| `POST` | `/turmas/:turmaId/denuncias/grupos` | `{ denunciaIds }` (≥ 2, mesmo denunciado, pendentes, fora de grupo) |
+| `POST` | `/turmas/:turmaId/denuncias/grupos/:grupoId/associar` | `{ denunciaId }` → `{ motivoDiferente }` |
+| `POST` | `/turmas/:turmaId/denuncias/grupos/:grupoId/desassociar` | `{ denunciaId }` → `{ desfeito }` (o grupo com 1 se desfaz) |
+| `POST` | `/turmas/:turmaId/denuncias/grupos/:grupoId/validar` | `{ pontos }` → `{ pontosTransferidos, partes }` |
+| `POST` | `/turmas/:turmaId/denuncias/grupos/:grupoId/invalidar` | invalida todas as do grupo |
+| `POST` | `/turmas/:turmaId/denuncias/abrir` / `fechar` | janela de denúncia (idempotentes) |
+| `GET` | `/turmas/:turmaId/denuncias/janelas` | `{ abertas, janelaAtualId, janelas }` (mais nova primeiro) |
 
-**Endpoints — aluno** (`@Roles('STUDENT')`): `GET /aluno/denuncias/opcoes` (colegas sem o próprio
-aluno e tópicos sem a pontuação), `GET /aluno/denuncias` (as próprias, sem pontos), `POST
-/aluno/denuncias` multipart (`denunciadoAlunoId`, `topicoId?`, `texto?`, arquivo `imagem?`).
+**Endpoints — aluno** (`@Roles('STUDENT')`): `GET /aluno/denuncias/opcoes` (`abertas`, colegas
+sem o próprio aluno e tópicos sem a pontuação), `GET /aluno/denuncias` (as próprias, sem pontos
+nem grupo), `POST /aluno/denuncias` (`denunciadoAlunoId`, `topicoId?`, `texto?`).
 
 **Regras**
 
 - Exige tópico ou texto (400 `DENUNCIA_VAZIA`); recusa autodenúncia (`AUTODENUNCIA`), colega de
   outra turma (404), duplicada pendente contra o mesmo colega (`DENUNCIA_DUPLICADA`) e a 4ª
-  pendente do autor (`LIMITE_PENDENTES`). Imagem: `image/*`, até ~400KB (413).
-- **Transferência real:** validar move do denunciado para o autor `min(pontos, xpDoDenunciado)`
-  (`XpService.transferir`, uma transação com dois `xp_logs` de motivo `DENUNCIA`). A checagem de
-  pendente vai no mesmo commit: validar duas vezes → 409 `DENUNCIA_RESOLVIDA`.
+  pendente do autor (`LIMITE_PENDENTES`).
+- **Janela (033):** fechada, `POST /aluno/denuncias` responde 403 `DENUNCIAS_FECHADAS`. Fechar não
+  impede resolver as pendentes. A denúncia guarda o `janelaId` em que foi feita.
+- **Sem foto (033):** um arquivo no campo `imagem` (front antigo) responde 400 `IMAGEM_REMOVIDA`.
+  As pendentes com foto de antes continuam com a URL assinada até serem resolvidas.
+- **Transferência real:** validar uma avulsa move do denunciado para o autor
+  `min(pontos, xpDoDenunciado)` (`XpService.transferir`, uma transação com dois `xp_logs` de motivo
+  `DENUNCIA`). A checagem de pendente vai no mesmo commit: validar duas vezes → 409
+  `DENUNCIA_RESOLVIDA`.
+- **Grupo (033):** validar tira **uma** pontuação do denunciado (no máximo o XP dele) e divide
+  **igualmente** entre os autores, com a sobra 1 a 1 para os mais antigos (`dividirIgual`, em
+  `src/common/dividir.ts`; `XpService.transferirParaVarios`). Grupo, denúncias e XP no mesmo
+  commit; um `xp_log` de débito e um de crédito por autor com parte > 0. Se o grupo mudou entre a
+  leitura e o commit: 409 `GRUPO_ALTERADO`. Resolver de novo: 409 `GRUPO_RESOLVIDO`.
 - Turma com `pontuacaoAtiva` desligada: validar só registra (`pontosTransferidos: 0`).
-- **Anonimato:** o autor só chega ao professor. O denunciado vê no log apenas o débito.
-- **A foto não tem token público** (é de menor): fica em `denuncias/{turmaId}/{id}.jpg`, só sai por
-  URL assinada ao professor dono e é **apagada ao resolver** (validar ou invalidar).
+- **Anonimato:** o autor só chega ao professor. O denunciado vê no log apenas um débito (no grupo,
+  também um só), sem autores nem tamanho do grupo.
+- **Foto de legado:** sem token público (é de menor), em `denuncias/{turmaId}/{id}.jpg`, só sai
+  por URL assinada ao professor dono e é **apagada ao resolver** (validar ou invalidar, avulsa ou
+  em grupo).
 
 ## Ociosidade nos jogos (spec 032, Qlick, Wor e Isolateus)
 

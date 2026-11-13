@@ -76,6 +76,15 @@ export class TurmaEntity {
   /** Se a turma usa pontuacao/gamificacao (default true). */
   pontuacaoAtiva?: boolean;
 
+  /**
+   * Janela de denuncia (spec 033): o aluno so denuncia com ela aberta.
+   * Ausente = fechada. Alternada pelo professor, nunca pelo PATCH da turma.
+   */
+  denunciasAbertas?: boolean;
+
+  /** Janela aberta agora (`denuncia_janelas`); null quando fechada. */
+  denunciaJanelaId?: string | null;
+
   /** Nome livre da pontuacao exibido na UI (ex.: 'XP', 'Aura'). */
   nomePontuacao?: string;
 
@@ -211,7 +220,8 @@ export class TurmaEntity {
       return sessoes;
     }
 
-    const fim = dataFimLetivo ?? addDays(this.dataInicio, HORIZONTE_GRADE_FIXA_DIAS);
+    const fim =
+      dataFimLetivo ?? addDays(this.dataInicio, HORIZONTE_GRADE_FIXA_DIAS);
     while (cursor <= fim) {
       if (dias.has(dayOfWeek(cursor))) {
         const status: StatusSessao = excecoes.has(cursor)
