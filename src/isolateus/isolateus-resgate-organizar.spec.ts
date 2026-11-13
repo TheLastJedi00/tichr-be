@@ -104,6 +104,15 @@ describe('Isolateus — organizar o resgate (Task 16)', () => {
     expect(ctx.segredo.resgateNoite ?? null).toBeNull();
   });
 
+  it('só o resgate em disputa: o alerta não fala em reconstruir setor (034)', async () => {
+    const ctx = vila();
+    await ctx.service.organizarResgate('a2', 'p1');
+    await fecharNoite(ctx);
+    expect(ctx.partida.resgatePendente).toBe(true);
+    expect(ctx.partida.alerta?.texto).not.toMatch(/reconstruir/);
+    expect(ctx.partida.alerta).toEqual({ tipo: 'NEUTRA', texto: 'Questão do Comando Central.' });
+  });
+
   it('cancelado sem gente suficiente na Saúde', async () => {
     const ctx = vila({}, 0); // sem NPC: só o organizador na Saúde
     await ctx.service.organizarResgate('a2', 'p1');

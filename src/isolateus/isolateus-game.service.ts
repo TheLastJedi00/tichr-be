@@ -495,7 +495,10 @@ export class IsolateusGameService {
       // Pausada entre a leitura e a transação: o movimento não escapa.
       assertNaoPausada(p);
       if (p.status !== 'DESLOCAMENTO') {
-        throw new BadRequestException('A noite não está aberta.');
+        throw new BadRequestException({
+          code: 'FORA_DA_NOITE',
+          message: 'A noite não está aberta.',
+        });
       }
       const ultimosMover = this.limitarTroca(s, alunoId);
       const origem =
@@ -1450,7 +1453,9 @@ export class IsolateusGameService {
       return { tipo: 'INVASAO', texto: `ALERTA: ${ALERTA_INVASAO}` };
     }
     // Sem disputa (034 #48): o alerta é neutro e não dá pista nenhuma.
-    if (!this.haDisputaNaNoite(partida, segredo)) {
+    // Só o resgate em disputa (sem reparo): o alerta também é neutro — a linha
+    // "Resgate em jogo" da questão já conta à vila o que está valendo.
+    if (!this.haDisputaNaNoite(partida, segredo) || !partida.reparoSetorId) {
       return { tipo: 'NEUTRA', texto: 'Questão do Comando Central.' };
     }
     const setor = partida.setores.find((s) => s.id === partida.reparoSetorId);
