@@ -10,9 +10,12 @@ describe('Isolateus — revelação no ranking final', () => {
     ctx: ReturnType<typeof vilaComAmeacas>,
     suspeito: string,
     votantes: string[],
+    ultimaQuestao = true,
   ) {
     ctx.partida.status = 'QUARENTENA_VOTO';
     ctx.partida.quarentenaRodada = ctx.partida.rodada;
+    // A Quarentena da última questão: o veredito fecha a partida (034 #52).
+    if (ultimaQuestao) ctx.partida.questaoIndex = ctx.partida.totalRodadas;
     for (const a of votantes) {
       await ctx.service.votarSuspeito(a, 'p1', suspeito);
     }
@@ -29,7 +32,10 @@ describe('Isolateus — revelação no ranking final', () => {
     expect(ctx.partida.veredito?.lado).toBe('VILA');
     expect(papelDe(ctx, 'a1')).toBe('ALIEN');
     expect(papelDe(ctx, 'a2')).toBe('CONTAGIADO');
-    for (const a of ['a3', 'a4', 'a5']) expect(papelDe(ctx, a)).toBeUndefined();
+    // Prender a última Ameaça sorteou um infiltrado entre os aldeões (034 #53).
+    const papeis = ['a3', 'a4', 'a5'].map((a) => papelDe(ctx, a));
+    expect(papeis.filter((p) => p === 'INFILTRADO')).toHaveLength(1);
+    expect(papeis.filter((p) => p === undefined)).toHaveLength(2);
   });
 
   it('vitória da Ameaça também revela', async () => {
@@ -102,7 +108,7 @@ describe('Isolateus — revelação no ranking final', () => {
   it('antes do encerramento, nenhuma escrita pública leva nome real ou papel', async () => {
     const ctx = vilaComAmeacas({ reais: 5 });
     ctx.partida.habitantes.find((h) => h.id === 'h2')!.preso = true;
-    await prender(ctx, 'h3', ['a1', 'a3', 'a4', 'a5']); // inocente, segue o jogo
+    await prender(ctx, 'h3', ['a1', 'a3', 'a4', 'a5'], false); // inocente, segue o jogo
 
     expect(ctx.partida.status).not.toBe('ENCERRADO');
     const chamadas = (ctx.repo.commitPartida as jest.Mock).mock
