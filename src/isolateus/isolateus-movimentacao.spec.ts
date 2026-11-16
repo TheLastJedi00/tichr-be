@@ -67,6 +67,28 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
     expect(ctx.setorDe('h3')).toBe('seguranca');
   });
 
+  it('noite fechada entre a leitura e a transação: 400 com code FORA_DA_NOITE (034)', async () => {
+    // Sem `code`, a recusa subia o modal global de erro no celular.
+    const ctx = vilaComAmeacas();
+    type Fn = (p: unknown, s: unknown) => unknown;
+    const repo = ctx.repo as unknown as { transacao: jest.Mock };
+    const original = repo.transacao.getMockImplementation() as (
+      id: string,
+      fn: Fn,
+    ) => Promise<unknown>;
+    repo.transacao.mockImplementation((id: string, fn: Fn) =>
+      original(id, (p, s) => {
+        (p as { status: string }).status = 'QUESTAO_ATIVA';
+        return fn(p, s);
+      }),
+    );
+    const erro = await ctx.service
+      .mover('a3', 'p1', 'energia')
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(BadRequestException);
+    expect(codigo(erro)).toBe('FORA_DA_NOITE');
+  });
+
   it('trocar de destino substitui o aviso', async () => {
     const ctx = vilaComAmeacas();
     await ctx.service.mover('a3', 'p1', 'energia');

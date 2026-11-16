@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { convocarPelaNoite, vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §7: o professor dispara o Delírio Coletivo a qualquer momento (anti-
@@ -94,9 +94,9 @@ describe('Isolateus — Delírio Coletivo pelo professor (Task 13)', () => {
   });
 
   it('votos pendentes, convocador e bloqueio são remapeados', async () => {
-    const ctx = vila('RESULTADO_RODADA');
+    const ctx = vila('DESLOCAMENTO');
     ctx.partida.convocadorBloqueado = { habitanteId: 'h4', ateRodada: 2 };
-    await ctx.service.convocarQuarentena('p1', 'a3');
+    await convocarPelaNoite(ctx, 'a3');
     await ctx.service.pularFase('prof', 'p1'); // abre a votação
     await ctx.service.votarSuspeito('a2', 'p1', 'h4');
 

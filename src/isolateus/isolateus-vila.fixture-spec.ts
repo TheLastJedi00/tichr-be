@@ -226,3 +226,23 @@ export function vilaComAmeacas(
     penalizar,
   };
 }
+
+/** Abre a noite já contando (sem a espera do card de resultado, 034 #55). */
+export function noiteAberta(v: ReturnType<typeof vilaComAmeacas>) {
+  v.partida.status = 'DESLOCAMENTO';
+  v.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
+}
+
+/**
+ * Convoca a Quarentena pelo caminho REAL (034): à noite, o amanhecer a
+ * confirma, a questão do dia fecha e a reunião abre (debate).
+ */
+export async function convocarPelaNoite(
+  v: ReturnType<typeof vilaComAmeacas>,
+  alunoId: string,
+) {
+  noiteAberta(v);
+  await v.service.convocarQuarentena('p1', alunoId);
+  await v.service.pularFase('prof', 'p1'); // amanhecer → questão
+  await v.service.pularFase('prof', 'p1'); // fim da questão → reunião
+}

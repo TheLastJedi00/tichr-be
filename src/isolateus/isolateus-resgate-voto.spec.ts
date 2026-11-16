@@ -72,10 +72,11 @@ describe('Isolateus — a votação do resgate (Task 18)', () => {
       habitanteId: 'h5',
       nome: h5.nome,
     });
-    expect(ctx.partida.acontecimentos.at(-1)!.texto).toBe(
-      `${h5.nome} foi resgatado e voltou à vila.`,
-    );
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(
+      ctx.partida.acontecimentos.filter((e) => e.tipo === 'RESGATE').at(-1)!
+        .texto,
+    ).toBe(`${h5.nome} foi resgatado e voltou à vila.`);
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(ctx.partida.faseIniciadaEm).toBeTruthy();
   });
 
@@ -121,7 +122,7 @@ describe('Isolateus — a votação do resgate (Task 18)', () => {
     ).toISOString();
     await ctx.service.votarResgate('a2', 'p1', 'h5');
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 
   it('Ameaça presa resgatada volta livre — e a partida segue', async () => {
@@ -130,7 +131,7 @@ describe('Isolateus — a votação do resgate (Task 18)', () => {
     await ctx.service.votarResgate('a2', 'p1', 'h4');
     await ctx.service.votarResgate('a3', 'p1', 'h4');
     expect(habitante(ctx, 'h4')).toMatchObject({ vivo: true, preso: false });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     const painel = await ctx.service.painel('a4', 'p1');
     expect(painel.papel).toBe('AMEACA');
   });

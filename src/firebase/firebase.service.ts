@@ -60,6 +60,13 @@ export class FirebaseService implements OnModuleInit {
     return getAuth(this.app);
   }
 
+  /** Access token OAuth da service account (REST do Realtime Database). */
+  async accessToken(): Promise<string> {
+    const cred = this.app.options.credential;
+    if (!cred) throw new Error('Credencial do Firebase indisponivel.');
+    return (await cred.getAccessToken()).access_token;
+  }
+
   /** Bucket padrao do Storage (Admin SDK — ignora as storage.rules). */
   get bucket() {
     return getStorage(this.app).bucket(this.bucketName);

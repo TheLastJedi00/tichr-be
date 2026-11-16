@@ -1,5 +1,9 @@
 import { ForbiddenException } from '@nestjs/common';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import {
+  convocarPelaNoite,
+  noiteAberta,
+  vilaComAmeacas,
+} from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §2: quem convoca a Quarentena é público, a apuração conta só os
@@ -12,7 +16,7 @@ function vila(opts: { npcs?: number } = {}) {
   for (let i = 1; i <= 5; i++) posicoes[`h${i}`] = 'comunicacao';
   for (let i = 1; i <= (opts.npcs ?? 0); i++) posicoes[`n${i}`] = 'comunicacao';
   const v = vilaComAmeacas({
-    status: 'RESULTADO_RODADA',
+    status: 'DESLOCAMENTO',
     ameacas: ['a1'],
     npcs: opts.npcs ?? 0,
     posicoes,
@@ -27,7 +31,7 @@ async function votar(
   votos: Record<string, string>,
   convocador = 'a2',
 ) {
-  await v.service.convocarQuarentena('p1', convocador);
+  await convocarPelaNoite(v, convocador);
   await v.service.pularFase('prof', 'p1'); // debate → votação
   for (const [alunoId, suspeito] of Object.entries(votos)) {
     await v.service.votarSuspeito(alunoId, 'p1', suspeito);
@@ -47,7 +51,7 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     });
 
     v.partida.rodada = 2;
-    v.partida.status = 'RESULTADO_RODADA';
+    noiteAberta(v);
     const erro = await v.service
       .convocarQuarentena('p1', 'a3')
       .catch((e: unknown) => e);
@@ -61,8 +65,8 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     const v = vila();
     await votar(v, { a2: 'h5', a3: 'h5', a4: 'h5' }, 'a3');
     v.partida.rodada = 2;
-    v.partida.status = 'RESULTADO_RODADA';
-    await v.service.convocarQuarentena('p1', 'a2');
+    noiteAberta(v);
+    await convocarPelaNoite(v, 'a2');
     expect(v.partida.status).toBe('QUARENTENA_DEBATE');
   });
 
@@ -70,21 +74,21 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     const v = vila();
     await votar(v, { a2: 'h5', a3: 'h5', a4: 'h5' }, 'a3');
     v.partida.rodada = 3;
-    v.partida.status = 'RESULTADO_RODADA';
-    await v.service.convocarQuarentena('p1', 'a3');
+    noiteAberta(v);
+    await convocarPelaNoite(v, 'a3');
     expect(v.partida.status).toBe('QUARENTENA_DEBATE');
   });
 
   it('prender uma Ameaça não bloqueia ninguém', async () => {
     const v = vilaComAmeacas({
-      status: 'RESULTADO_RODADA',
+      status: 'DESLOCAMENTO',
       ameacas: ['a1', 'a2'], // sobra outra: a partida segue
       posicoes: Object.fromEntries(
         [1, 2, 3, 4, 5].map((i) => [`h${i}`, 'comunicacao']),
       ),
     });
     v.partida.rodada = 1;
-    await v.service.convocarQuarentena('p1', 'a3');
+    await convocarPelaNoite(v, 'a3');
     await v.service.pularFase('prof', 'p1');
     for (const a of ['a3', 'a4', 'a5']) {
       await v.service.votarSuspeito(a, 'p1', 'h1');

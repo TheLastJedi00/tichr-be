@@ -1,3 +1,4 @@
+import { ISOLATEUS } from './entities/isolateus-match.entity';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /**
@@ -15,9 +16,12 @@ function vila() {
   const ctx = vilaComAmeacas({
     status: 'QUESTAO_ATIVA',
     ameacas: ['a1'],
-    reais: 5,
+    reais: 6,
   });
+  // Dois fora da vila (h5 e h6): com UM só candidato o resgate volta sem
+  // votação (034 #68) — esse caso tem testes próprios abaixo.
   ctx.partida.habitantes.find((h) => h.id === 'h5')!.vivo = false;
+  ctx.partida.habitantes.find((h) => h.id === 'h6')!.vivo = false;
   ctx.partida.resgatePendente = true;
   return ctx;
 }
@@ -51,7 +55,7 @@ describe('Isolateus — a questão do resgate (Task 17)', () => {
   it('metade não é maioria: o resgate fracassa e ninguém volta', async () => {
     const ctx = vila();
     await responder(ctx, { a2: CERTA, a3: ERRADA });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(textos(ctx)).toContain('O resgate fracassou.');
     expect(ctx.partida.habitantes.find((h) => h.id === 'h5')!.vivo).toBe(false);
   });
@@ -60,14 +64,14 @@ describe('Isolateus — a questão do resgate (Task 17)', () => {
     // Com a Ameaça na conta seriam 2 de 3 certas; sem ela, 1 de 2.
     const ctx = vila();
     await responder(ctx, { a1: CERTA, a2: CERTA, a3: ERRADA });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(textos(ctx)).toContain('O resgate fracassou.');
   });
 
   it('ninguém respondeu: fracassa', async () => {
     const ctx = vila();
     await responder(ctx, {});
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(textos(ctx)).toContain('O resgate fracassou.');
   });
 
@@ -87,7 +91,45 @@ describe('Isolateus — a questão do resgate (Task 17)', () => {
     ctx.partida.reparoSetorId = 'energia';
     ctx.partida.setores.find((s) => s.id === 'energia')!.intacto = false;
     await responder(ctx, { a2: CERTA, a3: CERTA, a4: CERTA });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(textos(ctx)).not.toContain('O resgate fracassou.');
+  });
+
+  it('com UM só fora da vila, o resgate volta direto, sem votação (034 #68)', async () => {
+    const ctx = vila();
+    ctx.partida.habitantes.find((h) => h.id === 'h6')!.vivo = true; // só h5 fora
+    ctx.partida.esperanca = 50;
+    await responder(ctx, { a1: ERRADA, a2: CERTA, a3: CERTA, a4: ERRADA });
+
+    expect(ctx.partida.status).toBe('DESLOCAMENTO'); // nunca passou por RESGATE_VOTO
+    const h5 = ctx.partida.habitantes.find((h) => h.id === 'h5')!;
+    expect(h5).toMatchObject({ vivo: true, preso: false, setorId: 'saude' });
+    expect(ctx.partida.esperanca).toBe(50 + ISOLATEUS.BONUS_RESGATE);
+    expect(ctx.partida.resgateResultado).toMatchObject({
+      habitanteId: 'h5',
+      semVotacao: true,
+    });
+    expect(textos(ctx)).toContain(
+      `${h5.nome} era o único fora da vila e voltou sem votação.`,
+    );
+  });
+
+  it('o único resgatável é uma Ameaça presa: volta livre, papel secreto', async () => {
+    const ctx = vila();
+    ctx.partida.habitantes.find((h) => h.id === 'h6')!.vivo = true;
+    ctx.partida.habitantes.find((h) => h.id === 'h5')!.vivo = true;
+    ctx.partida.habitantes.find((h) => h.id === 'h1')!.preso = true; // a Ameaça
+    await responder(ctx, { a2: CERTA, a3: CERTA, a4: CERTA });
+    const h1 = ctx.partida.habitantes.find((h) => h.id === 'h1')!;
+    expect(h1).toMatchObject({ vivo: true, preso: false, setorId: 'saude' });
+    expect(ctx.segredo.ehAmeaca('a1')).toBe(true);
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+  });
+
+  it('com 2 fora da vila, abre a votação (e o resgate falho não resgata ninguém)', async () => {
+    const ctx = vila();
+    await responder(ctx, { a2: CERTA, a3: CERTA, a4: CERTA });
+    expect(ctx.partida.status).toBe('RESGATE_VOTO');
+    expect(ctx.partida.resgateResultado).toBeNull();
   });
 });

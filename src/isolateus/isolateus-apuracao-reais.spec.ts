@@ -1,4 +1,8 @@
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import {
+  convocarPelaNoite,
+  noiteAberta,
+  vilaComAmeacas,
+} from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §2: quem convoca a Quarentena é público, a apuração conta só os
@@ -11,7 +15,7 @@ function vila(opts: { npcs?: number } = {}) {
   for (let i = 1; i <= 5; i++) posicoes[`h${i}`] = 'comunicacao';
   for (let i = 1; i <= (opts.npcs ?? 0); i++) posicoes[`n${i}`] = 'comunicacao';
   const v = vilaComAmeacas({
-    status: 'RESULTADO_RODADA',
+    status: 'DESLOCAMENTO',
     ameacas: ['a1'],
     npcs: opts.npcs ?? 0,
     posicoes,
@@ -26,7 +30,7 @@ async function votar(
   votos: Record<string, string>,
   convocador = 'a2',
 ) {
-  await v.service.convocarQuarentena('p1', convocador);
+  await convocarPelaNoite(v, convocador);
   await v.service.pularFase('prof', 'p1'); // debate → votação
   for (const [alunoId, suspeito] of Object.entries(votos)) {
     await v.service.votarSuspeito(alunoId, 'p1', suspeito);

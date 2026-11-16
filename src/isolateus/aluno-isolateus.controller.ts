@@ -3,6 +3,7 @@ import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
 import { MoverDto } from './dto/mover.dto';
+import { PassoDto } from './dto/passo.dto';
 import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
   MensagemDto,
@@ -48,6 +49,22 @@ export class AlunoIsolateusController {
     @Param('id') id: string,
   ) {
     return this.game.painel(aluno.alunoId, id);
+  }
+
+  /** Toque no chão: o destino da caminhada, só visual (034). 1 por segundo. */
+  @Post(':id/passo')
+  passo(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: PassoDto,
+  ) {
+    return this.game.passo(aluno.alunoId, id, dto.alvoX);
+  }
+
+  /** Custom token do canal de posição do setor atual (034). */
+  @Get(':id/canal')
+  canal(@CurrentStudent() aluno: { alunoId: string }, @Param('id') id: string) {
+    return this.game.canal(aluno.alunoId, id);
   }
 
   /** O deslocamento da noite: anda um setor pelas estradas do mapa. */

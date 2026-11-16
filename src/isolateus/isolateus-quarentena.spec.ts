@@ -11,7 +11,7 @@ import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
 import { SETORES } from './isolateus.data';
 
-/** Vila em `RESULTADO_RODADA`, pronta para convocar a Quarentena. Alien = a1. */
+/** Vila pronta para a Quarentena (convocada à noite, 034). Alien = a1. */
 function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
@@ -37,12 +37,13 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
     professorId: 'prof',
     turmaId: 't1',
     nome: 'A Vila',
-    status: 'RESULTADO_RODADA',
+    status: 'DESLOCAMENTO',
     criadaEm: new Date().toISOString(),
     esperanca: ISOLATEUS.ESPERANCA_INICIAL,
     setores: SETORES.map((s) => ({ ...s, intacto: true })),
     habitantes,
     rodada: 0,
+    questaoIndex: 0,
     totalRodadas: 10,
     duracaoSegundos: 60,
     faseIniciadaEm: null,
@@ -106,7 +107,11 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const jogos = {
     findById: jest.fn(async () => ({
       id: 'j1',
-      questoes: [{ enunciado: 'Q', alternativas: ['a', 'b'], corretaIndex: 1 }],
+      questoes: Array.from({ length: 3 }, () => ({
+        enunciado: 'Q',
+        alternativas: ['a', 'b'],
+        corretaIndex: 1,
+      })),
     })),
   } as unknown as IsolateusJogoRepository;
 
@@ -121,10 +126,26 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   };
 }
 
+/**
+ * A Quarentena pelo caminho REAL (034): convoca à noite, o amanhecer a
+ * confirma, a questão do dia fecha e a reunião abre.
+ */
+async function reuniao(
+  service: IsolateusGameService,
+  partida: IsolateusMatchEntity,
+  aluno: string,
+) {
+  partida.status = 'DESLOCAMENTO';
+  partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
+  await service.convocarQuarentena('p1', aluno);
+  await service.pularFase('prof', 'p1'); // amanhecer → questão
+  await service.pularFase('prof', 'p1'); // fim da questão → reunião
+}
+
 describe('Isolateus — a Quarentena', () => {
   it('qualquer habitante real vivo convoca, e só entre as rodadas', async () => {
     const { service, partida } = cenario();
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
 
     expect(partida.status).toBe('QUARENTENA_DEBATE');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
@@ -138,7 +159,7 @@ describe('Isolateus — a Quarentena', () => {
     const { service, partida } = cenario({ reais: 3, npcs: 2 });
     partida.debateHabilitado = false;
     partida.votosRecebidos = 3; // resto de uma Quarentena anterior
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
 
     expect(partida.status).toBe('QUARENTENA_VOTO');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
@@ -151,8 +172,8 @@ describe('Isolateus — a Quarentena', () => {
 
   it('é uma por rodada — a vila não encadeia convocações na mesma rodada', async () => {
     const { service, partida } = cenario();
-    await service.convocarQuarentena('p1', 'a2');
-    partida.status = 'RESULTADO_RODADA'; // voltou de um veredito de inocente
+    await reuniao(service, partida, 'a2');
+    partida.status = 'DESLOCAMENTO'; // a noite voltou, na mesma rodada
 
     await expect(
       service.convocarQuarentena('p1', 'a3'),
@@ -161,11 +182,11 @@ describe('Isolateus — a Quarentena', () => {
 
   it('a opção volta na rodada seguinte — a Quarentena não é única por partida', async () => {
     const { service, partida } = cenario();
-    await service.convocarQuarentena('p1', 'a2');
-    partida.status = 'RESULTADO_RODADA';
+    await reuniao(service, partida, 'a2');
+    partida.status = 'DESLOCAMENTO';
     partida.rodada = 1; // a noite passou
 
-    await service.convocarQuarentena('p1', 'a3');
+    await reuniao(service, partida, 'a3');
     expect(partida.status).toBe('QUARENTENA_DEBATE');
     expect(partida.quarentenaRodada).toBe(1);
     expect(partida.vereditoQuarentena).toBeNull(); // nasce limpa
@@ -173,14 +194,14 @@ describe('Isolateus — a Quarentena', () => {
 
   it('os votos são por rodada: a Quarentena nova não reaproveita os votos da anterior', async () => {
     const { service, partida } = cenario({ reais: 4 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     partida.status = 'QUARENTENA_VOTO';
     await service.votarSuspeito('a2', 'p1', 'h3');
     expect(partida.votosRecebidos).toBe(1);
 
-    partida.status = 'RESULTADO_RODADA';
+    partida.status = 'DESLOCAMENTO';
     partida.rodada = 1;
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     expect(partida.votosRecebidos).toBe(0);
 
     // O mesmo aluno vota de novo: na rodada nova, o voto antigo não o trava.
@@ -199,7 +220,7 @@ describe('Isolateus — a Quarentena', () => {
       service.convocarQuarentena('p1', 'a4'),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     await expect(
       service.debater('a4', 'p1', 'foi o Real 1!'),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -207,7 +228,7 @@ describe('Isolateus — a Quarentena', () => {
 
   it('o debate publica o pseudônimo, nunca o nome real do aluno', async () => {
     const { service, partida } = cenario();
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     await service.debater('a2', 'p1', 'O Real 1 concordou com o rumor.');
 
     const minha = partida.debate.at(-1)!;
@@ -221,7 +242,7 @@ describe('Isolateus — a Quarentena', () => {
 
   it('pular o debate: só abre a votação quando TODOS os reais na vila pulam', async () => {
     const { service, partida } = cenario({ reais: 3, npcs: 2 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
 
     await service.pularDebate('a1', 'p1');
     expect(partida.pulosRecebidos).toBe(1);
@@ -237,7 +258,7 @@ describe('Isolateus — a Quarentena', () => {
 
   it('pular duas vezes não conta dobrado nem antecipa a votação', async () => {
     const { service, partida } = cenario({ reais: 2 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
 
     await service.pularDebate('a1', 'p1');
     await service.pularDebate('a1', 'p1');
@@ -248,7 +269,7 @@ describe('Isolateus — a Quarentena', () => {
   it('quem saiu da vila não conta para o pulo — a votação abre sem ele', async () => {
     const { service, partida } = cenario({ reais: 3 });
     partida.habitantes.find((h) => h.id === 'h3')!.vivo = false; // abduzido
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
 
     await expect(service.pularDebate('a3', 'p1')).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -262,7 +283,7 @@ describe('Isolateus — a Quarentena', () => {
 
   it('a contagem de pulos não denuncia quem pulou (a lista fica no cofre)', async () => {
     const { service, partida, segredo } = cenario({ reais: 2 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     await service.pularDebate('a1', 'p1');
 
     expect(partida.pulosRecebidos).toBe(1);
@@ -273,10 +294,10 @@ describe('Isolateus — a Quarentena', () => {
     expect(JSON.stringify(partida)).not.toContain('"a1"');
   });
 
-  it('a vila prende a Ameaça: partida encerrada com vitória da Vila', async () => {
-    const { service, partida, segredo, creditar } = cenario({ reais: 4 });
+  it('a vila prende a Ameaça: a partida NÃO acaba — nasce um novo infiltrado (034 #51)', async () => {
+    const { service, partida, segredo } = cenario({ reais: 4 });
     segredo.pontos = { a2: 500 };
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     partida.status = 'QUARENTENA_VOTO';
 
     // Todos votam no h1 (o Alien) — o avanço rápido apura no último voto.
@@ -285,13 +306,55 @@ describe('Isolateus — a Quarentena', () => {
     }
 
     expect(partida.vereditoQuarentena?.eraAmeaca).toBe(true);
+    expect(partida.habitantes.find((h) => h.id === 'h1')!.preso).toBe(true);
+    // A partida dura o banco de questões: segue para a noite seguinte.
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.veredito).toBeNull();
+    expect(partida.vereditoQuarentena?.texto).toContain(
+      'a invasão não acabou',
+    );
+    // Um novo infiltrado, no mesmo commit, entre os aldeões reais livres.
+    expect(segredo.infiltrados).toHaveLength(1);
+    const novo = segredo.infiltrados![0];
+    expect(['a2', 'a3', 'a4']).toContain(novo);
+    expect(segredo.ameacasIds()).toEqual(['a1', novo]);
+    // Quem foi preso continua sendo a original: o infiltrado não é "a original".
+    expect(segredo.alienAlunoId).toBe('a1');
+  });
+
+  it('prender a última Ameaça sem aldeão elegível: a partida segue sem Ameaça livre', async () => {
+    const { service, partida, segredo } = cenario({ reais: 2 });
+    partida.habitantes.find((h) => h.id === 'h2')!.vivo = false; // abduzido
+    await reuniao(service, partida, 'a1');
+    partida.status = 'QUARENTENA_VOTO';
+    await service.votarSuspeito('a1', 'p1', 'h1');
+
+    expect(segredo.infiltrados ?? []).toEqual([]);
+    expect(partida.status).toBe('DESLOCAMENTO');
+  });
+
+  it('a última questão fecha a partida: a Vila vence por resistência', async () => {
+    const { service, partida, segredo, creditar } = cenario({ reais: 4 });
+    partida.totalRodadas = 1;
+    segredo.pontos = { a2: 500 };
+    await reuniao(service, partida, 'a2');
+    partida.status = 'QUARENTENA_VOTO';
+    for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
+      await service.votarSuspeito(aluno, 'p1', 'h1');
+    }
+
     expect(partida.status).toBe('ENCERRADO');
     expect(partida.veredito?.lado).toBe('VILA');
-    expect(partida.veredito?.motivo).toContain('trancaram o Alienígena');
-
     // Vencer não dá bônus: o placar é só o dos acertos (spec 027 §2).
     const a2 = partida.rankingFinal.find((p) => p.alunoId === 'a2')!;
     expect(a2.pontos).toBe(500);
+    // A revelação traz o novo infiltrado (034 #53) ao lado da original.
+    expect(partida.rankingFinal.find((p) => p.alunoId === 'a1')?.papel).toBe(
+      'ALIEN',
+    );
+    expect(
+      partida.rankingFinal.filter((p) => p.papel === 'INFILTRADO'),
+    ).toHaveLength(1);
     expect(creditar).toHaveBeenCalledWith(
       't1',
       expect.anything(),
@@ -301,7 +364,7 @@ describe('Isolateus — a Quarentena', () => {
 
   it('a vila prende um inocente: -20 de Esperança e a identidade dele fica em segredo', async () => {
     const { service, partida } = cenario({ reais: 4 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     partida.status = 'QUARENTENA_VOTO';
 
     for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
@@ -311,50 +374,71 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.vereditoQuarentena?.eraAmeaca).toBe(false);
     expect(partida.habitantes.find((h) => h.id === 'h3')!.preso).toBe(true);
     expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_INOCENTE);
-    // O jogo continua e a Ameaça segue solta.
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    // O jogo continua e a Ameaça segue solta: é a noite seguinte.
+    expect(partida.status).toBe('DESLOCAMENTO');
     // O veredito não diz se o preso era NPC ou aluno real (§5).
     const texto = partida.vereditoQuarentena!.texto;
     expect(texto).toContain('INOCENTE');
     expect(texto).not.toMatch(/NPC|virtual|bot/i);
   });
 
-  it('prender inocente reabre a janela de decisão COM relógio: a noite cai sozinha', async () => {
-    // Regressão: o veredito de inocente voltava a RESULTADO_RODADA com
-    // faseIniciadaEm nulo — o relógio travava em 15s e só "Adiantar noite"
-    // destravava a partida.
+  it('o veredito vira o card da noite seguinte: ela espera 6s antes de contar (034 #55)', async () => {
     jest.useFakeTimers({ now: new Date('2026-09-29T12:00:00Z') });
     try {
       const { service, partida } = cenario({ reais: 4 });
-      await service.convocarQuarentena('p1', 'a2');
+      await reuniao(service, partida, 'a2');
       partida.status = 'QUARENTENA_VOTO';
       for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
         await service.votarSuspeito(aluno, 'p1', 'h3');
       }
-      expect(partida.status).toBe('RESULTADO_RODADA');
-      expect(partida.faseIniciadaEm).toBe('2026-09-29T12:00:00.000Z');
-
-      // Antes do prazo, cobrar não faz nada.
-      jest.setSystemTime(new Date('2026-09-29T12:00:05Z'));
-      await service.resolverPorTempo('p1', { alunoId: 'a2' });
-      expect(partida.status).toBe('RESULTADO_RODADA');
-
-      // Zerada a janela, qualquer tela cobra e a noite seguinte começa.
-      jest.setSystemTime(
-        new Date(Date.parse('2026-09-29T12:00:00Z') + ISOLATEUS.JANELA_DECISAO_MS),
-      );
-      await service.resolverPorTempo('p1', { alunoId: 'a2' });
       expect(partida.status).toBe('DESLOCAMENTO');
       expect(partida.rodada).toBe(1);
+      expect(partida.faseIniciadaEm).toBe(
+        new Date(
+          Date.parse('2026-09-29T12:00:00Z') + ISOLATEUS.JANELA_RESULTADO_MS,
+        ).toISOString(),
+      );
+      // O card do veredito fica para a vila ler enquanto a noite espera.
+      expect(partida.vereditoQuarentena?.presoNome).toBeTruthy();
+      expect(partida.resumoRodada).not.toBeNull();
+
+      // Antes da hora, as ações da noite recebem NOITE_NAO_COMECOU.
+      await expect(service.confirmarPosicao('a2', 'p1')).rejects.toMatchObject({
+        response: { code: 'NOITE_NAO_COMECOU' },
+      });
+      jest.setSystemTime(
+        new Date(
+          Date.parse('2026-09-29T12:00:00Z') + ISOLATEUS.JANELA_RESULTADO_MS,
+        ),
+      );
+      await expect(
+        service.confirmarPosicao('a2', 'p1'),
+      ).resolves.toBeDefined();
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('prender inocente com a Esperança no limite entrega a partida à Ameaça', async () => {
+  it('prender inocente com a Esperança no limite: colapso, não fim (034 #50)', async () => {
     const { service, partida } = cenario({ reais: 4 });
     partida.esperanca = ISOLATEUS.DANO_INOCENTE;
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
+    partida.status = 'QUARENTENA_VOTO';
+
+    for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
+      await service.votarSuspeito(aluno, 'p1', 'h3');
+    }
+
+    expect(partida.esperanca).toBe(0);
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.veredito).toBeNull();
+  });
+
+  it('Esperança em 0 na última questão: a Ameaça vence no fim', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.totalRodadas = 1;
+    partida.esperanca = ISOLATEUS.DANO_INOCENTE;
+    await reuniao(service, partida, 'a2');
     partida.status = 'QUARENTENA_VOTO';
 
     for (const aluno of ['a1', 'a2', 'a3', 'a4']) {
@@ -364,11 +448,12 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.esperanca).toBe(0);
     expect(partida.status).toBe('ENCERRADO');
     expect(partida.veredito?.lado).toBe('AMEACA');
+    expect(partida.veredito?.motivo).toContain('Esperança');
   });
 
   it('um voto por habitante — o segundo é ignorado', async () => {
     const { service, partida } = cenario({ reais: 4 });
-    await service.convocarQuarentena('p1', 'a2');
+    await reuniao(service, partida, 'a2');
     partida.status = 'QUARENTENA_VOTO';
 
     expect(await service.votarSuspeito('a2', 'p1', 'h3')).toEqual({

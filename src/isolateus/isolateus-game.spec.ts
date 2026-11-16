@@ -140,7 +140,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     const { service, partida } = cenario({ reais: 4 });
     await todosRespondem(service, 4, 1); // 'b' = correta
 
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('DESLOCAMENTO');
     expect(partida.resumoRodada?.defendida).toBe(true);
     expect(partida.resumoRodada?.texto).toContain('repelida');
     expect(partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(true);
@@ -271,7 +271,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     const { service, partida } = cenario({ reais: 5, npcs: 0 });
     await todosRespondem(service, 5, 1, { a4: 3, a5: 3 });
 
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('DESLOCAMENTO');
     expect(partida.resumoRodada?.defendida).toBe(true); // venceu a 'b'
     expect(partida.esperanca).toBe(100);
   });
@@ -285,7 +285,7 @@ describe('Isolateus — o Ciclo de Invasão', () => {
     await service.responder('a1', 'p1', 1);
     await service.responder('a2', 'p1', 1);
     await service.responder('a3', 'p1', 1);
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('DESLOCAMENTO');
     expect(segredo.pontos['a4']).toBeUndefined();
 
     // E ele segue pontuando na tela hackeada, fora da vila (§7).
@@ -383,10 +383,21 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
     expect(partida.veredito?.motivo).toContain('3 setores intactos');
   });
 
-  it('Esperança zerada encerra na hora com vitória da Ameaça', async () => {
+  it('Esperança zerada é colapso, não fim: a partida segue até a última questão (034 #50)', async () => {
     const { service, partida } = cenario({ reais: 4 });
     partida.esperanca = ISOLATEUS.DANO_ABDUCAO; // uma abducao basta para zerar
     await todosRespondem(service, 4, 3); // a turma erra e a vitima e levada
+
+    expect(partida.esperanca).toBe(0);
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.veredito).toBeNull();
+  });
+
+  it('Esperança zerada na última questão: a Ameaça vence no fim', async () => {
+    const { service, partida } = cenario({ reais: 4 });
+    partida.totalRodadas = 1;
+    partida.esperanca = ISOLATEUS.DANO_ABDUCAO;
+    await todosRespondem(service, 4, 3);
 
     expect(partida.esperanca).toBe(0);
     expect(partida.status).toBe('ENCERRADO');
@@ -480,7 +491,7 @@ describe('Isolateus — o Veredito por esgotamento (§8)', () => {
     const { service, partida } = cenario({ reais: 4, npcs: 3 });
     await todosRespondem(service, 4, 1);
 
-    expect(partida.status).toBe('RESULTADO_RODADA');
+    expect(partida.status).toBe('DESLOCAMENTO');
     expect(partida.rankingFinal).toEqual([]);
     expect(JSON.stringify(partida)).not.toContain('pontos');
   });

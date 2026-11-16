@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ISOLATEUS } from './entities/isolateus-match.entity';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { noiteAberta, vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /** Cada aluno responde a alternativa dada (a correta é a 1). */
 async function responder(
@@ -27,7 +27,7 @@ describe('Isolateus — o voto da Ameaça não defende a vila', () => {
     ];
     await responder(ctx, { a1: 0, a2: 1, a3: 1, a4: 0 });
 
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
     expect(ctx.partida.resumoRodada?.defendida).toBe(true);
     expect(ctx.partida.habitantes.find((h) => h.id === 'h3')!.vivo).toBe(true);
   });
@@ -45,7 +45,7 @@ describe('Isolateus — o voto da Ameaça não defende a vila', () => {
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
 
     await responder(ctx, { a1: 3 });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 
   it('ela responde e pontua pelo acerto como qualquer um', async () => {
@@ -62,8 +62,11 @@ describe('Isolateus — o voto da Ameaça não defende a vila', () => {
   });
 });
 
-describe('Isolateus — acertou, ganhou um poder', () => {
-  it('a Ameaça que acerta ganha um poder, tenha a vila acertado ou não', async () => {
+describe('Isolateus — a barra de energia alien (034 #57–#59)', () => {
+  const energia = (ctx: ReturnType<typeof vilaComAmeacas>, a: string) =>
+    ctx.segredo.energiaAlien?.[a] ?? 0;
+
+  it('+1 por acerto de Ameaça, tenha a vila acertado ou não', async () => {
     const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', reais: 4 });
     ctx.segredo.acoesRodada = [
       { alunoId: 'a1', acao: { tipo: 'ABDUZIR', alvoId: 'h3' } },
@@ -72,84 +75,140 @@ describe('Isolateus — acertou, ganhou um poder', () => {
     await responder(ctx, { a1: 1, a2: 3, a3: 3, a4: 3 });
 
     expect(ctx.partida.resumoRodada?.defendida).toBe(false);
-    expect(ctx.segredo.poderes).toEqual([{ alunoId: 'a1', ganhoNaRodada: 0 }]);
+    expect(energia(ctx, 'a1')).toBe(1);
+    expect(energia(ctx, 'a2')).toBe(0); // erro não enche
   });
 
-  it('as duas Ameaças acertando ganham um poder cada', async () => {
+  it('cada Ameaça tem a sua barra', async () => {
     const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', reais: 4 });
     await responder(ctx, { a1: 1, a2: 1, a3: 1, a4: 1 });
-    expect(ctx.segredo.poderes).toEqual([
-      { alunoId: 'a1', ganhoNaRodada: 0 },
-      { alunoId: 'a2', ganhoNaRodada: 0 },
-    ]);
+    expect(energia(ctx, 'a1')).toBe(1);
+    expect(energia(ctx, 'a2')).toBe(1);
   });
 
-  it('aldeão que acerta não ganha poder', async () => {
+  it('aldeão que acerta não enche barra nenhuma', async () => {
     const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', ameacas: ['a1'] });
     await responder(ctx, { a1: 3, a2: 1, a3: 1, a4: 1, a5: 1 });
-    expect(ctx.segredo.poderes ?? []).toEqual([]);
+    expect(ctx.segredo.energiaAlien?.a3).toBeUndefined();
+    expect(energia(ctx, 'a1')).toBe(0);
   });
 
-  it('um poder por acerto, sem acúmulo: o novo substitui o que sobrou', async () => {
+  it('a barra para quando cheia (a capacidade é 3)', async () => {
+    expect(ISOLATEUS.ENERGIA_PARA_PODER).toBe(3);
     const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', ameacas: ['a1'] });
-    ctx.partida.rodada = 3;
-    ctx.segredo.poderes = [{ alunoId: 'a1', ganhoNaRodada: 2 }];
+    ctx.segredo.energiaAlien = { a1: 3 };
     await responder(ctx, { a1: 1, a2: 1, a3: 1, a4: 1, a5: 1 });
-    expect(ctx.segredo.poderes).toEqual([{ alunoId: 'a1', ganhoNaRodada: 3 }]);
+    expect(energia(ctx, 'a1')).toBe(3);
+  });
+
+  it('conta também numa rodada SEM disputa (034 #48)', async () => {
+    const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', ameacas: ['a1'] });
+    expect(ctx.segredo.acoesDaNoite()).toEqual([]);
+    await responder(ctx, { a1: 1, a2: 1, a3: 1, a4: 1, a5: 1 });
+    expect(energia(ctx, 'a1')).toBe(1);
+  });
+
+  it('Ameaça PRESA que acerta também soma (o saldo fica para depois da fuga)', async () => {
+    const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', ameacas: ['a1'] });
+    ctx.partida.habitantes.find((h) => h.id === 'h1')!.preso = true;
+    await responder(ctx, { a1: 1, a2: 1, a3: 1, a4: 1, a5: 1 });
+    expect(energia(ctx, 'a1')).toBe(1);
+  });
+
+  it('um infiltrado novo começa com a barra zerada', async () => {
+    const ctx = vilaComAmeacas({ status: 'QUESTAO_ATIVA', ameacas: ['a1'] });
+    ctx.segredo.ameacas = ['a1', 'a3'];
+    ctx.segredo.infiltrados = ['a3'];
+    expect(energia(ctx, 'a3')).toBe(0);
+    const painel = await ctx.service.painel('a3', 'p1');
+    expect(painel.energia).toEqual({ atual: 0, necessario: 3 });
   });
 });
 
-describe('Isolateus — usar um poder', () => {
-  function comPoder(opts: Parameters<typeof vilaComAmeacas>[0] = {}) {
-    const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA', ...opts });
-    ctx.segredo.poderes = [
-      { alunoId: 'a1', ganhoNaRodada: 0 },
-      { alunoId: 'a2', ganhoNaRodada: 0 },
-    ];
-    // O Contágio carregado (028 §3): a recarga tem suíte própria.
-    ctx.segredo.acertosDesdeContagio = ISOLATEUS.ACERTOS_PARA_CONTAGIO;
+describe('Isolateus — usar um superpoder', () => {
+  /** Noite aberta; a1 (original) e a2 (contagiada) com a barra cheia. */
+  function comBarra(opts: Parameters<typeof vilaComAmeacas>[0] = {}) {
+    const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO', ...opts });
+    ctx.segredo.energiaAlien = {
+      a1: ISOLATEUS.ENERGIA_PARA_PODER,
+      a2: ISOLATEUS.ENERGIA_PARA_PODER,
+    };
+    noiteAberta(ctx);
     return ctx;
   }
 
   it('aldeão não usa poder', async () => {
-    const ctx = comPoder();
+    const ctx = comBarra();
     await expect(
       ctx.service.usarPoder('a3', 'p1', { poder: 'DELIRIO' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('sem poder disponível é recusado', async () => {
-    const ctx = comPoder();
-    ctx.segredo.poderes = [];
+  it('barra incompleta: 400 ENERGIA_INSUFICIENTE', async () => {
+    const ctx = comBarra();
+    ctx.segredo.energiaAlien = { a1: 2 };
     await expect(
       ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' }),
-    ).rejects.toMatchObject({ response: { code: 'SEM_PODER' } });
+    ).rejects.toMatchObject({ response: { code: 'ENERGIA_INSUFICIENTE' } });
   });
 
-  it('usar consome o poder e NÃO escreve nada no doc público', async () => {
-    const ctx = comPoder();
+  it('fora da noite: 400 FORA_DA_NOITE', async () => {
+    const ctx = comBarra();
+    ctx.partida.status = 'QUESTAO_ATIVA';
+    await expect(
+      ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' }),
+    ).rejects.toMatchObject({ response: { code: 'FORA_DA_NOITE' } });
+  });
+
+  it('antes de a noite começar (card): 400 NOITE_NAO_COMECOU', async () => {
+    const ctx = comBarra();
+    ctx.partida.faseIniciadaEm = new Date(Date.now() + 5000).toISOString();
+    await expect(
+      ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' }),
+    ).rejects.toMatchObject({ response: { code: 'NOITE_NAO_COMECOU' } });
+  });
+
+  it('Ameaça presa não escolhe poder (a invasão é o caminho dela)', async () => {
+    const ctx = comBarra();
+    ctx.partida.habitantes.find((h) => h.id === 'h1')!.preso = true;
+    await expect(
+      ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('usar zera a barra e NÃO escreve nada no doc público', async () => {
+    const ctx = comBarra();
     const antes = JSON.stringify(ctx.partida);
     await ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' });
 
     expect(JSON.stringify(ctx.partida)).toBe(antes);
-    expect(ctx.segredo.poderes).toEqual([{ alunoId: 'a2', ganhoNaRodada: 0 }]);
+    expect(ctx.segredo.energiaAlien).toEqual({ a1: 0, a2: 3 });
     expect(ctx.segredo.delirioPendente).toBe(true);
+    // Sem barra, não repete.
     await expect(
       ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' }),
-    ).rejects.toMatchObject({ response: { code: 'SEM_PODER' } });
+    ).rejects.toMatchObject({ response: { code: 'ENERGIA_INSUFICIENTE' } });
   });
 
-  it('só a Ameaça original contagia', async () => {
-    const ctx = comPoder();
+  it('só a Ameaça original contagia: a contagiada e o infiltrado recebem SO_ORIGINAL', async () => {
+    const ctx = comBarra();
     await expect(
       ctx.service.usarPoder('a2', 'p1', { poder: 'CONTAGIO' }),
     ).rejects.toMatchObject({ response: { code: 'SO_ORIGINAL' } });
+    // O infiltrado (034 #51) também não contagia.
+    ctx.segredo.ameacas = ['a1', 'a3'];
+    ctx.segredo.infiltrados = ['a3'];
+    ctx.segredo.energiaAlien = { a1: 3, a3: 3 };
+    await expect(
+      ctx.service.usarPoder('a3', 'p1', { poder: 'CONTAGIO' }),
+    ).rejects.toMatchObject({ response: { code: 'SO_ORIGINAL' } });
     await ctx.service.usarPoder('a1', 'p1', { poder: 'CONTAGIO' });
     expect(ctx.segredo.contagioPendente).toBe(true);
+    expect(ctx.segredo.energiaAlien?.a1).toBe(0);
   });
 
   it('Contágio sem aldeão real livre é recusado', async () => {
-    const ctx = comPoder({ reais: 3, npcs: 2 });
+    const ctx = comBarra({ reais: 3, npcs: 2 });
     ctx.partida.habitantes.find((h) => h.id === 'h3')!.vivo = false;
     await expect(
       ctx.service.usarPoder('a1', 'p1', { poder: 'CONTAGIO' }),
@@ -157,7 +216,7 @@ describe('Isolateus — usar um poder', () => {
   });
 
   it('Controle Mental exige um habitante na vila que não seja Ameaça', async () => {
-    const ctx = comPoder({ npcs: 2 });
+    const ctx = comBarra({ npcs: 2 });
     for (const alvoId of [undefined, 'h1', 'h2', 'xx']) {
       await expect(
         ctx.service.usarPoder('a1', 'p1', { poder: 'CONTROLE', alvoId }),
@@ -169,42 +228,41 @@ describe('Isolateus — usar um poder', () => {
       alvoId: 'n1',
     });
     expect(ctx.segredo.controles).toEqual([
-      { ameacaAlunoId: 'a1', habitanteId: 'n1', rodada: 1 },
+      { ameacaAlunoId: 'a1', habitanteId: 'n1', rodada: 0 },
     ]);
   });
 
-  it('Controle escolhido durante a noite vale para ESTA noite', async () => {
-    const ctx = comPoder({ status: 'DESLOCAMENTO' });
+  it('o Controle Mental vale a própria noite em que foi escolhido', async () => {
+    const ctx = comBarra();
     await ctx.service.usarPoder('a1', 'p1', {
       poder: 'CONTROLE',
       alvoId: 'h3',
     });
-    expect(ctx.segredo.controles?.[0].rodada).toBe(0);
+    expect(ctx.segredo.controles?.[0].rodada).toBe(ctx.partida.rodada);
   });
 
-  it('o poder não usado expira no fechamento da noite seguinte', async () => {
+  it('a barra cheia não expira: continua cheia na noite seguinte', async () => {
     const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO', reais: 5 });
-    ctx.partida.rodada = 1;
-    ctx.segredo.poderes = [{ alunoId: 'a1', ganhoNaRodada: 0 }];
-    for (const a of ['a3', 'a4', 'a5'])
+    ctx.segredo.energiaAlien = { a1: 3 };
+    noiteAberta(ctx);
+    for (const a of ['a3', 'a4', 'a5']) {
       await ctx.service.confirmarPosicao(a, 'p1');
+    }
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
 
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA'); // a noite fechou
-    expect(ctx.segredo.poderes).toEqual([]);
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA'); // a noite fechou
+    expect(ctx.segredo.energiaAlien?.a1).toBe(3);
   });
 });
 
 describe('Isolateus — o painel da Ameaça', () => {
-  it('mostra o poder disponível e o que ela pode escolher', async () => {
-    const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA' });
-    ctx.segredo.acertosDesdeContagio = ISOLATEUS.ACERTOS_PARA_CONTAGIO;
-    ctx.segredo.poderes = [
-      { alunoId: 'a1', ganhoNaRodada: 0 },
-      { alunoId: 'a2', ganhoNaRodada: 0 },
-    ];
-    expect((await ctx.service.painel('a1', 'p1')).poder).toEqual({
+  it('com a barra cheia mostra o que ela pode escolher', async () => {
+    const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO' });
+    ctx.segredo.energiaAlien = { a1: 3, a2: 3 };
+    const p1 = await ctx.service.painel('a1', 'p1');
+    expect(p1.energia).toEqual({ atual: 3, necessario: 3 });
+    expect(p1.poder).toEqual({
       CONTROLE: true,
       CONTAGIO: true,
       DELIRIO: true,
@@ -217,10 +275,21 @@ describe('Isolateus — o painel da Ameaça', () => {
     });
   });
 
-  it('sem poder, o campo vem nulo; aldeão nem recebe o campo', async () => {
-    const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA' });
-    expect((await ctx.service.painel('a1', 'p1')).poder).toBeNull();
-    expect(await ctx.service.painel('a3', 'p1')).not.toHaveProperty('poder');
+  it('barra incompleta: as opções vêm nulas e a barra mostra o saldo', async () => {
+    const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO' });
+    ctx.segredo.energiaAlien = { a1: 2 };
+    const painel = await ctx.service.painel('a1', 'p1');
+    expect(painel.poder).toBeNull();
+    expect(painel.energia).toEqual({ atual: 2, necessario: 3 });
+  });
+
+  it('aldeão não recebe energia, poder nem aliados', async () => {
+    const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO' });
+    ctx.segredo.energiaAlien = { a1: 3 };
+    const painel = await ctx.service.painel('a3', 'p1');
+    expect(painel).not.toHaveProperty('energia');
+    expect(painel).not.toHaveProperty('poder');
+    expect(painel).not.toHaveProperty('aliados');
   });
 
   it('lista as aliadas pelo codinome — e o aldeão não vê nada disso', async () => {
@@ -335,7 +404,7 @@ describe('Isolateus — Controle Mental', () => {
     }
     expect(ctx.partida.vereditoQuarentena?.eraAmeaca).toBe(false);
     expect(ctx.partida.esperanca).toBe(100 - ISOLATEUS.DANO_INOCENTE);
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
   });
 });
 
@@ -388,12 +457,13 @@ describe('Isolateus — Contágio', () => {
     );
   });
 
-  it('Esperança zerada pelo contágio entrega a partida à Ameaça', async () => {
+  it('Esperança zerada pelo contágio é colapso, não fim (034 #50)', async () => {
     const ctx = comContagio();
     ctx.partida.esperanca = ISOLATEUS.DANO_CONTAGIO;
     await fecharNoite(ctx);
-    expect(ctx.partida.status).toBe('ENCERRADO');
-    expect(ctx.partida.veredito?.lado).toBe('AMEACA');
+    expect(ctx.partida.esperanca).toBe(0);
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.partida.veredito).toBeNull();
   });
 
   it('original presa antes do amanhecer: o contágio não acontece', async () => {
@@ -410,8 +480,9 @@ describe('Isolateus — Contágio', () => {
     const ctx = comContagio();
     await fecharNoite(ctx);
     const contagiado = ctx.segredo.ameacasIds().find((a) => a !== 'a1')!;
-    await ctx.service.pularFase('prof', 'p1'); // janela de decisão → noite 2
+    await ctx.service.pularFase('prof', 'p1'); // fim da questão → noite 2
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    ctx.partida.faseIniciadaEm = new Date(Date.now() - 1000).toISOString();
 
     const aldeoes = ['a2', 'a3', 'a4', 'a5'].filter((a) => a !== contagiado);
     for (const a of aldeoes) await ctx.service.confirmarPosicao(a, 'p1');
@@ -419,7 +490,7 @@ describe('Isolateus — Contágio', () => {
     await ctx.service.confirmarPosicao(contagiado, 'p1');
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
     await ctx.service.acaoAmeaca(contagiado, 'p1', { tipo: 'AGUARDAR' });
-    expect(ctx.partida.status).toBe('RESULTADO_RODADA');
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
   });
 });
 

@@ -264,7 +264,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
   it('quem está fora da Comunicação não convoca', async () => {
     const { service } = mapa({
       posicoes: { h2: 'energia' },
-      status: 'RESULTADO_RODADA',
+      status: 'DESLOCAMENTO',
     });
     await expect(
       service.convocarQuarentena('p1', 'a2'),
@@ -272,18 +272,21 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
   });
 
   it('quem está na Comunicação convoca', async () => {
-    const { service, partida } = mapa({
+    const { service, partida, segredo } = mapa({
       posicoes: { h2: 'comunicacao' },
-      status: 'RESULTADO_RODADA',
+      status: 'DESLOCAMENTO',
     });
     await service.convocarQuarentena('p1', 'a2');
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    // Convocada à noite: fica no cofre até o amanhecer a confirmar (034 #41).
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.quarentenaConvocadaPor).toBeNull();
+    expect(segredo.quarentenaConvocadaNoite).toEqual({ habitanteId: 'h2' });
   });
 
   it('Comunicação em ruínas cala a vila — até ela reconstruir o rádio', async () => {
     const { service, partida } = mapa({
       posicoes: { h2: 'comunicacao' },
-      status: 'RESULTADO_RODADA',
+      status: 'DESLOCAMENTO',
       ruinas: ['comunicacao'],
     });
     await expect(
@@ -293,7 +296,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
     // Reconstruído, o rádio volta a funcionar.
     partida.setores.find((s) => s.id === 'comunicacao')!.intacto = true;
     await service.convocarQuarentena('p1', 'a2');
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    expect(partida.quarentenaConvocadaPor).toBeNull(); // sai no amanhecer
   });
 
   it('o professor não convoca: a Quarentena é da vila', async () => {
@@ -303,7 +306,7 @@ describe('Isolateus — a Quarentena sai da Comunicação', () => {
     // continua governando por "Adiantar noite".
     const { service } = mapa({
       posicoes: { h2: 'energia' },
-      status: 'RESULTADO_RODADA',
+      status: 'DESLOCAMENTO',
       ruinas: ['comunicacao'],
     });
     await expect(
