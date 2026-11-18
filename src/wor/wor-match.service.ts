@@ -252,7 +252,9 @@ export class WorMatchService {
       isHorde: false,
       pontos: 0,
     }));
-    await this.matches.atualizar(matchId, { ordemEquipes, placar });
+    // 035: o reino i do mapa pixel é da i-ª equipe; a Usurpação troca depois.
+    const reinos = Object.fromEntries(ordemEquipes.map((id, i) => [id, i]));
+    await this.matches.atualizar(matchId, { ordemEquipes, placar, reinos });
     return this.view(matchId);
   }
 

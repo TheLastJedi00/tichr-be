@@ -98,7 +98,10 @@ describe('Tichr Wor — partida (Fase 3)', () => {
       criados.forEach((c) => expect(c.membros).toHaveLength(2));
       expect(repo.atualizar).toHaveBeenCalledWith(
         'm1',
-        expect.objectContaining({ ordemEquipes: ['equipe-1', 'equipe-2'] }),
+        expect.objectContaining({
+          ordemEquipes: ['equipe-1', 'equipe-2'],
+          reinos: { 'equipe-1': 0, 'equipe-2': 1 },
+        }),
       );
     });
 

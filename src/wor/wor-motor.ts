@@ -28,6 +28,7 @@ import {
   VotoRodada,
   WOR,
   WorMatchEntity,
+  janelaAnimacao,
   WorRodadaPrivada,
 } from './entities/wor-match.entity';
 import { WorTeamEntity } from './entities/wor-team.entity';
@@ -67,6 +68,8 @@ export class MotorWor {
   } | null = null;
   /** O comando abriu uma rodada nova (fechou a anterior ou trocou a onda). */
   private novaRodada = false;
+  /** Este comando fechou uma rodada (035: a próxima espera a animação). */
+  private fechouRodada = false;
   /** Preenchido quando o comando encerra a partida. */
   creditoPendente: CreditoPendente | null = null;
 
@@ -454,6 +457,7 @@ export class MotorWor {
     for (const { team, res, aluno } of usurpadoras) {
       const lider = this.usurpar(team);
       res.arriscar!.alvoNome = lider?.nome;
+      if (lider) res.arriscar!.alvoEquipeId = lider.id;
       this.emitirCard(
         'USURPACAO',
         lider
@@ -527,9 +531,11 @@ export class MotorWor {
         seq: (this.match.resumoRodada?.seq ?? 0) + 1,
         resultados,
         porTempo: !!opcoes.porTempo,
+        quedas: quedas.map((t) => t.id),
       },
     });
     this.limparRodada();
+    this.fechouRodada = true;
 
     if (palavraAcertada || WorMatchEntity.estaCompleta(mascara)) {
       this.avancarOnda();
@@ -657,10 +663,15 @@ export class MotorWor {
     if (this.match.status === 'EM_ANDAMENTO') {
       const freeze = this.card ? WOR.FREEZE_MS : 0;
       if (this.novaRodada) {
-        // Com um card no ar, a rodada nova nasce 3s no FUTURO: o cronômetro do
-        // cliente só corre quando o card sai de cena.
+        // A rodada nova nasce no FUTURO: depois da animação do fechamento
+        // (035 §2) e de um card no ar, o que for maior. O cronômetro do
+        // cliente só corre quando os dois saem de cena.
+        const janela =
+          this.fechouRodada && this.match.resumoRodada
+            ? janelaAnimacao(this.match.resumoRodada)
+            : 0;
         this.match.rodadaIniciadaEm = new Date(
-          this.agora + freeze,
+          this.agora + Math.max(freeze, janela),
         ).toISOString();
       } else if (freeze && this.match.rodadaIniciadaEm) {
         // A rodada em curso ganha os 3s que o card rouba dela.
@@ -692,6 +703,17 @@ export class MotorWor {
   }
 
   private assertPodeAgir(team: WorTeamEntity, alunoId: string): void {
+    // A rodada nova nasce no futuro enquanto a animação do fechamento roda
+    // (035 §2) ou um Action Card está no ar.
+    const inicio = this.match.rodadaIniciadaEm
+      ? Date.parse(this.match.rodadaIniciadaEm)
+      : 0;
+    if (inicio > this.agora) {
+      throw new BadRequestException({
+        code: 'RODADA_NAO_COMECOU',
+        message: `A próxima rodada começa em ${Math.ceil((inicio - this.agora) / 1000)}s.`,
+      });
+    }
     if (this.match.jaAgiram.includes(alunoId)) {
       throw new BadRequestException('Você já jogou nesta rodada.');
     }
@@ -866,6 +888,15 @@ export class MotorWor {
     invasora.isHorde = false;
     lider.hp = 0;
     lider.isHorde = true;
+    // 035: a Horda toma o reino do líder no mapa; o líder fica com o dela.
+    const reinos = this.match.reinos;
+    if (reinos && invasora.id in reinos && lider.id in reinos) {
+      this.match.reinos = {
+        ...reinos,
+        [invasora.id]: reinos[lider.id],
+        [lider.id]: reinos[invasora.id],
+      };
+    }
     this.sujas.add(lider.id);
     return lider;
   }
