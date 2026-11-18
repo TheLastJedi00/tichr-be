@@ -561,3 +561,81 @@ describe('PartidaService — cronômetro de entrada (035)', () => {
     expect(partida.entradaEncerraEm).toBeNull();
   });
 });
+
+describe('PartidaService — início automático (035)', () => {
+  function make(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn(async () => partida),
+      findByTurma: jest.fn(async () => [partida]),
+      update: jest.fn(async (_id: string, d: Partial<PartidaEntity>) => {
+        Object.assign(partida, d);
+      }),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          partida.status === 'LOBBY' &&
+          !!partida.entradaEncerraEm &&
+          Date.parse(partida.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) partida.entradaEncerraEm = null;
+        return venceu;
+      }),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    return { repo, service };
+  }
+  const vencido = () => new Date(Date.now() - 1000).toISOString();
+
+  it('prazo vencido com inscritos: começa sozinha na pergunta 0', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('QUESTAO_ATIVA');
+    expect(partida.entradaEncerraEm).toBeNull();
+  });
+
+  it('prazo no futuro: não faz nada', async () => {
+    const fim = new Date(Date.now() + 60_000).toISOString();
+    const partida = partidaBase({ entradaEncerraEm: fim });
+    const { service, repo } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('LOBBY');
+    expect(repo.reivindicarEntrada).not.toHaveBeenCalled();
+  });
+
+  it('ninguém inscrito: desliga o cronômetro e avisa o professor', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido(), inscritos: [] });
+    const { service } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('LOBBY');
+    expect(partida.entradaEncerraEm).toBeNull();
+    expect(partida.entradaFalhou).toMatchObject({ inscritos: 0, minimo: 1 });
+  });
+
+  it('dois disparos juntos: começa uma vez só', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    const ativar = jest.spyOn(
+      service as unknown as { ativarPergunta: () => unknown },
+      'ativarPergunta',
+    );
+    await Promise.all([
+      service.iniciarAutomatico('pt1'),
+      service.iniciarAutomatico('pt1'),
+    ]);
+    expect(ativar).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    await expect(service.iniciarAutomatico('pt1', 'outro')).rejects.toThrow();
+    expect(partida.status).toBe('LOBBY');
+  });
+});

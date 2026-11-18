@@ -34,7 +34,15 @@ import {
   registrarFaltas,
 } from '../common/ociosidade';
 import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
-import { assertLobbyCronometro, prazoDaEntrada } from '../common/entrada';
+import {
+  assertLobbyCronometro,
+  falhaDeEntrada,
+  prazoDaEntrada,
+  prazoVencido,
+} from '../common/entrada';
+
+/** O Qlick começa com qualquer aluno inscrito. */
+const MINIMO_QLICK = 1;
 import {
   assertNaoPausada,
   assertPausavel,
@@ -338,6 +346,45 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    return this.comecar(partida);
+  }
+
+  /**
+   * Início pelo cronômetro de entrada (035): preguiçoso e idempotente. Só
+   * começa se a partida está no LOBBY com o prazo vencido e se este disparo
+   * ganhou a reivindicação (transação). Sem inscritos, desliga o cronômetro e
+   * deixa o aviso para o professor. Com `professorId` (rota do telão), confere
+   * o dono; sem ele, é a leitura do aluno.
+   */
+  async iniciarAutomatico(
+    partidaId: string,
+    professorId?: string,
+  ): Promise<PartidaEntity> {
+    const partida = professorId
+      ? await this.obterDoProfessor(professorId, partidaId)
+      : await this.partidaRepo.findById(partidaId);
+    if (!partida) throw new NotFoundException('Partida nao encontrada.');
+    const agora = Date.now();
+    if (
+      partida.status !== 'LOBBY' ||
+      !prazoVencido(partida.entradaEncerraEm, agora)
+    ) {
+      return partida;
+    }
+    if (!(await this.partidaRepo.reivindicarEntrada(partidaId, agora))) {
+      return (await this.partidaRepo.findById(partidaId)) ?? partida;
+    }
+    partida.entradaEncerraEm = null;
+    if (partida.inscritos.length < MINIMO_QLICK) {
+      const entradaFalhou = falhaDeEntrada(
+        partida.inscritos.length,
+        MINIMO_QLICK,
+        agora,
+      );
+      partida.entradaFalhou = entradaFalhou;
+      await this.partidaRepo.update(partidaId, { entradaFalhou });
+      return partida;
+    }
     return this.comecar(partida);
   }
 

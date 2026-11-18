@@ -280,3 +280,99 @@ describe('Tichr Wor — cronômetro de entrada (035)', () => {
     expect(match.entradaEncerraEm).toBeNull();
   });
 });
+
+describe('Tichr Wor — início automático (035)', () => {
+  function make(match: WorMatchEntity, teams: WorTeamEntity[] = []) {
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      atualizarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          Object.assign(
+            teams.find((t) => t.id === id)!,
+            d,
+          );
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          match.status === 'LOBBY' &&
+          !!match.entradaEncerraEm &&
+          Date.parse(match.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) match.entradaEncerraEm = null;
+        return venceu;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service, repo, teams };
+  }
+  const vencido = () => new Date(Date.now() - 1000).toISOString();
+  const lobby = (n: number) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      entradaEncerraEm: vencido(),
+      inscritos: Array.from({ length: n }, (_, i) => ({
+        alunoId: `a${i + 1}`,
+        nome: `A${i + 1}`,
+      })),
+    });
+
+  it('sem equipes: distribui e inicia no mesmo disparo', async () => {
+    const match = lobby(4);
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(teams).toHaveLength(2);
+    expect(match.status).toBe('EM_ANDAMENTO');
+  });
+
+  it('menos de 2 inscritos: desliga e grava o aviso', async () => {
+    const match = lobby(1);
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(teams).toHaveLength(0);
+    expect(match.status).toBe('LOBBY');
+    expect(match.entradaEncerraEm).toBeNull();
+    expect(match.entradaFalhou).toMatchObject({ inscritos: 1, minimo: 2 });
+  });
+
+  it('prazo no futuro: nada muda', async () => {
+    const match = lobby(4);
+    match.entradaEncerraEm = new Date(Date.now() + 60_000).toISOString();
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(match.status).toBe('LOBBY');
+    expect(teams).toHaveLength(0);
+  });
+
+  it('dois disparos juntos: distribui uma vez só', async () => {
+    const match = lobby(4);
+    const { service, teams } = make(match);
+    await Promise.all([
+      service.iniciarAutomatico('m1'),
+      service.iniciarAutomatico('m1'),
+    ]);
+    expect(teams).toHaveLength(2);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const match = lobby(4);
+    const { service } = make(match);
+    await expect(service.iniciarAutomatico('m1', 'outro')).rejects.toThrow();
+  });
+});

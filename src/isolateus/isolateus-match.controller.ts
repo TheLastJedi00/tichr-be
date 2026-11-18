@@ -91,6 +91,15 @@ export class IsolateusMatchController {
     );
   }
 
+  /** O telão dispara no zero do cronômetro; o servidor revalida o prazo. */
+  @Post('matches/:id/iniciar-automatico')
+  iniciarAutomatico(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+  ) {
+    return this.matches.iniciarAutomatico(id, professorId);
+  }
+
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */
   @Post('matches/:id/iniciar')
   iniciar(

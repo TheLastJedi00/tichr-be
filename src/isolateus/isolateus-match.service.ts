@@ -8,7 +8,12 @@ import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
 import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
-import { assertLobbyCronometro, prazoDaEntrada } from '../common/entrada';
+import {
+  assertLobbyCronometro,
+  falhaDeEntrada,
+  prazoDaEntrada,
+  prazoVencido,
+} from '../common/entrada';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -278,6 +283,45 @@ export class IsolateusMatchService {
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     return this.despertar(partida, opcoes);
+  }
+
+  /**
+   * Início pelo cronômetro de entrada (035): preguiçoso e idempotente. Só o
+   * disparo que ganha a reivindicação (transação) desperta a vila, com o debate
+   * escolhido no lobby. Abaixo do mínimo de reais, desliga o cronômetro e deixa
+   * o aviso. Com `professorId` (rota do telão), confere o dono.
+   */
+  async iniciarAutomatico(
+    partidaId: string,
+    professorId?: string,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = professorId
+      ? await this.obterDoProfessor(professorId, partidaId)
+      : await this.obter(partidaId);
+    const agora = Date.now();
+    if (
+      partida.status !== 'LOBBY' ||
+      !prazoVencido(partida.entradaEncerraEm, agora)
+    ) {
+      return partida;
+    }
+    if (!(await this.matches.reivindicarEntrada(partidaId, agora))) {
+      return this.obter(partidaId);
+    }
+    partida.entradaEncerraEm = null;
+    if (partida.inscritos.length < ISOLATEUS.MIN_REAIS) {
+      const entradaFalhou = falhaDeEntrada(
+        partida.inscritos.length,
+        ISOLATEUS.MIN_REAIS,
+        agora,
+      );
+      partida.entradaFalhou = entradaFalhou;
+      await this.matches.commitPartida(partidaId, { entradaFalhou });
+      return partida;
+    }
+    return this.despertar(partida, {
+      debateHabilitado: partida.debateHabilitado,
+    });
   }
 
   /** O Despertar em si, manual ou pelo cronômetro de entrada (035). */

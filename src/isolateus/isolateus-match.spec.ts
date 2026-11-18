@@ -439,3 +439,56 @@ describe('Isolateus — cronômetro de entrada (035)', () => {
     expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
   });
 });
+
+describe('Isolateus — início automático (035)', () => {
+  const vencer = (p: IsolateusMatchEntity) => {
+    p.entradaEncerraEm = new Date(Date.now() - 1000).toISOString();
+  };
+
+  it('prazo vencido com 4 reais: a vila desperta com o debate do lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 30, false);
+    vencer(partidas.get(p.id)!);
+    await service.iniciarAutomatico(p.id);
+    expect(partidas.get(p.id)!.status).toBe('DESLOCAMENTO');
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+  });
+
+  it('menos de 4 reais: o lobby continua com o aviso', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 3);
+    vencer(partidas.get(p.id)!);
+    await service.iniciarAutomatico(p.id);
+    const r = partidas.get(p.id)!;
+    expect(r.status).toBe('LOBBY');
+    expect(r.entradaEncerraEm).toBeNull();
+    expect(r.entradaFalhou).toMatchObject({ inscritos: 3, minimo: 4 });
+  });
+
+  it('dois disparos juntos: um Despertar só', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    vencer(partidas.get(p.id)!);
+    const commit = repo.commitPartida as jest.Mock;
+    const antes = commit.mock.calls.length;
+    await Promise.all([
+      service.iniciarAutomatico(p.id),
+      service.iniciarAutomatico(p.id),
+    ]);
+    expect(commit.mock.calls.length - antes).toBe(1);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    vencer(partidas.get(p.id)!);
+    await expect(
+      service.iniciarAutomatico(p.id, 'outro'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

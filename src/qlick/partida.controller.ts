@@ -86,6 +86,15 @@ export class PartidaController {
     return this.partidaService.definirCronometro(professorId, id, dto.segundos);
   }
 
+  /** O telão dispara no zero do cronômetro; o servidor revalida o prazo. */
+  @Post('partidas/:id/iniciar-automatico')
+  iniciarAutomatico(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+  ) {
+    return this.partidaService.iniciarAutomatico(id, professorId);
+  }
+
   @Post('partidas/:id/iniciar')
   iniciar(@ProfessorId() professorId: string, @Param('id') id: string) {
     return this.partidaService.iniciar(professorId, id);

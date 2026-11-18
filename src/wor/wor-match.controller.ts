@@ -88,6 +88,12 @@ export class WorMatchController {
     return this.service.definirCronometro(uid, id, dto.segundos);
   }
 
+  /** O telão dispara no zero do cronômetro; o servidor revalida o prazo. */
+  @Post('matches/:id/iniciar-automatico')
+  iniciarAutomatico(@ProfessorId() uid: string, @Param('id') id: string) {
+    return this.service.iniciarAutomatico(id, uid);
+  }
+
   @Post('matches/:id/iniciar')
   iniciar(@ProfessorId() uid: string, @Param('id') id: string) {
     return this.service.iniciar(uid, id);
