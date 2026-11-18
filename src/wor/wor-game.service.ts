@@ -132,6 +132,12 @@ export class WorGameService {
     return this.view(matchId);
   }
 
+  /** Horda: o membro abre mão da Invasão nesta rodada (conta como jogada). */
+  async naoArriscar(alunoId: string, matchId: string): Promise<MatchView> {
+    await this.executar(matchId, (m) => m.naoArriscar(alunoId));
+    return this.view(matchId);
+  }
+
   /**
    * Linguagem imprópria no chat: o castelo perde HP (no motor) e o aluno perde
    * XP no ranking da sala. Vale com a partida pausada: não é um comando de jogo.

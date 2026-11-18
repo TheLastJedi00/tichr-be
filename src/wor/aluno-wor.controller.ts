@@ -71,6 +71,15 @@ export class AlunoWorController {
     });
   }
 
+  /** Horda: abre mão da Invasão nesta rodada (não trava a partida). */
+  @Post(':matchId/nao-arriscar')
+  naoArriscar(
+    @CurrentStudent() { alunoId }: Student,
+    @Param('matchId') matchId: string,
+  ) {
+    return this.game.naoArriscar(alunoId, matchId);
+  }
+
   /** O que a equipe do aluno já jogou na rodada em curso (letras pendentes). */
   @Get(':matchId/rodada')
   rodada(
