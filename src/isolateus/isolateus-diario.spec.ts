@@ -20,11 +20,13 @@ const QUESTOES = Array.from({ length: 3 }, (_, i) => ({
   corretaIndex: 1,
 }));
 
-function cenario(opts: {
-  status?: IsolateusMatchEntity['status'];
-  posicoes?: Record<string, string>;
-  ruinas?: string[];
-} = {}) {
+function cenario(
+  opts: {
+    status?: IsolateusMatchEntity['status'];
+    posicoes?: Record<string, string>;
+    ruinas?: string[];
+  } = {},
+) {
   const pos = opts.posicoes ?? {};
   const ruinas = new Set(opts.ruinas ?? []);
 
@@ -109,6 +111,9 @@ function cenario(opts: {
     transacao: jest.fn(async (_id, fn) => {
       const r = fn(partida, segredo);
       if (!r) return null;
+      // A transação também grava: o encerramento passa por aqui.
+      const p = (r.publico ?? {}) as Partial<IsolateusMatchEntity>;
+      if (p.acontecimentos) diarioPersistido = p.acontecimentos;
       Object.assign(partida, r.publico ?? {});
       Object.assign(segredo, r.segredo ?? {});
       return { partida, segredo };
@@ -156,7 +161,8 @@ describe('Isolateus — o Diário da Vila', () => {
   it('a sabotagem entra no diário e diz qual setor caiu', async () => {
     const c = cenario({ posicoes: { h1: 'energia' } });
     await c.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
-    for (let i = 2; i <= 4; i++) await c.service.confirmarPosicao(`a${i}`, 'p1');
+    for (let i = 2; i <= 4; i++)
+      await c.service.confirmarPosicao(`a${i}`, 'p1');
 
     expect(c.tipos()).toContain('SABOTAGEM');
     expect(c.ultimo().texto).toContain('Setor de Energia');
@@ -195,7 +201,9 @@ describe('Isolateus — o Diário da Vila', () => {
     await c.service.declararReparo('a2', 'p1');
 
     const reparo = c.diario().find((a) => a.tipo === 'REPARO')!;
-    expect(reparo.texto).toBe('A vila mobilizou um reparo no Setor de Energia.');
+    expect(reparo.texto).toBe(
+      'A vila mobilizou um reparo no Setor de Energia.',
+    );
     expect(reparo.texto).not.toContain('Real 2');
   });
 
@@ -258,7 +266,7 @@ describe('Isolateus — o Diário da Vila', () => {
       { length: ISOLATEUS.MAX_ACONTECIMENTOS },
       (_, i) => ({
         id: `e${i}`,
-        tipo: 'NOITE' as TipoAcontecimento,
+        tipo: 'NOITE',
         texto: `antigo ${i}`,
         noite: 0,
         em: new Date().toISOString(),
@@ -267,9 +275,7 @@ describe('Isolateus — o Diário da Vila', () => {
     await c.service.convocarQuarentena('p1', 'a2');
     await c.service.pularFase('prof', 'p1'); // o amanhecer confirma
 
-    expect(c.diario()).toHaveLength(
-      ISOLATEUS.MAX_ACONTECIMENTOS,
-    );
+    expect(c.diario()).toHaveLength(ISOLATEUS.MAX_ACONTECIMENTOS);
     expect(c.ultimo().tipo).toBe('QUARENTENA');
     expect(c.diario()[0].texto).toBe('antigo 2'); // os mais velhos caíram (o amanhecer registra 2)
   });

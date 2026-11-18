@@ -2026,20 +2026,23 @@ export class IsolateusGameService {
     noite: number,
   ): Promise<void> {
     if (pontos <= 0) return;
-    const atual = segredo.pontos ?? {};
-    atual[alunoId] = (atual[alunoId] ?? 0) + pontos;
-    segredo.pontos = atual;
-    const log = segredo.logPontos ?? {};
-    log[alunoId] = [
-      ...(log[alunoId] ?? []),
-      itemAcerto(noite, 'Noite', pontos, ISOLATEUS.PONTOS_ACERTO),
-    ];
-    segredo.logPontos = log;
-    await this.matches.commitPartida(
-      segredo.partidaId,
-      {},
-      { pontos: atual, logPontos: log },
-    );
+    // Numa transação sobre o cofre FRESCO: a turma inteira responde ao mesmo
+    // tempo, e gravar o mapa lido no início do comando apagava o acerto de
+    // quem respondeu no meio do caminho.
+    let gravado: Pick<IsolateusSegredoEntity, 'pontos' | 'logPontos'> | null =
+      null;
+    await this.matches.transacao(segredo.partidaId, (_p, s) => {
+      const atual = { ...(s.pontos ?? {}) };
+      atual[alunoId] = (atual[alunoId] ?? 0) + pontos;
+      const log = { ...(s.logPontos ?? {}) };
+      log[alunoId] = [
+        ...(log[alunoId] ?? []),
+        itemAcerto(noite, 'Noite', pontos, ISOLATEUS.PONTOS_ACERTO),
+      ];
+      gravado = { pontos: atual, logPontos: log };
+      return { segredo: gravado };
+    });
+    if (gravado) Object.assign(segredo, gravado);
   }
 
   // ===== A Guerra de Frequências =====
@@ -3396,6 +3399,58 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
     veredito: { lado: 'VILA' | 'AMEACA'; motivo: string },
   ): Promise<IsolateusMatchEntity> {
+    const jogadores = await this.nomesReais(partida);
+    // O fechamento é REIVINDICADO numa transação: todo celular cobra o `/tempo`
+    // quando o relógio zera, e cada cobrança que lia a partida ainda aberta
+    // encerrava de novo — creditando o XP uma vez por celular. Só quem vira o
+    // status credita; o placar sai dos pontos do cofre no instante do fecho.
+    const ref: {
+      fecho: {
+        dados: Partial<IsolateusMatchEntity>;
+        pontos: Record<string, number>;
+        creditos: Array<{ alunoId: string; pontos: number }>;
+      } | null;
+    } = { fecho: null };
+    await this.matches.transacao(partida.id, (p, s) => {
+      if (p.status === 'ENCERRADO') return null;
+      const fecho = this.montarEncerramento(partida, s, veredito, jogadores);
+      ref.fecho = fecho;
+      return { publico: fecho.dados, segredo: { pontos: fecho.pontos } };
+    });
+    const fechado = ref.fecho;
+    if (!fechado) {
+      // Outra requisição fechou primeiro: devolve a partida como ela ficou.
+      return (await this.matches.buscar(partida.id)) ?? partida;
+    }
+
+    Object.assign(partida, fechado.dados);
+    segredo.pontos = fechado.pontos;
+    // As posições eram só visuais: não ficam guardadas depois da partida.
+    if (this.posicao) {
+      await this.semFalhar(() => this.posicao!.limpar(partida.id));
+    }
+
+    if (partida.turmaId && valeRanking(partida)) {
+      await this.xp.creditarPartida(
+        partida.turmaId,
+        fechado.creditos,
+        'ISOLATEUS',
+      );
+    }
+    return partida;
+  }
+
+  /**
+   * O que o encerramento grava (puro, roda dentro da transação). `partida` é a
+   * do comando — traz o diário e o mapa da última jogada —; `segredo` é o cofre
+   * fresco, com os pontos de todos os acertos já creditados.
+   */
+  private montarEncerramento(
+    partida: IsolateusMatchEntity,
+    segredo: IsolateusSegredoEntity,
+    veredito: { lado: 'VILA' | 'AMEACA'; motivo: string },
+    jogadores: Awaited<ReturnType<IsolateusGameService['nomesReais']>>,
+  ) {
     const pontos = { ...(segredo.pontos ?? {}) };
 
     const nomePorAluno = new Map(
@@ -3407,7 +3462,6 @@ export class IsolateusGameService {
             'Habitante',
         ]),
     );
-    const jogadores = await this.nomesReais(partida);
     const rankingFinal = [...nomePorAluno.keys()]
       .map((alunoId) => ({
         alunoId,
@@ -3451,18 +3505,7 @@ export class IsolateusGameService {
       faseIniciadaEm: null,
       acontecimentos: this.registrar(partida, 'FIM', veredito.motivo),
     };
-    Object.assign(partida, dados);
-    segredo.pontos = pontos;
-    await this.matches.commitPartida(partida.id, dados, { pontos });
-    // As posições eram só visuais: não ficam guardadas depois da partida.
-    if (this.posicao) {
-      await this.semFalhar(() => this.posicao!.limpar(partida.id));
-    }
-
-    if (partida.turmaId && valeRanking(partida)) {
-      await this.xp.creditarPartida(partida.turmaId, creditos, 'ISOLATEUS');
-    }
-    return partida;
+    return { dados, pontos, creditos };
   }
 
   /**
