@@ -82,7 +82,10 @@ describe('PartidaService — fluxo CQRS', () => {
 
   it('iniciar: rejeita sem inscritos', async () => {
     const partida = partidaBase({ inscritos: [] });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const service = new PartidaService(
       repo as never,
       qlickFake(),
@@ -99,7 +102,10 @@ describe('PartidaService — fluxo CQRS', () => {
 
   it('proxima: rejeita fora de RANKING_PARCIAL', async () => {
     const partida = partidaBase({ status: 'QUESTAO_ATIVA', perguntaAtual: 0 });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const service = new PartidaService(
       repo as never,
       qlickFake(),
@@ -148,7 +154,10 @@ describe('PartidaService — fluxo CQRS', () => {
       perguntaAtual: 0,
       perguntaIniciadaEm: new Date().toISOString(),
     });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const service = new PartidaService(
       repo as never,
       qlickFake(),
@@ -170,7 +179,10 @@ describe('PartidaService — fluxo CQRS', () => {
         { alunoId: 'a2', nome: 'Bia', pontos: 1500 },
       ],
     });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const xp = { creditarPartida: jest.fn() };
     const service = new PartidaService(
       repo as never,
@@ -198,7 +210,10 @@ describe('PartidaService — fluxo CQRS', () => {
       valeRanking: false,
       placar: [{ alunoId: 'a1', nome: 'Ana', pontos: 800 }],
     });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const xp = { creditarPartida: jest.fn() };
     const service = new PartidaService(
       repo as never,
@@ -260,15 +275,22 @@ describe('PartidaService — fluxo CQRS', () => {
       expect(ana.itens.map((i) => i.rodada)).toEqual([1, 2]);
       expect(bia.itens.map((i) => i.rodada)).toEqual([2]); // erro não gera item
       expect(bia.itens[0].fonte).toBe('ACERTO');
-      expect(bia.itens[0].descricao).toMatch(/^Pergunta 2: acertou \(\+1\.000\)/);
+      expect(bia.itens[0].descricao).toMatch(
+        /^Pergunta 2: acertou \(\+1\.000\)/,
+      );
 
       for (const l of log) {
         const soma = l.itens.reduce((s, i) => s + i.pontos, 0);
-        const ranking = partida.rankingFinal!.find((r) => r.alunoId === l.alunoId)!;
+        const ranking = partida.rankingFinal!.find(
+          (r) => r.alunoId === l.alunoId,
+        )!;
         expect(soma).toBe(l.totalPartida);
         expect(l.totalPartida).toBe(ranking.pontos);
         const creditado = (
-          xp.creditarPartida.mock.calls[0][1] as Array<{ alunoId: string; pontos: number }>
+          xp.creditarPartida.mock.calls[0][1] as Array<{
+            alunoId: string;
+            pontos: number;
+          }>
         ).find((c) => c.alunoId === l.alunoId)!.pontos;
         expect(l.creditoRanking).toBe(creditado);
       }
@@ -285,7 +307,9 @@ describe('PartidaService — fluxo CQRS', () => {
     it('sem turma: crédito zero', async () => {
       const { partida, service } = await partidaJogada({ turmaId: undefined });
       await service.encerrar('p1', 'pt1');
-      expect(partida.logPontuacao!.every((l) => l.creditoRanking === 0)).toBe(true);
+      expect(partida.logPontuacao!.every((l) => l.creditoRanking === 0)).toBe(
+        true,
+      );
     });
 
     it('encerrar no meio de uma pergunta ignora as respostas não apuradas, como o placar', async () => {
@@ -326,7 +350,12 @@ describe('PartidaService — fluxo CQRS', () => {
     const repo = {
       findByTurma: jest.fn().mockResolvedValue([
         partidaBase({ id: 'velha', status: 'ENCERRADO', criadaEm: agora }),
-        partidaBase({ id: 'nova', status: 'LOBBY', titulo: 'Quiz', criadaEm: agora }),
+        partidaBase({
+          id: 'nova',
+          status: 'LOBBY',
+          titulo: 'Quiz',
+          criadaEm: agora,
+        }),
       ]),
     };
     const service = new PartidaService(
@@ -345,8 +374,16 @@ describe('PartidaService — fluxo CQRS', () => {
   it('partidaDaTurma: ignora partidas encerradas ou antigas', async () => {
     const repo = {
       findByTurma: jest.fn().mockResolvedValue([
-        partidaBase({ id: 'enc', status: 'ENCERRADO', criadaEm: new Date().toISOString() }),
-        partidaBase({ id: 'antiga', status: 'LOBBY', criadaEm: '2020-01-01T00:00:00.000Z' }),
+        partidaBase({
+          id: 'enc',
+          status: 'ENCERRADO',
+          criadaEm: new Date().toISOString(),
+        }),
+        partidaBase({
+          id: 'antiga',
+          status: 'LOBBY',
+          criadaEm: '2020-01-01T00:00:00.000Z',
+        }),
       ]),
     };
     const service = new PartidaService(
@@ -363,7 +400,10 @@ describe('PartidaService — fluxo CQRS', () => {
 
   it('encerrar: rejeita partida já encerrada (evita creditar XP em dobro)', async () => {
     const partida = partidaBase({ status: 'ENCERRADO', placar: [] });
-    const repo = { findById: jest.fn().mockResolvedValue(partida), update: jest.fn() };
+    const repo = {
+      findById: jest.fn().mockResolvedValue(partida),
+      update: jest.fn(),
+    };
     const xp = { creditarPartida: jest.fn() };
     const service = new PartidaService(
       repo as never,
@@ -395,12 +435,16 @@ describe('PartidaService.criar — escolha de turma (N:N)', () => {
       professorId: 'p1',
       titulo: 'Q',
       duracaoSegundos: 20,
-      perguntas: [{ enunciado: 'P', alternativas: ['a', 'b'], corretaIndex: 0 }],
+      perguntas: [
+        { enunciado: 'P', alternativas: ['a', 'b'], corretaIndex: 0 },
+      ],
       turmaIds,
     });
 
   const montar = (qlick: QlickEntity, turma: unknown) => {
-    const partidaRepo = { create: jest.fn().mockImplementation(async (p) => p) };
+    const partidaRepo = {
+      create: jest.fn().mockImplementation(async (p) => p),
+    };
     const qlickRepo = { findById: jest.fn().mockResolvedValue(qlick) };
     const turmaRepo = { findById: jest.fn().mockResolvedValue(turma) };
     const service = new PartidaService(
@@ -441,5 +485,210 @@ describe('PartidaService.criar — escolha de turma (N:N)', () => {
     await expect(service.criar('p1', 'q1', 't1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+describe('PartidaService — cronômetro de entrada (035)', () => {
+  function make(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn(async () => partida),
+      findByTurma: jest.fn(async () => [partida]),
+      update: jest.fn(async (_id: string, d: Partial<PartidaEntity>) => {
+        Object.assign(partida, d);
+      }),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          partida.status === 'LOBBY' &&
+          !!partida.entradaEncerraEm &&
+          Date.parse(partida.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) partida.entradaEncerraEm = null;
+        return venceu;
+      }),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    return { repo, service };
+  }
+
+  it('liga o cronômetro (agora + segundos) e limpa o aviso de falha', async () => {
+    const partida = partidaBase({
+      entradaFalhou: {
+        motivo: 'POUCOS_INSCRITOS',
+        inscritos: 0,
+        minimo: 1,
+        em: 'x',
+      },
+    });
+    const { service } = make(partida);
+    const antes = Date.now();
+    await service.definirCronometro('p1', 'pt1', 60);
+    const fim = Date.parse(partida.entradaEncerraEm!);
+    expect(fim - antes).toBeGreaterThanOrEqual(59_000);
+    expect(fim - antes).toBeLessThanOrEqual(61_000);
+    expect(partida.entradaFalhou).toBeNull();
+  });
+
+  it('cancela com null', async () => {
+    const partida = partidaBase({ entradaEncerraEm: '2026-01-01T00:00:00Z' });
+    const { service } = make(partida);
+    await service.definirCronometro('p1', 'pt1', null);
+    expect(partida.entradaEncerraEm).toBeNull();
+  });
+
+  it('só no LOBBY e só do dono', async () => {
+    const { service } = make(partidaBase({ status: 'QUESTAO_ATIVA' }));
+    await expect(service.definirCronometro('p1', 'pt1', 60)).rejects.toThrow(
+      BadRequestException,
+    );
+    const { service: s2 } = make(partidaBase());
+    await expect(s2.definirCronometro('outro', 'pt1', 60)).rejects.toThrow();
+  });
+
+  it('o início manual zera o cronômetro', async () => {
+    const partida = partidaBase({
+      entradaEncerraEm: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const { service } = make(partida);
+    await service.iniciar('p1', 'pt1');
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+    expect(partida.entradaEncerraEm).toBeNull();
+  });
+});
+
+describe('PartidaService — início automático (035)', () => {
+  function make(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn(async () => partida),
+      findByTurma: jest.fn(async () => [partida]),
+      update: jest.fn(async (_id: string, d: Partial<PartidaEntity>) => {
+        Object.assign(partida, d);
+      }),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          partida.status === 'LOBBY' &&
+          !!partida.entradaEncerraEm &&
+          Date.parse(partida.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) partida.entradaEncerraEm = null;
+        return venceu;
+      }),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    return { repo, service };
+  }
+  const vencido = () => new Date(Date.now() - 1000).toISOString();
+
+  it('prazo vencido com inscritos: começa sozinha na pergunta 0', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('QUESTAO_ATIVA');
+    expect(partida.entradaEncerraEm).toBeNull();
+  });
+
+  it('prazo no futuro: não faz nada', async () => {
+    const fim = new Date(Date.now() + 60_000).toISOString();
+    const partida = partidaBase({ entradaEncerraEm: fim });
+    const { service, repo } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('LOBBY');
+    expect(repo.reivindicarEntrada).not.toHaveBeenCalled();
+  });
+
+  it('ninguém inscrito: desliga o cronômetro e avisa o professor', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido(), inscritos: [] });
+    const { service } = make(partida);
+    const r = await service.iniciarAutomatico('pt1');
+    expect(r.status).toBe('LOBBY');
+    expect(partida.entradaEncerraEm).toBeNull();
+    expect(partida.entradaFalhou).toMatchObject({ inscritos: 0, minimo: 1 });
+  });
+
+  it('dois disparos juntos: começa uma vez só', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    const ativar = jest.spyOn(
+      service as unknown as { ativarPergunta: () => unknown },
+      'ativarPergunta',
+    );
+    await Promise.all([
+      service.iniciarAutomatico('pt1'),
+      service.iniciarAutomatico('pt1'),
+    ]);
+    expect(ativar).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const partida = partidaBase({ entradaEncerraEm: vencido() });
+    const { service } = make(partida);
+    await expect(service.iniciarAutomatico('pt1', 'outro')).rejects.toThrow();
+    expect(partida.status).toBe('LOBBY');
+  });
+});
+
+describe('PartidaService — leitura do aluno (035 §1.2)', () => {
+  function make(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn(async () => partida),
+      findByTurma: jest.fn(async () => [partida]),
+      update: jest.fn(async (_id: string, d: Partial<PartidaEntity>) => {
+        Object.assign(partida, d);
+      }),
+      reivindicarEntrada: jest.fn(async () => {
+        partida.entradaEncerraEm = null;
+        return true;
+      }),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    return { repo, service };
+  }
+  const agora = () => new Date().toISOString();
+
+  it('no lobby: devolve o prazo e se o aluno está inscrito', async () => {
+    const fim = new Date(Date.now() + 60_000).toISOString();
+    const { service } = make(
+      partidaBase({ criadaEm: agora(), entradaEncerraEm: fim }),
+    );
+    expect(await service.partidaDaTurma('t1', 'a1')).toMatchObject({
+      status: 'LOBBY',
+      entradaEncerraEm: fim,
+      participa: true,
+    });
+    expect(await service.partidaDaTurma('t1', 'a9')).toMatchObject({
+      participa: false,
+    });
+  });
+
+  it('prazo vencido: a leitura do aluno inicia a partida', async () => {
+    const partida = partidaBase({
+      criadaEm: agora(),
+      entradaEncerraEm: new Date(Date.now() - 1000).toISOString(),
+    });
+    const { service } = make(partida);
+    const r = await service.partidaDaTurma('t1', 'a9');
+    expect(r).toMatchObject({ status: 'QUESTAO_ATIVA', participa: false });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
   });
 });

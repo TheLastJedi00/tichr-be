@@ -225,7 +225,8 @@ describe('Wor em paralelo — fechamento da rodada (029 §1.3)', () => {
     ]);
     expect(teams[0].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE);
     expect(teams[1].hp).toBe(WOR.HP_INICIAL - WOR.DANO_ATAQUE);
-    expect(match.rodadaIniciadaEm).toBe(new Date(agora).toISOString());
+    // 035: a rodada nova espera a animação (2 ataques: 2,5s + 2 × 1,2s).
+    expect(match.rodadaIniciadaEm).toBe(new Date(agora + 4900).toISOString());
   });
 
   it('por tempo: equipe sem nenhuma ação não age', async () => {
@@ -319,7 +320,7 @@ describe('Wor em paralelo — Risco Heroico e Invasão (029 §1.4)', () => {
     expect(rodada().acoes).toEqual([]);
   });
 
-  it('a onda nova nasce congelada pelo card (3s no futuro)', async () => {
+  it('a onda nova nasce depois do card e da animação (035: 3,7s no futuro)', async () => {
     jest
       .spyOn(Date, 'now')
       .mockReturnValue(Date.parse('2026-10-21T12:00:00.000Z'));
@@ -327,7 +328,8 @@ describe('Wor em paralelo — Risco Heroico e Invasão (029 §1.4)', () => {
     const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'arte');
     await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
-    expect(match.rodadaIniciadaEm).toBe('2026-10-21T12:00:03.000Z');
+    // A janela (2,5s + 1 arriscar × 1,2s) passa o card (3s).
+    expect(match.rodadaIniciadaEm).toBe('2026-10-21T12:00:03.700Z');
     jest.restoreAllMocks();
   });
 
@@ -457,7 +459,7 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
     expect(match.feedSeq).toBe(2);
   });
 
-  it('a queda congela: a rodada nova nasce 3s depois, e o card chega a todas as equipes', async () => {
+  it('a queda congela: a rodada nova espera a animação, e o card chega a todas as equipes', async () => {
     const teams = [
       equipe('e1', ['a1']),
       equipe('e2', ['b1'], { hp: 100 }),
@@ -472,7 +474,8 @@ describe('Wor em paralelo — feed e cards (029 §3, §4)', () => {
       seq: 1,
       mensagem: 'O castelo da e2 caiu! A e2 agora é uma Horda.',
     });
-    expect(match.rodadaIniciadaEm).toBe('2026-10-21T12:00:03.000Z');
+    // 035: ataque + queda = 2,5s + 2 × 1,2s (passa os 3s do card).
+    expect(match.rodadaIniciadaEm).toBe('2026-10-21T12:00:04.900Z');
     for (const t of teams) expect(t.lastGlobalAction?.seq).toBe(1);
   });
 

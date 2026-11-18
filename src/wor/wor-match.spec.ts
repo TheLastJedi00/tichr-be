@@ -98,7 +98,10 @@ describe('Tichr Wor — partida (Fase 3)', () => {
       criados.forEach((c) => expect(c.membros).toHaveLength(2));
       expect(repo.atualizar).toHaveBeenCalledWith(
         'm1',
-        expect.objectContaining({ ordemEquipes: ['equipe-1', 'equipe-2'] }),
+        expect.objectContaining({
+          ordemEquipes: ['equipe-1', 'equipe-2'],
+          reinos: { 'equipe-1': 0, 'equipe-2': 1 },
+        }),
       );
     });
 
@@ -201,5 +204,339 @@ describe('Tichr Wor — partida (Fase 3)', () => {
         BadRequestException,
       );
     });
+  });
+});
+
+describe('Tichr Wor — cronômetro de entrada (035)', () => {
+  function make(match: WorMatchEntity, teams: WorTeamEntity[] = []) {
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      atualizarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          Object.assign(
+            teams.find((t) => t.id === id)!,
+            d,
+          );
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          match.status === 'LOBBY' &&
+          !!match.entradaEncerraEm &&
+          Date.parse(match.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) match.entradaEncerraEm = null;
+        return venceu;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service, repo, teams };
+  }
+  const lobby = (n: number, over: Partial<WorMatchEntity> = {}) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      inscritos: Array.from({ length: n }, (_, i) => ({
+        alunoId: `a${i + 1}`,
+        nome: `A${i + 1}`,
+      })),
+      ...over,
+    });
+
+  it('liga e cancela o cronômetro só no lobby', async () => {
+    const match = lobby(2);
+    const { service } = make(match);
+    await service.definirCronometro('p1', 'm1', 120);
+    expect(Date.parse(match.entradaEncerraEm!)).toBeGreaterThan(Date.now());
+    await service.definirCronometro('p1', 'm1', null);
+    expect(match.entradaEncerraEm).toBeNull();
+
+    match.status = 'EM_ANDAMENTO';
+    await expect(service.definirCronometro('p1', 'm1', 60)).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('o início manual zera o cronômetro', async () => {
+    const match = lobby(4, {
+      entradaEncerraEm: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const { service } = make(match);
+    await service.distribuir('p1', 'm1');
+    await service.iniciar('p1', 'm1');
+    expect(match.status).toBe('EM_ANDAMENTO');
+    expect(match.entradaEncerraEm).toBeNull();
+  });
+});
+
+describe('Tichr Wor — início automático (035)', () => {
+  function make(match: WorMatchEntity, teams: WorTeamEntity[] = []) {
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      atualizarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          Object.assign(
+            teams.find((t) => t.id === id)!,
+            d,
+          );
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          match.status === 'LOBBY' &&
+          !!match.entradaEncerraEm &&
+          Date.parse(match.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) match.entradaEncerraEm = null;
+        return venceu;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service, repo, teams };
+  }
+  const vencido = () => new Date(Date.now() - 1000).toISOString();
+  const lobby = (n: number) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      entradaEncerraEm: vencido(),
+      inscritos: Array.from({ length: n }, (_, i) => ({
+        alunoId: `a${i + 1}`,
+        nome: `A${i + 1}`,
+      })),
+    });
+
+  it('sem equipes: distribui e inicia no mesmo disparo', async () => {
+    const match = lobby(4);
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(teams).toHaveLength(2);
+    expect(match.status).toBe('EM_ANDAMENTO');
+  });
+
+  it('menos de 2 inscritos: desliga e grava o aviso', async () => {
+    const match = lobby(1);
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(teams).toHaveLength(0);
+    expect(match.status).toBe('LOBBY');
+    expect(match.entradaEncerraEm).toBeNull();
+    expect(match.entradaFalhou).toMatchObject({ inscritos: 1, minimo: 2 });
+  });
+
+  it('prazo no futuro: nada muda', async () => {
+    const match = lobby(4);
+    match.entradaEncerraEm = new Date(Date.now() + 60_000).toISOString();
+    const { service, teams } = make(match);
+    await service.iniciarAutomatico('m1');
+    expect(match.status).toBe('LOBBY');
+    expect(teams).toHaveLength(0);
+  });
+
+  it('dois disparos juntos: distribui uma vez só', async () => {
+    const match = lobby(4);
+    const { service, teams } = make(match);
+    await Promise.all([
+      service.iniciarAutomatico('m1'),
+      service.iniciarAutomatico('m1'),
+    ]);
+    expect(teams).toHaveLength(2);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const match = lobby(4);
+    const { service } = make(match);
+    await expect(service.iniciarAutomatico('m1', 'outro')).rejects.toThrow();
+  });
+});
+
+describe('Tichr Wor — encaixe de quem entrou depois da distribuição (035 #6)', () => {
+  it('o início automático põe os tardios nas equipes menores', async () => {
+    const match = new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      entradaEncerraEm: new Date(Date.now() - 1000).toISOString(),
+      inscritos: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].map((alunoId) => ({
+        alunoId,
+        nome: alunoId.toUpperCase(),
+      })),
+    });
+    // Distribuído com 4 (2 duplas, uma delas com 1 só depois de alguém sair);
+    // a5 e a6 entraram depois.
+    const teams = [
+      new WorTeamEntity({
+        id: 'equipe-1',
+        membros: [
+          { alunoId: 'a1', nome: 'A1' },
+          { alunoId: 'a2', nome: 'A2' },
+        ],
+      }),
+      new WorTeamEntity({
+        id: 'equipe-2',
+        membros: [{ alunoId: 'a3', nome: 'A3' }],
+      }),
+    ];
+    const atualizarTeam = jest.fn(
+      async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+        Object.assign(
+          teams.find((t) => t.id === id)!,
+          d,
+        );
+      },
+    );
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(),
+      atualizarTeam,
+      reivindicarEntrada: jest.fn(async () => {
+        match.entradaEncerraEm = null;
+        return true;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+
+    await service.iniciarAutomatico('m1');
+
+    const todos = teams.flatMap((t) => t.membros.map((m) => m.alunoId));
+    expect(todos.sort()).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
+    // a4 completa a equipe-2 (menor); depois o empate leva a5 à 1ª e a6 à 2ª.
+    expect(teams.map((t) => t.membros.length)).toEqual([3, 3]);
+    expect(repo.criarTeam).not.toHaveBeenCalled();
+    expect(match.status).toBe('EM_ANDAMENTO');
+  });
+
+  it('sem tardios, não regrava equipe nenhuma', async () => {
+    const match = new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      status: 'LOBBY',
+      entradaEncerraEm: new Date(Date.now() - 1000).toISOString(),
+      inscritos: [
+        { alunoId: 'a1', nome: 'A1' },
+        { alunoId: 'a2', nome: 'A2' },
+      ],
+    });
+    const teams = [
+      new WorTeamEntity({ id: 'equipe-1', membros: [match.inscritos[0]] }),
+      new WorTeamEntity({ id: 'equipe-2', membros: [match.inscritos[1]] }),
+    ];
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      atualizarTeam: jest.fn(),
+      reivindicarEntrada: jest.fn(async () => true),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    await service.iniciarAutomatico('m1');
+    expect(repo.atualizarTeam).not.toHaveBeenCalled();
+    expect(match.status).toBe('EM_ANDAMENTO');
+  });
+});
+
+describe('Tichr Wor — leitura do aluno (035 §1.2)', () => {
+  function make(match: WorMatchEntity) {
+    const teams: WorTeamEntity[] = [];
+    const repo = {
+      ativaDaTurma: jest.fn(async () => match),
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        match.entradaEncerraEm = null;
+        return true;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service };
+  }
+  const lobby = (entradaEncerraEm: string) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      entradaEncerraEm,
+      inscritos: ['a1', 'a2', 'a3', 'a4'].map((alunoId) => ({
+        alunoId,
+        nome: alunoId,
+      })),
+    });
+
+  it('devolve participa pelo inscrito', async () => {
+    const { service } = make(
+      lobby(new Date(Date.now() + 60_000).toISOString()),
+    );
+    expect((await service.partidaDaTurma('t1', 'a2'))?.participa).toBe(true);
+    expect((await service.partidaDaTurma('t1', 'a9'))?.participa).toBe(false);
+  });
+
+  it('prazo vencido: a leitura do aluno distribui e inicia', async () => {
+    const match = lobby(new Date(Date.now() - 1000).toISOString());
+    const { service } = make(match);
+    const r = await service.partidaDaTurma('t1', 'a1');
+    expect(r?.match.status).toBe('EM_ANDAMENTO');
+    expect(r?.teams).toHaveLength(2);
+    expect(r?.participa).toBe(true);
   });
 });

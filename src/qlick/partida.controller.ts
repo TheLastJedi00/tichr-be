@@ -5,6 +5,7 @@ import {
   DescontarOciosidadeDto,
 } from '../common/ociosidade';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
+import { DefinirCronometroDto } from '../common/entrada';
 import { DefinirEmbaralhamentoDto } from './dto/embaralhamento.dto';
 import { PartidaService } from './partida.service';
 
@@ -73,6 +74,25 @@ export class PartidaController {
     @Body() dto: DefinirEmbaralhamentoDto,
   ) {
     return this.partidaService.definirEmbaralhamento(professorId, id, dto);
+  }
+
+  /** Lobby: cronômetro de entrada; no zero a partida começa sozinha (035). */
+  @Post('partidas/:id/cronometro')
+  cronometro(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirCronometroDto,
+  ) {
+    return this.partidaService.definirCronometro(professorId, id, dto.segundos);
+  }
+
+  /** O telão dispara no zero do cronômetro; o servidor revalida o prazo. */
+  @Post('partidas/:id/iniciar-automatico')
+  iniciarAutomatico(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+  ) {
+    return this.partidaService.iniciarAutomatico(id, professorId);
   }
 
   @Post('partidas/:id/iniciar')

@@ -50,6 +50,15 @@ function repoFake() {
       ...(rodizio.get(turmaId) ?? {}),
     })),
     ativaDaTurma: jest.fn(),
+    reivindicarEntrada: jest.fn(async (id: string) => {
+      const p = partidas.get(id)!;
+      const venceu =
+        p.status === 'LOBBY' &&
+        !!p.entradaEncerraEm &&
+        Date.parse(p.entradaEncerraEm) <= Date.now() + 1000;
+      if (venceu) p.entradaEncerraEm = null;
+      return venceu;
+    }),
   } as unknown as IsolateusMatchRepository;
 
   return { repo, partidas, segredos, rodizio };
@@ -219,7 +228,9 @@ describe('Isolateus — lobby e Despertar', () => {
     // 13 em 6 setores: nenhum setor fica vazio e a diferença nunca passa de 1.
     expect(porSetor.size).toBe(SETOR_IDS.length);
     const contagens = [...porSetor.values()];
-    expect(Math.max(...contagens) - Math.min(...contagens)).toBeLessThanOrEqual(1);
+    expect(Math.max(...contagens) - Math.min(...contagens)).toBeLessThanOrEqual(
+      1,
+    );
   });
 
   it('a distribuição é cega quanto a real × NPC', async () => {
@@ -307,7 +318,13 @@ describe('Isolateus — lobby e Despertar', () => {
     expect(json).not.toContain('"a1"');
     // Os habitantes têm id opaco e são indistinguíveis entre si.
     for (const h of publico.habitantes) {
-      expect(Object.keys(h).sort()).toEqual(['id', 'nome', 'preso', 'setorId', 'vivo']);
+      expect(Object.keys(h).sort()).toEqual([
+        'id',
+        'nome',
+        'preso',
+        'setorId',
+        'vivo',
+      ]);
       expect(h.id).toMatch(/^[0-9a-f-]{36}$/);
     }
   });
@@ -385,5 +402,125 @@ describe('Isolateus — rodízio da Ameaça por turma', () => {
     await ctx.service.iniciar('prof', p.id);
     const json = JSON.stringify(ctx.partidas.get(p.id));
     expect(json).not.toMatch(/rodizio|ameacas/);
+  });
+});
+
+describe('Isolateus — cronômetro de entrada (035)', () => {
+  it('liga, cancela e guarda o debate escolhido no lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await service.definirCronometro('prof', p.id, 30, false);
+    const fim = Date.parse(partidas.get(p.id)!.entradaEncerraEm!);
+    expect(fim).toBeGreaterThan(Date.now() + 25_000);
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+    await service.definirCronometro('prof', p.id, null);
+    expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
+  });
+
+  it('só no lobby e só do dono', async () => {
+    const { service } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await expect(
+      service.definirCronometro('outro', p.id, 30),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    await expect(
+      service.definirCronometro('prof', p.id, 30),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('o Despertar manual zera o cronômetro', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 300);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
+  });
+});
+
+describe('Isolateus — início automático (035)', () => {
+  const vencer = (p: IsolateusMatchEntity) => {
+    p.entradaEncerraEm = new Date(Date.now() - 1000).toISOString();
+  };
+
+  it('prazo vencido com 4 reais: a vila desperta com o debate do lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 30, false);
+    vencer(partidas.get(p.id)!);
+    await service.iniciarAutomatico(p.id);
+    expect(partidas.get(p.id)!.status).toBe('DESLOCAMENTO');
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+  });
+
+  it('menos de 4 reais: o lobby continua com o aviso', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 3);
+    vencer(partidas.get(p.id)!);
+    await service.iniciarAutomatico(p.id);
+    const r = partidas.get(p.id)!;
+    expect(r.status).toBe('LOBBY');
+    expect(r.entradaEncerraEm).toBeNull();
+    expect(r.entradaFalhou).toMatchObject({ inscritos: 3, minimo: 4 });
+  });
+
+  it('dois disparos juntos: um Despertar só', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    vencer(partidas.get(p.id)!);
+    const commit = repo.commitPartida as jest.Mock;
+    const antes = commit.mock.calls.length;
+    await Promise.all([
+      service.iniciarAutomatico(p.id),
+      service.iniciarAutomatico(p.id),
+    ]);
+    expect(commit.mock.calls.length - antes).toBe(1);
+  });
+
+  it('a rota do professor confere o dono', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    vencer(partidas.get(p.id)!);
+    await expect(
+      service.iniciarAutomatico(p.id, 'outro'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('Isolateus — leitura do aluno (035 §1.2)', () => {
+  it('no lobby: participa pelos inscritos', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 2);
+    (repo.ativaDaTurma as jest.Mock).mockImplementation(
+      async () => partidas.get(p.id) ?? null,
+    );
+    expect((await service.partidaDaTurma('t1', 'a1'))?.participa).toBe(true);
+    expect((await service.partidaDaTurma('t1', 'a9'))?.participa).toBe(false);
+  });
+
+  it('prazo vencido: a leitura desperta a vila; participa vem do cofre', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    partidas.get(p.id)!.entradaEncerraEm = new Date(
+      Date.now() - 1000,
+    ).toISOString();
+    (repo.ativaDaTurma as jest.Mock).mockImplementation(
+      async () => partidas.get(p.id) ?? null,
+    );
+
+    const r = await service.partidaDaTurma('t1', 'a9');
+    expect(r?.status).toBe('DESLOCAMENTO');
+    expect(r?.participa).toBe(false);
+    // O doc público já não tem os inscritos: o vínculo vem do cofre.
+    expect(partidas.get(p.id)!.inscritos).toEqual([]);
+    expect((await service.partidaDaTurma('t1', 'a3'))?.participa).toBe(true);
   });
 });

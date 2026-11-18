@@ -1,3 +1,4 @@
+import type { EntradaFalhou } from '../../common/entrada';
 import { LogPontuacaoJogador } from '../../common/log-pontuacao';
 
 /** Constantes do motor da invasão. Fonte única dos números do jogo. */
@@ -296,6 +297,10 @@ export class IsolateusMatchEntity {
    * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
    */
   valeRanking?: boolean;
+  /** Cronômetro de entrada do lobby (035): ISO do fim; null = sem cronômetro. */
+  entradaEncerraEm?: string | null;
+  /** O prazo venceu sem gente suficiente (035 #8): aviso no lobby. */
+  entradaFalhou?: EntradaFalhou | null;
 
   /** Barra de Esperança (0..100). */
   esperanca: number;

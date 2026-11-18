@@ -47,6 +47,7 @@ describe('Tichr Wor — palavra repetida no arsenal', () => {
     await service.chutarLetra('b1', 'm1', 'Q', 'DICA'); // fecha a rodada (032)
     expect(match.ondaIndex).toBe(1);
     expect(match.mascara).toEqual(['_', '_', '_']);
+    match.rodadaIniciadaEm = new Date(Date.now() - 1).toISOString(); // a animação (035) passou
 
     // A mesma resposta não vale de novo: vira erro (Dano Crítico), não Catapulta.
     await service.arriscar('b1', 'm1', 'arte');

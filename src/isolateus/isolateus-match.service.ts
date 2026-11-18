@@ -8,6 +8,12 @@ import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
 import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
+import {
+  assertLobbyCronometro,
+  falhaDeEntrada,
+  prazoDaEntrada,
+  prazoVencido,
+} from '../common/entrada';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -154,6 +160,29 @@ export class IsolateusMatchService {
     return partida;
   }
 
+  /**
+   * Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). O
+   * debate escolhido vai junto: o início pelo cronômetro pode vir de um aluno.
+   */
+  async definirCronometro(
+    professorId: string,
+    partidaId: string,
+    segundos: number | null,
+    debateHabilitado?: boolean,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyCronometro(partida.status);
+    const dados: Partial<IsolateusMatchEntity> = {
+      entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
+      entradaFalhou: null,
+    };
+    if (debateHabilitado !== undefined)
+      dados.debateHabilitado = debateHabilitado;
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partidaId, dados);
+    return partida;
+  }
+
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
   /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
   async definirLimiteOciosidade(
@@ -189,8 +218,36 @@ export class IsolateusMatchService {
   }
 
   /** Partida ativa da turma do aluno (janela de 12h). */
-  async partidaDaTurma(turmaId: string): Promise<IsolateusMatchEntity | null> {
-    return this.matches.ativaDaTurma(turmaId);
+  async partidaDaTurma(
+    turmaId: string,
+    alunoId?: string,
+  ): Promise<(IsolateusMatchEntity & { participa: boolean }) | null> {
+    let partida = await this.matches.ativaDaTurma(turmaId);
+    if (!partida) return null;
+    // Rede de segurança do cronômetro (035 #7).
+    if (prazoVencido(partida.entradaEncerraEm, Date.now())) {
+      partida = await this.iniciarAutomatico(partida.id);
+    }
+    return Object.assign(partida, {
+      participa: await this.participa(partida, alunoId),
+    });
+  }
+
+  /**
+   * O aluno está nesta partida? No lobby, pelos inscritos. Depois do
+   * Despertar, `inscritos` some do doc público (o vínculo mora no cofre): a
+   * resposta sai daqui só como booleano do próprio aluno (035 #15).
+   */
+  private async participa(
+    partida: IsolateusMatchEntity,
+    alunoId?: string,
+  ): Promise<boolean> {
+    if (!alunoId) return false;
+    if (partida.status === 'LOBBY') {
+      return partida.inscritos.some((i) => i.alunoId === alunoId);
+    }
+    const segredo = await this.matches.buscarSegredo(partida.id);
+    return !!segredo?.habitanteDe(alunoId);
   }
 
   /**
@@ -253,6 +310,54 @@ export class IsolateusMatchService {
     opcoes: { debateHabilitado?: boolean } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    return this.despertar(partida, opcoes);
+  }
+
+  /**
+   * Início pelo cronômetro de entrada (035): preguiçoso e idempotente. Só o
+   * disparo que ganha a reivindicação (transação) desperta a vila, com o debate
+   * escolhido no lobby. Abaixo do mínimo de reais, desliga o cronômetro e deixa
+   * o aviso. Com `professorId` (rota do telão), confere o dono.
+   */
+  async iniciarAutomatico(
+    partidaId: string,
+    professorId?: string,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = professorId
+      ? await this.obterDoProfessor(professorId, partidaId)
+      : await this.obter(partidaId);
+    const agora = Date.now();
+    if (
+      partida.status !== 'LOBBY' ||
+      !prazoVencido(partida.entradaEncerraEm, agora)
+    ) {
+      return partida;
+    }
+    if (!(await this.matches.reivindicarEntrada(partidaId, agora))) {
+      return this.obter(partidaId);
+    }
+    partida.entradaEncerraEm = null;
+    if (partida.inscritos.length < ISOLATEUS.MIN_REAIS) {
+      const entradaFalhou = falhaDeEntrada(
+        partida.inscritos.length,
+        ISOLATEUS.MIN_REAIS,
+        agora,
+      );
+      partida.entradaFalhou = entradaFalhou;
+      await this.matches.commitPartida(partidaId, { entradaFalhou });
+      return partida;
+    }
+    return this.despertar(partida, {
+      debateHabilitado: partida.debateHabilitado,
+    });
+  }
+
+  /** O Despertar em si, manual ou pelo cronômetro de entrada (035). */
+  private async despertar(
+    partida: IsolateusMatchEntity,
+    opcoes: { debateHabilitado?: boolean },
+  ): Promise<IsolateusMatchEntity> {
+    const partidaId = partida.id;
     if (partida.status !== 'LOBBY') {
       throw new BadRequestException('A investigação já começou.');
     }
@@ -334,6 +439,7 @@ export class IsolateusMatchService {
       cicloBrilho: ISOLATEUS.CICLO_BRILHO,
       brilho: null,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
+      entradaEncerraEm: null,
     };
     Object.assign(partida, dados);
     await this.matches.commitPartida(
