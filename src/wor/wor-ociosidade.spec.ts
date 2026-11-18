@@ -53,6 +53,17 @@ describe('Wor 032 — faltas por rodada', () => {
     expect(match.ociosidade).toEqual({ a2: 1 });
   });
 
+  it('na Horda, quem escolhe não arriscar jogou: sem falta', async () => {
+    const teams = [
+      equipe('e1', ['a1']),
+      equipe('h', ['h1', 'h2'], { hp: 0, isHorde: true }),
+    ];
+    const { service, match } = cenario(teams);
+    await service.naoArriscar('h1', 'm1');
+    await service.resolverPorTempo('p1', 'm1');
+    expect(match.ociosidade).toEqual({ a1: 1, h2: 1 });
+  });
+
   it('pular a palavra não conta falta', async () => {
     const teams = [equipe('e1', ['a1']), equipe('e2', ['b1'])];
     const { service, match } = cenario(teams);
@@ -89,6 +100,46 @@ describe('Wor 032 — rodada fecha cedo se só faltam ociosos', () => {
     await service.chutarLetra('a1', 'm1', 'Q', 'DICA');
     await service.chutarLetra('b1', 'm1', 'Z', 'DICA');
     expect(match.resumoRodada).toBeUndefined();
+  });
+});
+
+describe('Wor — a Horda pode não arriscar', () => {
+  const comHorda = () => [
+    equipe('e1', ['a1']),
+    equipe('h', ['h1', 'h2'], { hp: 0, isHorde: true }),
+  ];
+
+  it('a Horda inteira passando não trava a rodada', async () => {
+    const { service, match } = cenario(comHorda());
+    await service.chutarLetra('a1', 'm1', 'Q', 'DICA');
+    await service.naoArriscar('h1', 'm1');
+    expect(match.resumoRodada).toBeUndefined();
+    await service.naoArriscar('h2', 'm1');
+    expect(match.resumoRodada?.seq).toBe(1);
+    expect(match.ociosidade ?? {}).toEqual({});
+  });
+
+  it('passar não gasta o arriscar: o colega ainda pode tentar a Invasão', async () => {
+    const { service, match } = cenario(comHorda());
+    await service.naoArriscar('h1', 'm1');
+    const h = match.jaAgiram;
+    expect(h).toContain('h1');
+    await expect(service.arriscar('h2', 'm1', 'xyz')).resolves.toBeDefined();
+  });
+
+  it('quem já passou não age de novo na rodada', async () => {
+    const { service } = cenario(comHorda());
+    await service.naoArriscar('h1', 'm1');
+    await expect(service.arriscar('h1', 'm1', 'xyz')).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('só a Horda pode abrir mão: o castelo de pé chuta uma letra', async () => {
+    const { service } = cenario(comHorda());
+    await expect(service.naoArriscar('a1', 'm1')).rejects.toThrow(
+      BadRequestException,
+    );
   });
 });
 
