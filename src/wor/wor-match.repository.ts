@@ -1,3 +1,4 @@
+import { reivindicarEntrada } from '../common/entrada';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { FirebaseService } from '../firebase/firebase.service';
@@ -42,6 +43,11 @@ export class WorMatchRepository {
     const plain = { ...data };
     delete plain.id;
     return plain;
+  }
+
+  /** Quem ganha o início pelo cronômetro de entrada (035), em transação. */
+  reivindicarEntrada(id: string, agora: number): Promise<boolean> {
+    return reivindicarEntrada(this.firebase.firestore, this.col.doc(id), agora);
   }
 
   async criar(data: Omit<WorMatchEntity, 'id'>): Promise<WorMatchEntity> {

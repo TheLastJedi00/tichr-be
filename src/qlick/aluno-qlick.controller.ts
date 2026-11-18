@@ -12,8 +12,11 @@ export class AlunoQlickController {
 
   /** Qlick "de hoje" (só dentro da janela da aula). */
   @Get()
-  atual(@CurrentStudent() { turmaId }: { alunoId: string; turmaId: string }) {
-    return this.partidaService.partidaDaTurma(turmaId);
+  atual(
+    @CurrentStudent()
+    { alunoId, turmaId }: { alunoId: string; turmaId: string },
+  ) {
+    return this.partidaService.partidaDaTurma(turmaId, alunoId);
   }
 
   @Post(':partidaId/inscricao')
@@ -39,6 +42,10 @@ export class AlunoQlickController {
     @Param('partidaId') partidaId: string,
     @Body() dto: ResponderDto,
   ) {
-    return this.partidaService.responder(alunoId, partidaId, dto.alternativaIndex);
+    return this.partidaService.responder(
+      alunoId,
+      partidaId,
+      dto.alternativaIndex,
+    );
   }
 }

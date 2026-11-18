@@ -1214,6 +1214,37 @@ em `qlick_partidas`, `matches` e `isolateus_partidas`. Helper comum em `src/comm
   `carregarParaComando` (+ `WorChatService.enviar`); Isolateus no `carregarParaComando` de
   toda rota de comando e dentro das transações do `mover` e do pulso.
 
+## Cronômetro de entrada (spec 035, todos os jogos)
+
+O professor liga um cronômetro no lobby; quando ele zera, a partida começa sozinha com quem
+entrou. Helper comum em `src/common/entrada.ts`. Campos públicos novos em `qlick_partidas`,
+`matches` e `isolateus_partidas`:
+
+- `entradaEncerraEm: string | null` (ISO do fim; ausente/`null` = sem cronômetro);
+- `entradaFalhou: { motivo: 'POUCOS_INSCRITOS', inscritos, minimo, em } | null` (o prazo venceu
+  sem gente suficiente).
+
+| Jogo | Ligar/cancelar | Início automático (telão) | Mínimo |
+|---|---|---|---|
+| Qlick | `POST /partidas/:id/cronometro` | `POST /partidas/:id/iniciar-automatico` | 1 |
+| Wor | `POST /wor/matches/:id/cronometro` | `POST /wor/matches/:id/iniciar-automatico` | 2 |
+| Isolateus | `POST /isolateus/matches/:id/cronometro` (+ `debateHabilitado`) | `POST /isolateus/matches/:id/iniciar-automatico` | 4 (`MIN_REAIS`) |
+
+- Corpo `{ segundos: 30 | 60 | 120 | 180 | 300 | null }` (`null` cancela; fora da lista → 400).
+  Só no `LOBBY` (400 `PARTIDA_INICIADA`) e só o dono. Ligar limpa `entradaFalhou`; o início
+  manual zera `entradaEncerraEm`.
+- **Sem agendador (serverless):** o início é preguiçoso e idempotente. O telão chama
+  `iniciar-automatico` no zero; como rede de segurança, a **leitura do aluno** (`GET /aluno/qlick`,
+  `/aluno/wor`, `/aluno/isolateus`) também dispara depois do prazo (tolerância de 1s).
+- **Transação:** `reivindicarEntrada` lê o doc e, se ainda está no `LOBBY` com o prazo vencido,
+  zera `entradaEncerraEm` e só esse disparo segue. Dois disparos juntos iniciam uma vez.
+- Abaixo do mínimo: não inicia, o cronômetro desliga e grava `entradaFalhou`; o lobby segue aberto.
+- **Wor:** sem equipes, distribui e inicia no mesmo disparo; com equipes, quem entrou depois da
+  distribuição vai para as equipes menores. **Isolateus:** o Despertar usa o
+  `debateHabilitado` gravado pelo cronômetro.
+- **`participa`:** as três leituras do aluno devolvem `participa: boolean` (Qlick e Wor pelos
+  inscritos; Isolateus pelos vínculos do cofre depois do Despertar, sem expor mais nada).
+
 ## Tichr Wor (guerra de castelos, PvP em tempo real)
 
 Releitura competitiva da forca: equipes decifram palavras defendendo o **HP** de
@@ -1358,6 +1389,21 @@ no mesmo fechamento.
 (`MULTIPLICADOR_MIN`/`MULTIPLICADOR_MAX`). Todo ponto ganho na partida é multiplicado (dano,
 bônus de arriscar e bônus de HP do fim), o que multiplica também o XP. O dano no castelo não
 muda: o multiplicador mexe só na pontuação. Fica fixo depois do início.
+
+### Janela de animação e reinos (spec 035)
+
+- **A rodada nova espera a animação do fechamento.** Ao fechar uma rodada (inclusive por tempo
+  e no fim da onda), `rodadaIniciadaEm = agora + max(card, janela)`, com
+  `janela = JANELA_ANIMACAO.BASE_MS (2500) + POR_EVENTO_MS (1200) × eventos`, teto `MAX_MS (12000)`.
+  Eventos (`eventosDaRodada`): ataques, arriscar (acerto ou erro) e quedas. A primeira rodada não
+  tem janela.
+- Jogada com `agora < rodadaIniciadaEm` → **400 `RODADA_NAO_COMECOU`**. O `/tempo` só fecha depois
+  de `rodadaIniciadaEm + LIMITE_RODADA_MS`; a pausa empurra o início mesmo no futuro.
+- `resumoRodada.quedas: string[]` lista quem caiu no fechamento; na Usurpação,
+  `arriscar.alvoEquipeId` traz o líder tomado.
+- **`reinos: Record<equipeId, number>`** (raiz pública): qual reino do mapa pixel é de cada
+  equipe. Nasce no `distribuir` na ordem de `ordemEquipes` e troca entre invasora e líder no
+  `usurpar`. Partidas antigas sem o campo usam `ordemEquipes`.
 
 ### Chat privado da equipe
 

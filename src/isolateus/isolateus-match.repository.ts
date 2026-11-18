@@ -1,3 +1,4 @@
+import { reivindicarEntrada } from '../common/entrada';
 import { Injectable } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -50,6 +51,11 @@ export class IsolateusMatchRepository {
   }
 
   // --- Partida (público) ---
+
+  /** Quem ganha o início pelo cronômetro de entrada (035), em transação. */
+  reivindicarEntrada(id: string, agora: number): Promise<boolean> {
+    return reivindicarEntrada(this.firebase.firestore, this.col.doc(id), agora);
+  }
 
   async criar(
     partida: Partial<IsolateusMatchEntity>,
@@ -216,9 +222,7 @@ export class IsolateusMatchRepository {
     partidaId: string,
     rodada: number,
   ): Promise<RespostaIsolateus[]> {
-    const snap = await this.respostas
-      .where('partidaId', '==', partidaId)
-      .get();
+    const snap = await this.respostas.where('partidaId', '==', partidaId).get();
     return snap.docs
       .map((d) => d.data())
       .filter((r) => r.rodada === rodada)
@@ -251,14 +255,16 @@ export class IsolateusMatchRepository {
     rodada: number,
   ): Promise<Array<{ alunoId: string; suspeitoId: string }>> {
     const snap = await this.votos.where('partidaId', '==', partidaId).get();
-    return snap.docs
-      .map((d) => d.data())
-      // Os votos do resgate moram na mesma coleção, marcados por `tipo`.
-      .filter((v) => v.rodada === rodada && v.tipo !== 'RESGATE')
-      .map((v) => ({
-        alunoId: v.alunoId as string,
-        suspeitoId: v.suspeitoId as string,
-      }));
+    return (
+      snap.docs
+        .map((d) => d.data())
+        // Os votos do resgate moram na mesma coleção, marcados por `tipo`.
+        .filter((v) => v.rodada === rodada && v.tipo !== 'RESGATE')
+        .map((v) => ({
+          alunoId: v.alunoId as string,
+          suspeitoId: v.suspeitoId as string,
+        }))
+    );
   }
 
   // --- Votos do resgate (025 §6.4): mesma coleção, doc com sufixo `_resgate` ---

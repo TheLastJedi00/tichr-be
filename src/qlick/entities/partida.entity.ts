@@ -1,10 +1,8 @@
+import type { EntradaFalhou } from '../../common/entrada';
 import { LogPontuacaoJogador } from '../../common/log-pontuacao';
 
 export type StatusPartida =
-  | 'LOBBY'
-  | 'QUESTAO_ATIVA'
-  | 'RANKING_PARCIAL'
-  | 'ENCERRADO';
+  'LOBBY' | 'QUESTAO_ATIVA' | 'RANKING_PARCIAL' | 'ENCERRADO';
 
 export interface InscritoPartida {
   alunoId: string;
@@ -37,6 +35,10 @@ export class PartidaEntity {
    * no ranking da turma (spec 027 §3). Ausente (partida antiga) vale.
    */
   valeRanking?: boolean;
+  /** Cronômetro de entrada do lobby (035): ISO do fim; null = sem cronômetro. */
+  entradaEncerraEm?: string | null;
+  /** O prazo venceu sem gente suficiente (035 #8): aviso no lobby. */
+  entradaFalhou?: EntradaFalhou | null;
   /**
    * Cada aluno recebe as perguntas em ordem própria (spec 031). Escolhido no
    * lobby; ausente (partida antiga) = false. Ligado, o enunciado sai do doc.
