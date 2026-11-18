@@ -1,3 +1,4 @@
+import type { EntradaFalhou } from '../../common/entrada';
 import { LogPontuacaoJogador } from '../../common/log-pontuacao';
 
 /** Constantes de balanceamento. Centralizadas para tuning posterior. */
@@ -250,6 +251,10 @@ export class WorMatchEntity {
    * no ranking da turma (spec 027 §3). Partidas antigas valem.
    */
   valeRanking = true;
+  /** Cronômetro de entrada do lobby (035): ISO do fim; null = sem cronômetro. */
+  entradaEncerraEm?: string | null;
+  /** O prazo venceu sem gente suficiente (035 #8): aviso no lobby. */
+  entradaFalhou?: EntradaFalhou | null;
 
   /** Índice da onda (palavra) atual no baralho e total de ondas. */
   ondaIndex = 0;
