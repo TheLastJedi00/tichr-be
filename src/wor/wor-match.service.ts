@@ -146,11 +146,20 @@ export class WorMatchService {
   }
 
   /** Visão pública para a turma (aluno/projetor): raiz + equipes. */
-  async partidaDaTurma(turmaId: string): Promise<MatchView | null> {
-    const match = await this.matches.ativaDaTurma(turmaId);
-    if (!match) return null;
-    const teams = await this.matches.listarTeams(match.id);
-    return { match, teams };
+  async partidaDaTurma(
+    turmaId: string,
+    alunoId?: string,
+  ): Promise<(MatchView & { participa: boolean }) | null> {
+    const ativa = await this.matches.ativaDaTurma(turmaId);
+    if (!ativa) return null;
+    // Rede de segurança do cronômetro (035 #7): a leitura do aluno também
+    // começa a partida no prazo, se a aba do professor estiver fechada.
+    const { match, teams } = prazoVencido(ativa.entradaEncerraEm, Date.now())
+      ? await this.iniciarAutomatico(ativa.id)
+      : { match: ativa, teams: await this.matches.listarTeams(ativa.id) };
+    const participa =
+      !!alunoId && match.inscritos.some((i) => i.alunoId === alunoId);
+    return { match, teams, participa };
   }
 
   async view(matchId: string): Promise<MatchView> {

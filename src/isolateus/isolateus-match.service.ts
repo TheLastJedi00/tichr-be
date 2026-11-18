@@ -218,8 +218,36 @@ export class IsolateusMatchService {
   }
 
   /** Partida ativa da turma do aluno (janela de 12h). */
-  async partidaDaTurma(turmaId: string): Promise<IsolateusMatchEntity | null> {
-    return this.matches.ativaDaTurma(turmaId);
+  async partidaDaTurma(
+    turmaId: string,
+    alunoId?: string,
+  ): Promise<(IsolateusMatchEntity & { participa: boolean }) | null> {
+    let partida = await this.matches.ativaDaTurma(turmaId);
+    if (!partida) return null;
+    // Rede de segurança do cronômetro (035 #7).
+    if (prazoVencido(partida.entradaEncerraEm, Date.now())) {
+      partida = await this.iniciarAutomatico(partida.id);
+    }
+    return Object.assign(partida, {
+      participa: await this.participa(partida, alunoId),
+    });
+  }
+
+  /**
+   * O aluno está nesta partida? No lobby, pelos inscritos. Depois do
+   * Despertar, `inscritos` some do doc público (o vínculo mora no cofre): a
+   * resposta sai daqui só como booleano do próprio aluno (035 #15).
+   */
+  private async participa(
+    partida: IsolateusMatchEntity,
+    alunoId?: string,
+  ): Promise<boolean> {
+    if (!alunoId) return false;
+    if (partida.status === 'LOBBY') {
+      return partida.inscritos.some((i) => i.alunoId === alunoId);
+    }
+    const segredo = await this.matches.buscarSegredo(partida.id);
+    return !!segredo?.habitanteDe(alunoId);
   }
 
   /**

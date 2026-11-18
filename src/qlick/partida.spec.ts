@@ -639,3 +639,56 @@ describe('PartidaService — início automático (035)', () => {
     expect(partida.status).toBe('LOBBY');
   });
 });
+
+describe('PartidaService — leitura do aluno (035 §1.2)', () => {
+  function make(partida: PartidaEntity) {
+    const repo = {
+      findById: jest.fn(async () => partida),
+      findByTurma: jest.fn(async () => [partida]),
+      update: jest.fn(async (_id: string, d: Partial<PartidaEntity>) => {
+        Object.assign(partida, d);
+      }),
+      reivindicarEntrada: jest.fn(async () => {
+        partida.entradaEncerraEm = null;
+        return true;
+      }),
+    };
+    const service = new PartidaService(
+      repo as never,
+      qlickFake(),
+      {} as never,
+      {} as never,
+      {} as never,
+      firebaseFake(),
+      xpFake(),
+    );
+    return { repo, service };
+  }
+  const agora = () => new Date().toISOString();
+
+  it('no lobby: devolve o prazo e se o aluno está inscrito', async () => {
+    const fim = new Date(Date.now() + 60_000).toISOString();
+    const { service } = make(
+      partidaBase({ criadaEm: agora(), entradaEncerraEm: fim }),
+    );
+    expect(await service.partidaDaTurma('t1', 'a1')).toMatchObject({
+      status: 'LOBBY',
+      entradaEncerraEm: fim,
+      participa: true,
+    });
+    expect(await service.partidaDaTurma('t1', 'a9')).toMatchObject({
+      participa: false,
+    });
+  });
+
+  it('prazo vencido: a leitura do aluno inicia a partida', async () => {
+    const partida = partidaBase({
+      criadaEm: agora(),
+      entradaEncerraEm: new Date(Date.now() - 1000).toISOString(),
+    });
+    const { service } = make(partida);
+    const r = await service.partidaDaTurma('t1', 'a9');
+    expect(r).toMatchObject({ status: 'QUESTAO_ATIVA', participa: false });
+    expect(partida.status).toBe('QUESTAO_ATIVA');
+  });
+});

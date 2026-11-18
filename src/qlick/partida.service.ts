@@ -292,17 +292,35 @@ export class PartidaService {
    */
   async partidaDaTurma(
     turmaId: string,
-  ): Promise<{ partidaId: string; titulo: string; status: string } | null> {
+    alunoId?: string,
+  ): Promise<{
+    partidaId: string;
+    titulo: string;
+    status: string;
+    entradaEncerraEm: string | null;
+    participa: boolean;
+  } | null> {
     const limite = Date.now() - JANELA_VISIBILIDADE_MS;
     const partidas = await this.partidaRepo.findByTurma(turmaId);
-    const ativa = partidas
+    let ativa = partidas
       .filter((p) => p.status !== 'ENCERRADO')
       .filter((p) => !p.criadaEm || Date.parse(p.criadaEm) >= limite)
       .sort((a, b) => (a.criadaEm ?? '').localeCompare(b.criadaEm ?? ''))
       .at(-1);
-    return ativa
-      ? { partidaId: ativa.id, titulo: ativa.titulo, status: ativa.status }
-      : null;
+    if (!ativa) return null;
+    // Rede de segurança do cronômetro (035 #7): a aba do professor pode estar
+    // fechada; a leitura do aluno também começa a partida no prazo.
+    if (prazoVencido(ativa.entradaEncerraEm, Date.now())) {
+      ativa = await this.iniciarAutomatico(ativa.id);
+    }
+    return {
+      partidaId: ativa.id,
+      titulo: ativa.titulo,
+      status: ativa.status,
+      entradaEncerraEm: ativa.entradaEncerraEm ?? null,
+      participa:
+        !!alunoId && ativa.inscritos.some((i) => i.alunoId === alunoId),
+    };
   }
 
   // ===== Pausa (028 §4) =====

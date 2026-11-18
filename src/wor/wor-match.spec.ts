@@ -478,3 +478,62 @@ describe('Tichr Wor — encaixe de quem entrou depois da distribuição (035 #6)
     expect(match.status).toBe('EM_ANDAMENTO');
   });
 });
+
+describe('Tichr Wor — leitura do aluno (035 §1.2)', () => {
+  function make(match: WorMatchEntity) {
+    const teams: WorTeamEntity[] = [];
+    const repo = {
+      ativaDaTurma: jest.fn(async () => match),
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        match.entradaEncerraEm = null;
+        return true;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service };
+  }
+  const lobby = (entradaEncerraEm: string) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      entradaEncerraEm,
+      inscritos: ['a1', 'a2', 'a3', 'a4'].map((alunoId) => ({
+        alunoId,
+        nome: alunoId,
+      })),
+    });
+
+  it('devolve participa pelo inscrito', async () => {
+    const { service } = make(
+      lobby(new Date(Date.now() + 60_000).toISOString()),
+    );
+    expect((await service.partidaDaTurma('t1', 'a2'))?.participa).toBe(true);
+    expect((await service.partidaDaTurma('t1', 'a9'))?.participa).toBe(false);
+  });
+
+  it('prazo vencido: a leitura do aluno distribui e inicia', async () => {
+    const match = lobby(new Date(Date.now() - 1000).toISOString());
+    const { service } = make(match);
+    const r = await service.partidaDaTurma('t1', 'a1');
+    expect(r?.match.status).toBe('EM_ANDAMENTO');
+    expect(r?.teams).toHaveLength(2);
+    expect(r?.participa).toBe(true);
+  });
+});

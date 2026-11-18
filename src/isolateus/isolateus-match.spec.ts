@@ -492,3 +492,35 @@ describe('Isolateus — início automático (035)', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('Isolateus — leitura do aluno (035 §1.2)', () => {
+  it('no lobby: participa pelos inscritos', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 2);
+    (repo.ativaDaTurma as jest.Mock).mockImplementation(
+      async () => partidas.get(p.id) ?? null,
+    );
+    expect((await service.partidaDaTurma('t1', 'a1'))?.participa).toBe(true);
+    expect((await service.partidaDaTurma('t1', 'a9'))?.participa).toBe(false);
+  });
+
+  it('prazo vencido: a leitura desperta a vila; participa vem do cofre', async () => {
+    const { service, partidas, repo } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    partidas.get(p.id)!.entradaEncerraEm = new Date(
+      Date.now() - 1000,
+    ).toISOString();
+    (repo.ativaDaTurma as jest.Mock).mockImplementation(
+      async () => partidas.get(p.id) ?? null,
+    );
+
+    const r = await service.partidaDaTurma('t1', 'a9');
+    expect(r?.status).toBe('DESLOCAMENTO');
+    expect(r?.participa).toBe(false);
+    // O doc público já não tem os inscritos: o vínculo vem do cofre.
+    expect(partidas.get(p.id)!.inscritos).toEqual([]);
+    expect((await service.partidaDaTurma('t1', 'a3'))?.participa).toBe(true);
+  });
+});
