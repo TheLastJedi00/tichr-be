@@ -167,6 +167,20 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
 
 const [MIN, MAX] = ISOLATEUS.NPC_AVISO_JANELA_MS;
 
+describe('Isolateus — a noite dura 15s', () => {
+  it('a janela de deslocamento é de 15 segundos', () => {
+    expect(ISOLATEUS.LIMITE_DESLOCAMENTO_MS).toBe(15_000);
+  });
+
+  it('os avisos dos NPCs e a carência da Ameaça cabem na noite', () => {
+    // Aviso de NPC depois do fim da noite nunca sairia: o NPC ficaria parado.
+    expect(MAX).toBeLessThan(ISOLATEUS.LIMITE_DESLOCAMENTO_MS);
+    expect(ISOLATEUS.CARENCIA_AMEACA_MS).toBeLessThan(
+      ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
+    );
+  });
+});
+
 describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
   const inicio = Date.parse('2026-10-07T12:00:00.000Z');
 
@@ -379,7 +393,7 @@ describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
   });
 
   it('na carência, os avisos restantes passam a cair dentro dela', async () => {
-    const ctx = comAgenda([['n1', 'energia', 30_000]], { ameacas: ['a1'] });
+    const ctx = comAgenda([['n1', 'energia', 10_000]], { ameacas: ['a1'] });
     avancar(5_000);
     // Todos os reais confirmam; falta só a jogada da Ameaça → carência.
     for (const a of ['a1', 'a2', 'a3', 'a4', 'a5']) {
@@ -460,7 +474,7 @@ describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
       {
         habitanteId: 'n1',
         para: 'energia',
-        em: new Date(agora + 20_000).toISOString(),
+        em: new Date(agora + 8_000).toISOString(),
       },
     ];
     ctx.partida.ultimosDeslocamentos = { rodada: -1, movimentos: [] };
@@ -481,7 +495,7 @@ describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
     ]);
 
     // O aviso que sai DEPOIS do delírio aparece normalmente, com o id novo.
-    avancar(21_000);
+    avancar(9_000);
     await ctx.service.resolverPorTempo('p1', { alunoId: 'a4' });
     expect(ctx.partida.deslocamentosNoite).toEqual([
       { habitanteId: npcNovo, para: 'energia' },

@@ -44,8 +44,11 @@ export const ISOLATEUS = {
    * cobriam o clique, não a decisão. O aluno lê o próprio setor, abre o mapa,
    * localiza as ruínas e só então anda — e a Ameaça ainda escolhe a jogada dela
    * dentro da mesma janela.
+   *
+   * Desceu para 15s com o mapa pixel art (034): andar até a porta leva poucos
+   * segundos e o minuto inteiro deixava a turma parada esperando a noite.
    */
-  LIMITE_DESLOCAMENTO_MS: 60_000,
+  LIMITE_DESLOCAMENTO_MS: 15_000,
   /**
    * Quando a vila inteira já fechou a jogada e só falta a Ameaça, a noite não
    * espera o resto do minuto: o relógio colapsa para esta carência.
@@ -64,7 +67,7 @@ export const ISOLATEUS = {
   JANELA_DECISAO_MS: 15_000,
   /**
    * A noite espera o card de resultado da rodada anterior (034 #55): a nova
-   * noite grava `faseIniciadaEm` tantos ms no futuro, e só então os 60s correm.
+   * noite grava `faseIniciadaEm` tantos ms no futuro, e só então os 15s correm.
    */
   JANELA_RESULTADO_MS: 6_000,
   /** A barra de energia alien (034 #58): acertos para um superpoder. */
@@ -83,7 +86,7 @@ export const ISOLATEUS = {
    * §2.3). Concentrada no começo da janela, quando os reais decidem: um aviso
    * "atrasado" só sai no fechamento, e lá ele se mistura ao último real.
    */
-  NPC_AVISO_JANELA_MS: [1_500, 35_000] as const,
+  NPC_AVISO_JANELA_MS: [1_500, 10_000] as const,
   /**
    * Chance de um NPC que vai andar ganhar um segundo aviso (outro vizinho ou
    * desistir). Os reais podem mudar de ideia; NPC que nunca muda seria pista.
