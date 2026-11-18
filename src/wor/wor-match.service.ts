@@ -7,6 +7,7 @@ import {
 import { embaralhar } from '../common/shuffle.util';
 import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
+import { assertLobbyCronometro, prazoDaEntrada } from '../common/entrada';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -265,6 +266,21 @@ export class WorMatchService {
     return this.view(matchId);
   }
 
+  /** Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). */
+  async definirCronometro(
+    professorId: string,
+    matchId: string,
+    segundos: number | null,
+  ): Promise<MatchView> {
+    const match = await this.assertProfessor(matchId, professorId);
+    assertLobbyCronometro(match.status);
+    await this.matches.atualizar(matchId, {
+      entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
+      entradaFalhou: null,
+    });
+    return this.view(matchId);
+  }
+
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
   async definirValeRanking(
     professorId: string,
@@ -286,6 +302,7 @@ export class WorMatchService {
     }
     await this.matches.atualizar(matchId, {
       status: 'EM_ANDAMENTO',
+      entradaEncerraEm: null,
       jaAgiram: [],
       equipesFechadas: [],
       feedRodada: [],

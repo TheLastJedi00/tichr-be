@@ -50,6 +50,15 @@ function repoFake() {
       ...(rodizio.get(turmaId) ?? {}),
     })),
     ativaDaTurma: jest.fn(),
+    reivindicarEntrada: jest.fn(async (id: string) => {
+      const p = partidas.get(id)!;
+      const venceu =
+        p.status === 'LOBBY' &&
+        !!p.entradaEncerraEm &&
+        Date.parse(p.entradaEncerraEm) <= Date.now() + 1000;
+      if (venceu) p.entradaEncerraEm = null;
+      return venceu;
+    }),
   } as unknown as IsolateusMatchRepository;
 
   return { repo, partidas, segredos, rodizio };
@@ -219,7 +228,9 @@ describe('Isolateus — lobby e Despertar', () => {
     // 13 em 6 setores: nenhum setor fica vazio e a diferença nunca passa de 1.
     expect(porSetor.size).toBe(SETOR_IDS.length);
     const contagens = [...porSetor.values()];
-    expect(Math.max(...contagens) - Math.min(...contagens)).toBeLessThanOrEqual(1);
+    expect(Math.max(...contagens) - Math.min(...contagens)).toBeLessThanOrEqual(
+      1,
+    );
   });
 
   it('a distribuição é cega quanto a real × NPC', async () => {
@@ -307,7 +318,13 @@ describe('Isolateus — lobby e Despertar', () => {
     expect(json).not.toContain('"a1"');
     // Os habitantes têm id opaco e são indistinguíveis entre si.
     for (const h of publico.habitantes) {
-      expect(Object.keys(h).sort()).toEqual(['id', 'nome', 'preso', 'setorId', 'vivo']);
+      expect(Object.keys(h).sort()).toEqual([
+        'id',
+        'nome',
+        'preso',
+        'setorId',
+        'vivo',
+      ]);
       expect(h.id).toMatch(/^[0-9a-f-]{36}$/);
     }
   });
@@ -385,5 +402,40 @@ describe('Isolateus — rodízio da Ameaça por turma', () => {
     await ctx.service.iniciar('prof', p.id);
     const json = JSON.stringify(ctx.partidas.get(p.id));
     expect(json).not.toMatch(/rodizio|ameacas/);
+  });
+});
+
+describe('Isolateus — cronômetro de entrada (035)', () => {
+  it('liga, cancela e guarda o debate escolhido no lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await service.definirCronometro('prof', p.id, 30, false);
+    const fim = Date.parse(partidas.get(p.id)!.entradaEncerraEm!);
+    expect(fim).toBeGreaterThan(Date.now() + 25_000);
+    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+    await service.definirCronometro('prof', p.id, null);
+    expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
+  });
+
+  it('só no lobby e só do dono', async () => {
+    const { service } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await expect(
+      service.definirCronometro('outro', p.id, 30),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    await expect(
+      service.definirCronometro('prof', p.id, 30),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('o Despertar manual zera o cronômetro', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 300);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
   });
 });

@@ -203,3 +203,80 @@ describe('Tichr Wor — partida (Fase 3)', () => {
     });
   });
 });
+
+describe('Tichr Wor — cronômetro de entrada (035)', () => {
+  function make(match: WorMatchEntity, teams: WorTeamEntity[] = []) {
+    const repo = {
+      buscar: jest.fn(async () => match),
+      atualizar: jest.fn(async (_id: string, d: Partial<WorMatchEntity>) => {
+        Object.assign(match, d);
+      }),
+      listarTeams: jest.fn(async () => teams),
+      criarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          teams.push(new WorTeamEntity({ ...d, id }));
+        },
+      ),
+      atualizarTeam: jest.fn(
+        async (_m: string, id: string, d: Partial<WorTeamEntity>) => {
+          Object.assign(
+            teams.find((t) => t.id === id)!,
+            d,
+          );
+        },
+      ),
+      reivindicarEntrada: jest.fn(async () => {
+        const venceu =
+          match.status === 'LOBBY' &&
+          !!match.entradaEncerraEm &&
+          Date.parse(match.entradaEncerraEm) <= Date.now() + 1000;
+        if (venceu) match.entradaEncerraEm = null;
+        return venceu;
+      }),
+    } as unknown as WorMatchRepository;
+    const service = new WorMatchService(
+      {} as WorJogoRepository,
+      repo,
+      professorFake('PHD'),
+      turmaRepoFake(),
+    );
+    return { service, repo, teams };
+  }
+  const lobby = (n: number, over: Partial<WorMatchEntity> = {}) =>
+    new WorMatchEntity({
+      id: 'm1',
+      professorId: 'p1',
+      turmaId: 't1',
+      status: 'LOBBY',
+      inscritos: Array.from({ length: n }, (_, i) => ({
+        alunoId: `a${i + 1}`,
+        nome: `A${i + 1}`,
+      })),
+      ...over,
+    });
+
+  it('liga e cancela o cronômetro só no lobby', async () => {
+    const match = lobby(2);
+    const { service } = make(match);
+    await service.definirCronometro('p1', 'm1', 120);
+    expect(Date.parse(match.entradaEncerraEm!)).toBeGreaterThan(Date.now());
+    await service.definirCronometro('p1', 'm1', null);
+    expect(match.entradaEncerraEm).toBeNull();
+
+    match.status = 'EM_ANDAMENTO';
+    await expect(service.definirCronometro('p1', 'm1', 60)).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('o início manual zera o cronômetro', async () => {
+    const match = lobby(4, {
+      entradaEncerraEm: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const { service } = make(match);
+    await service.distribuir('p1', 'm1');
+    await service.iniciar('p1', 'm1');
+    expect(match.status).toBe('EM_ANDAMENTO');
+    expect(match.entradaEncerraEm).toBeNull();
+  });
+});

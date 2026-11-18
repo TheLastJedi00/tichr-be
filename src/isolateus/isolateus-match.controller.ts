@@ -8,6 +8,7 @@ import { DefinirValeRankingDto } from '../common/vale-ranking';
 import { PularFaseDto } from './dto/pular-fase.dto';
 import {
   CriarPartidaIsolateusDto,
+  DefinirCronometroIsolateusDto,
   IniciarPartidaIsolateusDto,
 } from './dto/responder-isolateus.dto';
 import { IsolateusGameService } from './isolateus-game.service';
@@ -73,6 +74,21 @@ export class IsolateusMatchController {
     @Body() dto: DefinirValeRankingDto,
   ) {
     return this.matches.definirValeRanking(professorId, id, dto.valeRanking);
+  }
+
+  /** Lobby: cronômetro de entrada; no zero a vila desperta sozinha (035). */
+  @Post('matches/:id/cronometro')
+  cronometro(
+    @ProfessorId() professorId: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirCronometroIsolateusDto,
+  ) {
+    return this.matches.definirCronometro(
+      professorId,
+      id,
+      dto.segundos,
+      dto.debateHabilitado,
+    );
   }
 
   /** O Despertar: preenche a vila com NPCs e sorteia a Ameaça. */

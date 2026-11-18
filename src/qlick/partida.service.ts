@@ -34,6 +34,7 @@ import {
   registrarFaltas,
 } from '../common/ociosidade';
 import { assertLobbyValeRanking, valeRanking } from '../common/vale-ranking';
+import { assertLobbyCronometro, prazoDaEntrada } from '../common/entrada';
 import {
   assertNaoPausada,
   assertPausavel,
@@ -154,6 +155,23 @@ export class PartidaService {
       throw new NotFoundException('Partida nao encontrada.');
     }
     return p;
+  }
+
+  /** Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). */
+  async definirCronometro(
+    professorId: string,
+    partidaId: string,
+    segundos: number | null,
+  ): Promise<PartidaEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyCronometro(partida.status);
+    const dados = {
+      entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
+      entradaFalhou: null,
+    };
+    Object.assign(partida, dados);
+    await this.partidaRepo.update(partidaId, dados);
+    return partida;
   }
 
   /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
@@ -320,11 +338,20 @@ export class PartidaService {
     partidaId: string,
   ): Promise<PartidaEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    return this.comecar(partida);
+  }
+
+  /** O início em si, manual ou pelo cronômetro (035). */
+  private async comecar(partida: PartidaEntity): Promise<PartidaEntity> {
     if (partida.status !== 'LOBBY') {
       throw new BadRequestException('A partida já começou.');
     }
     if (partida.inscritos.length === 0) {
       throw new BadRequestException('Nenhum aluno inscrito.');
+    }
+    if (partida.entradaEncerraEm) {
+      partida.entradaEncerraEm = null;
+      await this.partidaRepo.update(partida.id, { entradaEncerraEm: null });
     }
     // A ordem de cada aluno é sorteada aqui, com os inscritos já congelados.
     if (embaralha(partida) && this.segredoRepo) {

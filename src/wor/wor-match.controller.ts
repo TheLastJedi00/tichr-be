@@ -5,6 +5,7 @@ import {
   DescontarOciosidadeDto,
 } from '../common/ociosidade';
 import { DefinirValeRankingDto } from '../common/vale-ranking';
+import { DefinirCronometroDto } from '../common/entrada';
 import { CriarPartidaDto } from './dto/criar-partida.dto';
 import { DefinirMultiplicadorDto } from './dto/definir-multiplicador.dto';
 import { WorGameService } from './wor-game.service';
@@ -75,6 +76,16 @@ export class WorMatchController {
     @Body() dto: DescontarOciosidadeDto,
   ) {
     return this.game.descontarOciosidade(uid, id, dto);
+  }
+
+  /** Lobby: cronômetro de entrada; no zero a partida começa sozinha (035). */
+  @Post('matches/:id/cronometro')
+  cronometro(
+    @ProfessorId() uid: string,
+    @Param('id') id: string,
+    @Body() dto: DefinirCronometroDto,
+  ) {
+    return this.service.definirCronometro(uid, id, dto.segundos);
   }
 
   @Post('matches/:id/iniciar')

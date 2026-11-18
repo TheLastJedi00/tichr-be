@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { embaralhar } from '../common/shuffle.util';
 import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
+import { assertLobbyCronometro, prazoDaEntrada } from '../common/entrada';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -154,6 +155,29 @@ export class IsolateusMatchService {
     return partida;
   }
 
+  /**
+   * Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). O
+   * debate escolhido vai junto: o início pelo cronômetro pode vir de um aluno.
+   */
+  async definirCronometro(
+    professorId: string,
+    partidaId: string,
+    segundos: number | null,
+    debateHabilitado?: boolean,
+  ): Promise<IsolateusMatchEntity> {
+    const partida = await this.obterDoProfessor(professorId, partidaId);
+    assertLobbyCronometro(partida.status);
+    const dados: Partial<IsolateusMatchEntity> = {
+      entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
+      entradaFalhou: null,
+    };
+    if (debateHabilitado !== undefined)
+      dados.debateHabilitado = debateHabilitado;
+    Object.assign(partida, dados);
+    await this.matches.commitPartida(partidaId, dados);
+    return partida;
+  }
+
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
   /** Lobby: a partir de quantas faltas o aluno é marcado como ocioso (032). */
   async definirLimiteOciosidade(
@@ -253,6 +277,15 @@ export class IsolateusMatchService {
     opcoes: { debateHabilitado?: boolean } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
+    return this.despertar(partida, opcoes);
+  }
+
+  /** O Despertar em si, manual ou pelo cronômetro de entrada (035). */
+  private async despertar(
+    partida: IsolateusMatchEntity,
+    opcoes: { debateHabilitado?: boolean },
+  ): Promise<IsolateusMatchEntity> {
+    const partidaId = partida.id;
     if (partida.status !== 'LOBBY') {
       throw new BadRequestException('A investigação já começou.');
     }
@@ -334,6 +367,7 @@ export class IsolateusMatchService {
       cicloBrilho: ISOLATEUS.CICLO_BRILHO,
       brilho: null,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
+      entradaEncerraEm: null,
     };
     Object.assign(partida, dados);
     await this.matches.commitPartida(
