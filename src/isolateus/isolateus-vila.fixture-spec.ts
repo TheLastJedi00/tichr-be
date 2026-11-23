@@ -243,7 +243,7 @@ export function noiteAberta(v: ReturnType<typeof vilaComAmeacas>) {
 
 /**
  * Convoca a Quarentena pelo caminho REAL (034): à noite, o amanhecer a
- * confirma, a questão do dia fecha e a reunião abre (debate).
+ * confirma, a questão do dia fecha e a reunião abre (na votação, 036).
  */
 export async function convocarPelaNoite(
   v: ReturnType<typeof vilaComAmeacas>,

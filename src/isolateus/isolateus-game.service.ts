@@ -2411,23 +2411,21 @@ export class IsolateusGameService {
     dadosSegredo: Partial<IsolateusSegredoEntity>,
   ): Promise<IsolateusMatchEntity> {
     if (partida.quarentenaConvocadaPor) {
-      // Sem debate (escolha do lobby), a reunião começa pela urna.
-      const comDebate = partida.debateHabilitado !== false;
+      // A reunião começa pela urna (036 #35): o chat da vila, aberto a
+      // partida inteira, substituiu o Debate Tático.
       const fase: Partial<IsolateusMatchEntity> = {
-        status: comDebate ? 'QUARENTENA_DEBATE' : 'QUARENTENA_VOTO',
+        status: 'QUARENTENA_VOTO',
         faseIniciadaEm: new Date().toISOString(),
-        debate: [], // só os alunos falam: fala automática saía sob nome de NPC
-        // A Quarentena nova nasce limpa: veredito, votos e pulos são por rodada.
+        // A Quarentena nova nasce limpa: veredito e votos são por rodada.
         vereditoQuarentena: null,
         votosRecebidos: 0,
         pulosRecebidos: 0,
       };
       Object.assign(partida, fase);
-      segredo.pulosDebate = [];
       await this.matches.commitPartida(
         partida.id,
         { ...dados, ...fase },
-        { ...dadosSegredo, pulosDebate: [] },
+        dadosSegredo,
       );
       return partida;
     }
@@ -3074,72 +3072,10 @@ export class IsolateusGameService {
     }
   }
 
-  /** O Debate Tático: acusações e defesas por escrito, com o relógio correndo. */
-  async debater(
-    alunoId: string,
-    partidaId: string,
-    texto: string,
-  ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregarParaComando(partidaId);
-    if (partida.status !== 'QUARENTENA_DEBATE') {
-      throw new BadRequestException('O debate não está aberto.');
-    }
-    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
-    if (!habitante.vivo || habitante.preso) {
-      throw new ForbiddenException('Quem saiu da vila não debate.');
-    }
-    const limpo = texto.trim().slice(0, 240);
-    await this.moderar(partida, alunoId, limpo);
-
-    const debate = [
-      ...partida.debate,
-      {
-        id: randomUUID(),
-        autorNome: habitante.nome, // o pseudônimo, nunca o nome real
-        texto: limpo,
-      },
-    ].slice(-60);
-    partida.debate = debate;
-    await this.matches.commitPartida(partidaId, { debate });
-    return partida;
-  }
-
   /**
-   * Avanço Rápido do debate: quem já se decidiu abre mão do papo. Quando TODOS os
-   * habitantes reais na vila pulam, a votação abre na hora — ninguém fica olhando
-   * um cronômetro que não serve mais a ninguém.
-   *
-   * Idempotente: pular duas vezes não conta dobrado.
+   * Fim do debate de uma partida que estava no `QUARENTENA_DEBATE` no deploy
+   * da 036 (#37): a vila segue para a urna.
    */
-  async pularDebate(
-    alunoId: string,
-    partidaId: string,
-  ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregarParaComando(partidaId);
-    if (partida.status !== 'QUARENTENA_DEBATE') {
-      throw new BadRequestException('O debate não está aberto.');
-    }
-    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
-    if (!habitante.vivo || habitante.preso) {
-      throw new ForbiddenException('Quem saiu da vila não debate.');
-    }
-
-    const pulos = [...new Set([...(segredo.pulosDebate ?? []), alunoId])];
-    partida.pulosRecebidos = pulos.length;
-    segredo.pulosDebate = pulos;
-    await this.matches.commitPartida(
-      partidaId,
-      { pulosRecebidos: pulos.length },
-      { pulosDebate: pulos },
-    );
-
-    if (pulos.length >= this.reaisNaVila(partida, segredo).length) {
-      return this.abrirVotacao(partida);
-    }
-    return partida;
-  }
-
-  /** Fim do debate: o teclado trava e a vila deposita seus votos. */
   private async abrirVotacao(
     partida: IsolateusMatchEntity,
   ): Promise<IsolateusMatchEntity> {

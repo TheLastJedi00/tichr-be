@@ -160,3 +160,40 @@ describe('Isolateus 036 — chat da vila (Task 6)', () => {
     expect(erros(42)).toBeGreaterThan(0);
   });
 });
+
+describe('Isolateus 036 — o debate sai (Task 7)', () => {
+  it('convocada, a Quarentena vai direto para a votação', async () => {
+    const ctx = vilaComAmeacas({ posicoes: { h3: 'comunicacao' } });
+    ctx.partida.faseIniciadaEm = new Date(agora - 1000).toISOString();
+    await ctx.service.convocarQuarentena('p1', 'a3');
+    await ctx.service.pularFase('prof', 'p1'); // amanhecer → questão
+    await ctx.service.pularFase('prof', 'p1'); // fim da questão → reunião
+    expect(ctx.partida.status).toBe('QUARENTENA_VOTO');
+  });
+
+  it('mesmo em partida antiga com debateHabilitado ligado', async () => {
+    const ctx = vilaComAmeacas({ posicoes: { h3: 'comunicacao' } });
+    ctx.partida.debateHabilitado = true;
+    await ctx.service.convocarQuarentena('p1', 'a3');
+    await ctx.service.pularFase('prof', 'p1');
+    await ctx.service.pularFase('prof', 'p1');
+    expect(ctx.partida.status).toBe('QUARENTENA_VOTO');
+  });
+
+  it('partida parada no debate no deploy: o relógio leva ao voto', async () => {
+    const ctx = vilaComAmeacas({ status: 'QUARENTENA_DEBATE' });
+    ctx.partida.faseIniciadaEm = new Date(agora - 200_000).toISOString();
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.partida.status).toBe('QUARENTENA_VOTO');
+  });
+
+  it('as rotas de debater e pular debate não existem mais', () => {
+    const s = ctx0().service as unknown as Record<string, unknown>;
+    expect(s.debater).toBeUndefined();
+    expect(s.pularDebate).toBeUndefined();
+  });
+});
+
+function ctx0() {
+  return vilaComAmeacas();
+}

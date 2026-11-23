@@ -192,24 +192,6 @@ export class AlunoIsolateusController {
     return this.game.falarNoChat(aluno.alunoId, id, dto.texto);
   }
 
-  @Post(':id/debate')
-  debater(
-    @CurrentStudent() aluno: { alunoId: string },
-    @Param('id') id: string,
-    @Body() dto: MensagemDto,
-  ) {
-    return this.game.debater(aluno.alunoId, id, dto.texto);
-  }
-
-  /** Abre mão do debate. Todos pulando, a votação abre na hora. */
-  @Post(':id/pular-debate')
-  pularDebate(
-    @CurrentStudent() aluno: { alunoId: string },
-    @Param('id') id: string,
-  ) {
-    return this.game.pularDebate(aluno.alunoId, id);
-  }
-
   /** O voto no suspeito. */
   @Post(':id/suspeito')
   votar(

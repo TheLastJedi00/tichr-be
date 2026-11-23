@@ -31,7 +31,7 @@ async function votar(
   convocador = 'a2',
 ) {
   await convocarPelaNoite(v, convocador);
-  await v.service.pularFase('prof', 'p1'); // debate → votação
+  // 036: sem debate, a reunião já abre na votação.
   for (const [alunoId, suspeito] of Object.entries(votos)) {
     await v.service.votarSuspeito(alunoId, 'p1', suspeito);
   }

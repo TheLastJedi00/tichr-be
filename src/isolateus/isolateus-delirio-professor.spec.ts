@@ -98,7 +98,6 @@ describe('Isolateus — Delírio Coletivo pelo professor (Task 13)', () => {
     const ctx = vila('DESLOCAMENTO');
     ctx.partida.convocadorBloqueado = { habitanteId: 'h4', ateRodada: 2 };
     await convocarPelaNoite(ctx, 'a3');
-    await ctx.service.pularFase('prof', 'p1'); // abre a votação
     await ctx.service.votarSuspeito('a2', 'p1', 'h4');
 
     await ctx.service.delirioDoProfessor('prof', 'p1');

@@ -101,9 +101,9 @@ describe('Isolateus — pausada, comando dá 409', () => {
       questao.service.responder('a3', 'p1', 1),
     ).rejects.toMatchObject(PAUSADA);
 
-    const debate = pausada('QUARENTENA_DEBATE');
+    const chat = pausada('QUARENTENA_VOTO');
     await expect(
-      debate.service.debater('a3', 'p1', 'oi'),
+      chat.service.falarNoChat('a3', 'p1', 'oi'),
     ).rejects.toMatchObject(PAUSADA);
 
     const presa = pausada('DESLOCAMENTO');

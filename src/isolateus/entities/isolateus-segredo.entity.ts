@@ -73,11 +73,12 @@ export class IsolateusSegredoEntity {
   acoesRodada?: Array<{ alunoId: string; acao: AcaoAmeaca }>;
 
   /**
-   * Alunos que pularam o Debate da Quarentena corrente (limpa a cada convocação).
+   * Só leitura de partidas anteriores à 036 (o debate saiu, #36). Alunos que
+   * pularam o Debate da Quarentena corrente.
    * Mora no cofre porque a lista denunciaria quem é real e quem é NPC — a vila só
    * enxerga a CONTAGEM, em `pulosRecebidos`.
    */
-  pulosDebate: string[];
+  pulosDebate?: string[];
 
   /**
    * Alunos que já fecharam a própria jogada da noite (moveram-se ou confirmaram

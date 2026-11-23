@@ -19,7 +19,7 @@ export class ResponderIsolateusDto {
   alternativaIndex: number;
 }
 
-/** Mensagem curta: sinal de rádio ou fala do debate. */
+/** Mensagem curta: o Sinal Interceptado. */
 export class MensagemDto {
   @IsString()
   @MaxLength(240)
@@ -50,7 +50,10 @@ export class CriarPartidaIsolateusDto {
 
 /** Opções escolhidas no lobby, fixadas no Despertar. */
 export class IniciarPartidaIsolateusDto {
-  /** Debate Tático antes da votação da Quarentena. Ausente = ligado. */
+  /**
+   * Ignorado desde a 036 (#36): o chat da vila substituiu o debate. Fica na
+   * DTO para um telão antigo, no meio do deploy, não receber 400.
+   */
   @IsOptional()
   @IsBoolean()
   debateHabilitado?: boolean;
@@ -62,10 +65,11 @@ export class IniciarPartidaIsolateusDto {
 }
 
 /**
- * Cronômetro de entrada (035). Leva o debate escolhido no lobby, porque o
- * início pelo cronômetro pode sair da leitura de um aluno, sem o professor.
+ * Cronômetro de entrada (035). Leva o tempo de movimentação escolhido no
+ * lobby, porque o início pelo cronômetro pode sair da leitura de um aluno.
  */
 export class DefinirCronometroIsolateusDto extends DefinirCronometroDto {
+  /** Ignorado desde a 036 (#36); ver `IniciarPartidaIsolateusDto`. */
   @IsOptional()
   @IsBoolean()
   debateHabilitado?: boolean;

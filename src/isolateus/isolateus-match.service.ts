@@ -112,7 +112,6 @@ export class IsolateusMatchService {
         vinculos: [],
         ameacas: [],
         acoesRodada: [],
-        pulosDebate: [],
         confirmacoesNoite: [],
         pontos: {},
       },
@@ -163,13 +162,13 @@ export class IsolateusMatchService {
 
   /**
    * Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). O
-   * debate escolhido vai junto: o início pelo cronômetro pode vir de um aluno.
+   * tempo de movimentação escolhido vai junto: o início pelo cronômetro pode
+   * vir de um aluno.
    */
   async definirCronometro(
     professorId: string,
     partidaId: string,
     segundos: number | null,
-    debateHabilitado?: boolean,
     segundosNoite?: number,
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
@@ -178,8 +177,6 @@ export class IsolateusMatchService {
       entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
       entradaFalhou: null,
     };
-    if (debateHabilitado !== undefined)
-      dados.debateHabilitado = debateHabilitado;
     if (segundosNoite !== undefined) dados.limiteNoiteMs = segundosNoite * 1000;
     Object.assign(partida, dados);
     await this.matches.commitPartida(partidaId, dados);
@@ -310,7 +307,7 @@ export class IsolateusMatchService {
   async iniciar(
     professorId: string,
     partidaId: string,
-    opcoes: { debateHabilitado?: boolean; segundosNoite?: number } = {},
+    opcoes: { segundosNoite?: number } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     return this.despertar(partida, opcoes);
@@ -350,15 +347,13 @@ export class IsolateusMatchService {
       await this.matches.commitPartida(partidaId, { entradaFalhou });
       return partida;
     }
-    return this.despertar(partida, {
-      debateHabilitado: partida.debateHabilitado,
-    });
+    return this.despertar(partida, {});
   }
 
   /** O Despertar em si, manual ou pelo cronômetro de entrada (035). */
   private async despertar(
     partida: IsolateusMatchEntity,
-    opcoes: { debateHabilitado?: boolean; segundosNoite?: number },
+    opcoes: { segundosNoite?: number },
   ): Promise<IsolateusMatchEntity> {
     const partidaId = partida.id;
     if (partida.status !== 'LOBBY') {
@@ -441,7 +436,6 @@ export class IsolateusMatchService {
       ultimosDeslocamentos: null,
       // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
       // partida mudaria o jogo que a turma começou.
-      debateHabilitado: opcoes.debateHabilitado ?? true,
       // O tempo de movimentação (036 #2): o do iniciar, senão o do lobby.
       limiteNoiteMs: opcoes.segundosNoite
         ? opcoes.segundosNoite * 1000

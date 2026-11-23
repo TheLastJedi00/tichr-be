@@ -383,9 +383,8 @@ export class IsolateusMatchEntity {
    */
   quarentenaRodada: number | null;
   /**
-   * O Debate Tático antes da votação, escolhido pelo professor no lobby e fixo
-   * depois do Despertar. Desligado, a Quarentena vai direto ao voto. Partidas
-   * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
+   * Só leitura de partidas anteriores à 036: o chat da vila substituiu o Debate
+   * Tático (#35), e a Quarentena vai sempre direto ao voto.
    */
   debateHabilitado = true;
   /**

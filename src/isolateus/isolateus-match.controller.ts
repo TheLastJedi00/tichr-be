@@ -87,7 +87,6 @@ export class IsolateusMatchController {
       professorId,
       id,
       dto.segundos,
-      dto.debateHabilitado,
       dto.segundosNoite,
     );
   }
@@ -109,7 +108,6 @@ export class IsolateusMatchController {
     @Body() dto: IniciarPartidaIsolateusDto,
   ) {
     return this.matches.iniciar(professorId, id, {
-      debateHabilitado: dto.debateHabilitado,
       segundosNoite: dto.segundosNoite,
     });
   }
