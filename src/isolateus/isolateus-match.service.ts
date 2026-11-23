@@ -462,7 +462,7 @@ export class IsolateusMatchService {
         acoesRodada: [],
         pontos: {},
         agendaNpc,
-        delirioNaNoite: false,
+        travasNoite: [],
         ultimosMover: [],
       },
       // Conta no sorteio, não no fim: a partida encerrada no meio também valeu

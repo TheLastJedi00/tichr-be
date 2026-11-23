@@ -1,34 +1,19 @@
 /**
- * Funções puras da movimentação em tempo real (spec 026): os avisos de saída
- * da noite, a agenda dos NPCs e as saídas e chegadas do amanhecer.
+ * Funções puras da movimentação dos NPCs (026, revista na 036): a agenda de
+ * travessias da noite.
  *
  * Ficam fora do `IsolateusGameService` porque não tocam em Firestore. O
  * Despertar (`IsolateusMatchService`) e a virada da noite (`avancarNoite`)
  * sorteiam a agenda pelo MESMO código: NPC parado na primeira noite seria pista.
  */
-import {
-  Deslocamento,
-  Habitante,
-  ISOLATEUS,
-} from './entities/isolateus-match.entity';
+import { Habitante, ISOLATEUS } from './entities/isolateus-match.entity';
 import { vizinhosDe } from './isolateus.data';
 
 /**
- * O aviso de saída de um habitante: trocar de destino substitui, voltar à
- * origem (ou `para = null`) remove. A lista é substituída inteira, nunca
- * mutada: o doc público é gravado com `merge`.
+ * Uma travessia agendada de NPC (036 #15): no horário `em`, o NPC passa pela
+ * porta para `para` (vizinho do setor onde ele estiver). `para: null` só
+ * existe em partidas anteriores à 036 (o antigo "desistiu").
  */
-export function aplicarAviso(
-  avisos: Deslocamento[],
-  habitanteId: string,
-  para: string | null,
-  origem: string,
-): Deslocamento[] {
-  const outros = avisos.filter((a) => a.habitanteId !== habitanteId);
-  return para && para !== origem ? [...outros, { habitanteId, para }] : outros;
-}
-
-/** Um aviso agendado de NPC; `para: null` = desistiu de sair. */
 export interface AvisoNpc {
   habitanteId: string;
   para: string | null;
@@ -36,12 +21,13 @@ export interface AvisoNpc {
 }
 
 /**
- * Sorteia, na abertura da noite, os avisos de saída dos NPCs (026 §2.3).
+ * Sorteia, na abertura da noite, as travessias dos NPCs (036 #15).
  *
- * Cada NPC vivo e livre anda com `CHANCE_MOVER_NPC`, para um vizinho sorteado,
- * e avisa num horário dentro de `NPC_JANELA_FRACAO` da noite. Com
- * `CHANCE_NPC_MUDAR_IDEIA`, ganha um segundo aviso depois do primeiro: outro
- * vizinho ou `null` (desiste). O destino final é o do último aviso.
+ * Cada NPC vivo e livre atravessa com `CHANCE_MOVER_NPC`, para um vizinho
+ * sorteado, num horário dentro de `NPC_JANELA_FRACAO` da noite. Com
+ * `CHANCE_NPC_MUDAR_IDEIA`, ganha uma segunda travessia (a partir do setor
+ * novo) pelo menos `NPC_INTERVALO_TRAVESSIAS_MS` depois: os reais andam de
+ * vizinho em vizinho, e NPC que só atravessa uma vez seria pista.
  *
  * Devolve em ordem de horário, para a liberação ler do começo.
  */
@@ -57,6 +43,7 @@ export function sortearAgendaNpc(
   const [fMin, fMax] = ISOLATEUS.NPC_JANELA_FRACAO;
   const min = Math.round(limiteMs * fMin);
   const max = Math.round(limiteMs * fMax);
+  const intervalo = ISOLATEUS.NPC_INTERVALO_TRAVESSIAS_MS;
   const sorteia = <T>(opcoes: T[]): T =>
     opcoes[Math.min(opcoes.length - 1, Math.floor(rnd() * opcoes.length))];
   const em = (ms: number) => new Date(inicio + ms).toISOString();
@@ -72,29 +59,11 @@ export function sortearAgendaNpc(
     const t1 = min + Math.floor(rnd() * (max - min));
     agenda.push({ habitanteId: h.id, para, em: em(t1) });
 
-    if (rnd() < ISOLATEUS.CHANCE_NPC_MUDAR_IDEIA && max - t1 > 1) {
-      const outra = sorteia<string | null>([
-        ...destinos.filter((d) => d !== para),
-        null,
-      ]);
-      const t2 = t1 + 1 + Math.floor(rnd() * (max - t1 - 1));
-      agenda.push({ habitanteId: h.id, para: outra, em: em(t2) });
+    if (rnd() < ISOLATEUS.CHANCE_NPC_MUDAR_IDEIA && max - t1 > intervalo) {
+      const depois = sorteia(vizinhosDe(para));
+      const t2 = t1 + intervalo + Math.floor(rnd() * (max - t1 - intervalo));
+      agenda.push({ habitanteId: h.id, para: depois, em: em(t2) });
     }
   }
   return agenda.sort((a, b) => Date.parse(a.em) - Date.parse(b.em));
-}
-
-/**
- * Quem trocou de setor entre `antes` (posições do início da noite) e as
- * posições finais, para a animação do amanhecer (026 §3). Só quem está na
- * vila: abduzido e preso não andam.
- */
-export function movimentosDaNoite(
-  antes: Map<string, string>,
-  habitantes: Habitante[],
-): Array<{ habitanteId: string; de: string; para: string }> {
-  return habitantes
-    .filter((h) => h.vivo && !h.preso)
-    .filter((h) => antes.has(h.id) && antes.get(h.id) !== h.setorId)
-    .map((h) => ({ habitanteId: h.id, de: antes.get(h.id)!, para: h.setorId }));
 }

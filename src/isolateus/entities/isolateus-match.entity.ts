@@ -84,6 +84,10 @@ export const ISOLATEUS = {
    * #15): nem no primeiro instante, nem colado no fechamento.
    */
   NPC_JANELA_FRACAO: [0.1, 0.85] as const,
+  /** Mínimo entre duas travessias do mesmo NPC: o tempo de andar até a porta. */
+  NPC_INTERVALO_TRAVESSIAS_MS: 2_000,
+  /** Quanto antes da travessia o NPC começa a andar até a porta. */
+  NPC_PREPARO_MS: 5_000,
   /**
    * Chance de um NPC que vai andar ganhar um segundo aviso (outro vizinho ou
    * desistir). Os reais podem mudar de ideia; NPC que nunca muda seria pista.

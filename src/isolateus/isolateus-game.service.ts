@@ -55,11 +55,14 @@ import {
   IsolateusSegredoEntity,
   TravaNoite,
 } from './entities/isolateus-segredo.entity';
-import {
-  AvisoNpc,
-  aplicarAviso,
-  sortearAgendaNpc,
-} from './isolateus-deslocamento';
+import { sortearAgendaNpc } from './isolateus-deslocamento';
+
+/** Uma travessia de NPC aplicada pelo pulso (para mover o boneco no canal). */
+interface TravessiaNpc {
+  habitanteId: string;
+  de: string;
+  para: string;
+}
 import { CENA, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusPosicaoService } from './isolateus-posicao.service';
@@ -731,11 +734,12 @@ export class IsolateusGameService {
   }
 
   /**
-   * O pulso da agenda dos NPCs (026 §2.3). Não há timer no servidor: os avisos
-   * vencidos saem quando alguém da partida fala com ele durante a noite — o
-   * `/tempo` que os celulares e o telão chamam a cada ~3s, ou qualquer jogada.
-   * Só escreve se houver aviso a liberar, e numa transação: o pulso roda o
-   * tempo todo e não pode apagar o movimento de um aluno gravado no meio.
+   * O pulso da agenda dos NPCs (026 §2.3, revisto na 036 #15). Não há timer no
+   * servidor: as travessias vencidas saem quando alguém da partida fala com
+   * ele durante a noite — o `/tempo` que os celulares e o telão chamam a cada
+   * ~3s, ou qualquer jogada. O NPC atravessa como um real: a posição pública
+   * muda na hora, numa transação (o pulso não apaga a travessia de um aluno
+   * gravada no meio), e o boneco troca de cena no canal.
    */
   private async pulsoDaAgenda(
     partida: IsolateusMatchEntity,
@@ -743,45 +747,30 @@ export class IsolateusGameService {
   ): Promise<void> {
     if (partida.status !== 'DESLOCAMENTO') return;
     const agora = Date.now();
-    // Checagem barata na leitura que o handler já fez: sem aviso vencido, nem
-    // abre transação.
+    // Checagem barata na leitura que o handler já fez: sem travessia vencida,
+    // nem abre transação.
     if (!(segredo.agendaNpc ?? []).some((a) => Date.parse(a.em) <= agora)) {
       return;
     }
-    const vencidos = (segredo.agendaNpc ?? []).filter(
-      (a) => Date.parse(a.em) <= agora,
-    );
+    let feitas: TravessiaNpc[] = [];
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
       if (p.status !== 'DESLOCAMENTO' || p.pausadaEm) return null;
-      if (!this.liberarAgenda(p, s, agora)) return null;
+      const liberadas = this.liberarAgenda(p, s, agora);
+      if (!liberadas) return null;
+      feitas = liberadas;
       return {
-        publico: { deslocamentosNoite: p.deslocamentosNoite },
-        segredo: { posicoesNoite: s.posicoesNoite, agendaNpc: s.agendaNpc },
+        publico: { habitantes: p.habitantes },
+        segredo: { agendaNpc: s.agendaNpc },
       };
     });
     if (!fresco) return;
-    this.sincronizarNoite(partida, segredo, fresco);
-    await this.andarAteAsPortas(partida, vencidos);
-  }
-
-  /**
-   * Os NPCs que avisaram a saída andam até a porta do destino (034 §2.2): o
-   * mesmo `passo` de um aluno. Quem desistiu (`para: null`) sai da luz e volta
-   * ao meio da cena. Visual apenas: falha do RTDB não derruba o pulso.
-   */
-  private async andarAteAsPortas(
-    partida: IsolateusMatchEntity,
-    avisos: AvisoNpc[],
-  ): Promise<void> {
+    partida.habitantes = fresco.partida.habitantes;
+    segredo.agendaNpc = fresco.segredo.agendaNpc;
     if (!this.posicao?.habilitado) return;
-    for (const a of avisos) {
-      const h = partida.habitantes.find((x) => x.id === a.habitanteId);
-      if (!h || !h.vivo || h.preso) continue;
-      const alvoX = (a.para && xDaPorta(h.setorId, a.para)) || CENA.X_INICIAL;
+    const posicao = this.posicao;
+    for (const t of feitas) {
       await this.semFalhar(() =>
-        this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
-          limitar: false,
-        }),
+        posicao.atravessar(partida.id, t.de, t.para, t.habitanteId),
       );
     }
   }
@@ -790,9 +779,10 @@ export class IsolateusGameService {
   private readonly ultimoPasseioNpc = new Map<string, number>();
 
   /**
-   * No pulso do `/tempo`, alguns NPCs soltos sorteiam um novo alvo, com o mesmo
-   * caminho e formato dos alunos (034 §2.2): na Névoa de Guerra, ninguém
-   * distingue real de NPC pelo canal. Quem já está na luz de uma porta fica.
+   * No pulso do `/tempo`, os NPCs com travessia próxima andam até a porta
+   * (036 #15), e alguns outros sorteiam um novo alvo, com o mesmo caminho e
+   * formato dos alunos (034 §2.2): na Névoa de Guerra, ninguém distingue real
+   * de NPC pelo canal.
    */
   private async passearNpcs(
     partida: IsolateusMatchEntity,
@@ -805,13 +795,26 @@ export class IsolateusGameService {
     this.ultimoPasseioNpc.set(partida.id, agora);
 
     const npcs = new Set(segredo.npcIds);
-    const naLuz = new Set(
-      (partida.deslocamentosNoite ?? []).map((a) => a.habitanteId),
-    );
+    // A próxima travessia de cada NPC, se ela está para sair.
+    const rumoPorta = new Map<string, string>();
+    if (partida.status === 'DESLOCAMENTO') {
+      for (const a of segredo.agendaNpc ?? []) {
+        const falta = Date.parse(a.em) - agora;
+        if (a.para && falta <= ISOLATEUS.NPC_PREPARO_MS) {
+          if (!rumoPorta.has(a.habitanteId)) {
+            rumoPorta.set(a.habitanteId, a.para);
+          }
+        }
+      }
+    }
     for (const h of partida.habitantes) {
-      if (!npcs.has(h.id) || !h.vivo || h.preso || naLuz.has(h.id)) continue;
-      if (Math.random() >= CENA.NPC_CHANCE_PASSEAR) continue;
-      const alvoX = Math.floor(Math.random() * (CENA.LARGURA + 1));
+      if (!npcs.has(h.id) || !h.vivo || h.preso) continue;
+      const rumo = rumoPorta.get(h.id);
+      const porta = rumo ? xDaPorta(h.setorId, rumo) : undefined;
+      if (porta === undefined && Math.random() >= CENA.NPC_CHANCE_PASSEAR) {
+        continue;
+      }
+      const alvoX = porta ?? Math.floor(Math.random() * (CENA.LARGURA + 1));
       await this.semFalhar(() =>
         this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
           limitar: false,
@@ -932,11 +935,10 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
-    // Os avisos de NPC que ainda não saíram entram AGORA, no mesmo commit do
-    // amanhecer (026 §2.3). Partida anterior à 026 (sem agenda): os NPCs
-    // sorteiam no fechamento, como antes.
+    // As travessias de NPC que não saíram até o fechamento são descartadas
+    // (036 #15): ninguém atravessa depois de a noite fechar. Partida anterior à
+    // 026 (sem agenda): os NPCs sorteiam no fechamento, como antes.
     const comAgenda = segredo.agendaNpc !== undefined;
-    if (comAgenda) this.liberarAgenda(partida, segredo, Infinity);
     // Só partidas abertas antes da 036 ainda guardam destinos no cofre: a
     // travessia contínua grava a posição pública na hora.
     for (const { habitanteId, setorId } of segredo.posicoesNoite ?? []) {
@@ -967,7 +969,6 @@ export class IsolateusGameService {
     // já aconteceram ao vivo, pela porta.
     const ultimosDeslocamentos = null;
     Object.assign(partida, { deslocamentosNoite: [], ultimosDeslocamentos });
-    segredo.delirioNaNoite = false;
     await this.matches.commitPartida(
       partida.id,
       {
@@ -992,7 +993,6 @@ export class IsolateusGameService {
         posicoesNoite: segredo.posicoesNoite,
         travasNoite: [],
         ...(comAgenda ? { agendaNpc: [] } : {}),
-        delirioNaNoite: false,
         controles: segredo.controles,
         ...(delirou
           ? {
@@ -1231,13 +1231,10 @@ export class IsolateusGameService {
     const trocar = this.permutarVila(partida, segredo);
     if (!trocar) return partida;
 
-    // Movimento + nome novo casariam quem era quem (026 §2.4): os avisos da
-    // noite somem, o amanhecer desta noite não anima, e o último amanhecer
-    // (com ids que não existem mais) sai do doc.
-    const naNoite = partida.status === 'DESLOCAMENTO';
-    partida.deslocamentosNoite = naNoite ? [] : partida.deslocamentosNoite;
+    // O último amanhecer de partidas antigas (com ids que não existem mais) sai
+    // do doc. Na 036 não há aviso de saída nem animação de amanhecer a
+    // suprimir: as travessias são ao vivo.
     partida.ultimosDeslocamentos = null;
-    if (naNoite) segredo.delirioNaNoite = true;
 
     // Os votos da Quarentena moram fora do cofre (um doc por aluno) e apontam
     // para o suspeito pelo id antigo.
@@ -1251,7 +1248,6 @@ export class IsolateusGameService {
         convocadorBloqueado: partida.convocadorBloqueado ?? null,
 
         resgateResultado: partida.resgateResultado ?? null,
-        deslocamentosNoite: partida.deslocamentosNoite ?? [],
         ultimosDeslocamentos: null,
       },
       {
@@ -1261,7 +1257,6 @@ export class IsolateusGameService {
         acaoRodada: null,
         posicoesNoite: segredo.posicoesNoite,
         ...(segredo.agendaNpc ? { agendaNpc: segredo.agendaNpc } : {}),
-        ...(naNoite ? { delirioNaNoite: true } : {}),
       },
     );
     return partida;
@@ -1437,37 +1432,37 @@ export class IsolateusGameService {
   }
 
   /**
-   * Aplica os avisos de NPC vencidos até `ate` (ms): o destino vai para o
-   * cofre (`posicoesNoite`, como o de um real) e o aviso para o espelho
-   * público. Cada aviso sai da agenda ao ser aplicado, então chamar duas vezes
-   * não duplica. Só muta as entidades: quem chama decide o commit. Devolve se
-   * algo mudou.
+   * Aplica as travessias de NPC vencidas até `ate` (ms), em ordem: a posição
+   * pública muda como a de um real que atravessou. Travessia sem estrada a
+   * partir do setor atual (o NPC foi levado, ou a agenda é de uma partida
+   * antiga) é descartada. Cada uma sai da agenda ao ser aplicada, então chamar
+   * duas vezes não duplica. Só muta as entidades: quem chama decide o commit.
+   * Devolve as travessias feitas, ou `null` se não havia nada vencido.
    */
   private liberarAgenda(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
     ate: number,
-  ): boolean {
+  ): TravessiaNpc[] | null {
     const agenda = segredo.agendaNpc ?? [];
     const vencidos = agenda.filter((a) => Date.parse(a.em) <= ate);
-    if (!vencidos.length) return false;
+    if (!vencidos.length) return null;
     segredo.agendaNpc = agenda.filter((a) => !vencidos.includes(a));
 
-    let posicoes = segredo.posicoesNoite ?? [];
-    let avisos = partida.deslocamentosNoite ?? [];
-    for (const aviso of vencidos) {
-      const h = partida.habitantes.find((x) => x.id === aviso.habitanteId);
-      if (!h || !h.vivo || h.preso) continue;
-      const destino = aviso.para ?? h.setorId;
-      posicoes = posicoes.filter((p) => p.habitanteId !== h.id);
-      if (destino !== h.setorId) {
-        posicoes = [...posicoes, { habitanteId: h.id, setorId: destino }];
-      }
-      avisos = aplicarAviso(avisos, h.id, destino, h.setorId);
+    const feitas: TravessiaNpc[] = [];
+    let habitantes = partida.habitantes;
+    for (const a of vencidos) {
+      const h = habitantes.find((x) => x.id === a.habitanteId);
+      if (!h || !h.vivo || h.preso || !a.para) continue;
+      if (!saoVizinhos(h.setorId, a.para)) continue;
+      feitas.push({ habitanteId: h.id, de: h.setorId, para: a.para });
+      const para = a.para;
+      habitantes = habitantes.map((x) =>
+        x.id === h.id ? { ...x, setorId: para } : x,
+      );
     }
-    segredo.posicoesNoite = posicoes;
-    partida.deslocamentosNoite = avisos;
-    return true;
+    partida.habitantes = habitantes;
+    return feitas;
   }
 
   /**
@@ -2754,8 +2749,8 @@ export class IsolateusGameService {
         Date.parse(dados.faseIniciadaEm!),
         partida.duracaoNoiteMs,
       ),
-      delirioNaNoite: false,
       ultimosMover: [],
+      travasNoite: [],
     };
     Object.assign(segredo, noiteNova);
     await this.matches.commitPartida(partida.id, dados, {

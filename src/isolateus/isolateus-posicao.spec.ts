@@ -273,36 +273,33 @@ describe('Isolateus 034 — NPCs no mesmo canal (Task 3)', () => {
     jest.restoreAllMocks();
   });
 
-  it('no horário do aviso de saída, o alvoX do NPC é a porta do destino', async () => {
+  it('com a travessia perto, o NPC anda até a porta do destino (036)', async () => {
     const c = montar({ npcs: 1 });
     c.segredo.agendaNpc = [
-      { habitanteId: 'n1', para: 'energia', em: new Date(agora).toISOString() },
+      {
+        habitanteId: 'n1',
+        para: 'energia',
+        em: new Date(agora + 3_000).toISOString(),
+      },
     ];
-    jest.spyOn(Math, 'random').mockReturnValue(0.99);
+    jest.spyOn(Math, 'random').mockReturnValue(0.99); // sem passeio aleatório
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
     const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
     expect(npc.alvoX).toBe(xDaPorta('seguranca', 'energia'));
     jest.restoreAllMocks();
   });
 
-  it('mudar de ideia tira o NPC da luz: alvoX sai da porta', async () => {
+  it('na hora da travessia, o NPC troca de cena pela porta, como um aluno', async () => {
     const c = montar({ npcs: 1 });
     c.segredo.agendaNpc = [
-      { habitanteId: 'n1', para: null, em: new Date(agora).toISOString() },
+      { habitanteId: 'n1', para: 'energia', em: new Date(agora).toISOString() },
     ];
-    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    jest.spyOn(Math, 'random').mockReturnValue(0.99);
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
-    const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
-    expect(npc.alvoX).toBe(CENA.X_INICIAL);
-    jest.restoreAllMocks();
-  });
-
-  it('NPC já na luz de uma porta não é desviado pelo passeio', async () => {
-    const c = montar({ npcs: 1 });
-    c.partida.deslocamentosNoite = [{ habitanteId: 'n1', para: 'energia' }];
-    jest.spyOn(Math, 'random').mockReturnValue(0.1);
-    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.setorDe('n1')).toBe('energia');
     expect(c.rtdb.dados.has('pos/p1/seguranca/n1')).toBe(false);
+    const novo = c.rtdb.dados.get('pos/p1/energia/n1') as { x: number };
+    expect(novo.x).toBe(xDaPorta('energia', 'seguranca'));
     jest.restoreAllMocks();
   });
 

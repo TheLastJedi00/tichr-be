@@ -96,7 +96,7 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
     expect(segundo.para).not.toBe(primeiro.para);
   });
 
-  it('propriedades com sorteio real: faixa, ordem, estradas e troca de fato', () => {
+  it('propriedades com sorteio real: faixa, ordem e travessias por estrada (036)', () => {
     const { partida } = vilaComAmeacas({
       npcs: 6,
       posicoes: {
@@ -110,7 +110,7 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
     });
     const ids = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'];
     for (let rodada = 0; rodada < 200; rodada++) {
-      const agenda = sortearAgendaNpc(partida.habitantes, ids, inicio);
+      const agenda = sortearAgendaNpc(partida.habitantes, ids, inicio, LIMITE);
       for (const id of ids) {
         const dele = agenda.filter((a) => a.habitanteId === id);
         expect(dele.length).toBeLessThanOrEqual(2);
@@ -119,14 +119,16 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
           const t = Date.parse(a.em) - inicio;
           expect(t).toBeGreaterThanOrEqual(MIN);
           expect(t).toBeLessThanOrEqual(MAX);
-          if (a.para) expect(vizinhosDe(origem)).toContain(a.para);
+          expect(a.para).not.toBeNull();
         }
+        if (dele[0]) expect(vizinhosDe(origem)).toContain(dele[0].para);
         if (dele.length === 2) {
-          expect(Date.parse(dele[1].em)).toBeGreaterThan(
-            Date.parse(dele[0].em),
-          );
-          expect(dele[1].para).not.toBe(dele[0].para);
-          expect(dele[0].para).not.toBeNull();
+          // A segunda travessia parte do setor novo, depois de dar tempo de
+          // andar até a porta.
+          expect(vizinhosDe(dele[0].para!)).toContain(dele[1].para);
+          expect(
+            Date.parse(dele[1].em) - Date.parse(dele[0].em),
+          ).toBeGreaterThanOrEqual(ISOLATEUS.NPC_INTERVALO_TRAVESSIAS_MS);
         }
       }
       // Em ordem de horário, para a liberação ler do começo.
@@ -135,50 +137,48 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
     }
   });
 
-  it('a virada da noite sorteia a agenda e zera os avisos públicos', async () => {
+  it('a virada da noite sorteia a agenda na duração da partida', async () => {
     const ctx = vilaComAmeacas({ npcs: 3, status: 'RESULTADO_RODADA' });
-    ctx.partida.deslocamentosNoite = [{ habitanteId: 'h3', para: 'energia' }];
+    ctx.partida.limiteNoiteMs = 30_000;
     const random = jest.spyOn(Math, 'random').mockReturnValue(0);
     avancar(ISOLATEUS.JANELA_DECISAO_MS + 1);
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
     random.mockRestore();
 
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
-    expect(ctx.partida.deslocamentosNoite).toEqual([]);
     expect(ctx.segredo.agendaNpc?.length).toBeGreaterThan(0);
     const base = Date.parse(ctx.partida.faseIniciadaEm!);
     for (const a of ctx.segredo.agendaNpc!) {
       expect(a.habitanteId).toMatch(/^n/);
-      expect(Date.parse(a.em) - base).toBeGreaterThanOrEqual(MIN);
+      expect(Date.parse(a.em) - base).toBeGreaterThanOrEqual(3_000);
     }
   });
 
-  it('no fechamento, cada NPC termina no ÚLTIMO aviso dele; sem aviso, fica', async () => {
-    const ctx = vilaComAmeacas({ npcs: 3 });
-    const em = (ms: number) => new Date(agora + ms).toISOString();
+  it('travessia que não saiu até o fechamento é descartada', async () => {
+    const ctx = vilaComAmeacas({ npcs: 2 });
     ctx.segredo.agendaNpc = [
-      { habitanteId: 'n1', para: 'energia', em: em(2_000) },
-      { habitanteId: 'n2', para: 'comercio', em: em(3_000) },
-      { habitanteId: 'n2', para: null, em: em(9_000) }, // desistiu
+      {
+        habitanteId: 'n1',
+        para: 'energia',
+        em: new Date(agora + 60_000).toISOString(),
+      },
     ];
     avancar(ISOLATEUS.LIMITE_DESLOCAMENTO_MS + 1);
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-
-    expect(ctx.setorDe('n1')).toBe('energia');
-    expect(ctx.setorDe('n2')).toBe('seguranca');
-    expect(ctx.setorDe('n3')).toBe('seguranca'); // sem aviso: não sorteia mais
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
+    expect(ctx.setorDe('n1')).toBe('seguranca');
     expect(ctx.segredo.agendaNpc).toEqual([]);
   });
 });
 
-describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
+describe('Isolateus 036 — NPCs atravessam ao vivo (Task 5)', () => {
   /** Vila com NPCs e uma agenda relativa ao "agora" do teste. */
   const comAgenda = (
-    avisos: Array<[string, string | null, number]>,
+    travessias: Array<[string, string, number]>,
     opts: Parameters<typeof vilaComAmeacas>[0] = {},
   ) => {
     const ctx = vilaComAmeacas({ npcs: 3, ...opts });
-    ctx.segredo.agendaNpc = avisos.map(([habitanteId, para, ms]) => ({
+    ctx.segredo.agendaNpc = travessias.map(([habitanteId, para, ms]) => ({
       habitanteId,
       para,
       em: new Date(agora + ms).toISOString(),
@@ -186,57 +186,62 @@ describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
     return ctx;
   };
   const commits = (ctx: ReturnType<typeof vilaComAmeacas>) =>
-    (ctx.repo.commitPartida as jest.Mock).mock.calls.length;
+    (ctx.repo.transacao as jest.Mock).mock.calls.length;
 
-  it('o pulso do /tempo libera só os avisos vencidos, sem fechar a noite', async () => {
+  it('o pulso do /tempo atravessa só as vencidas, na hora e em público', async () => {
     const ctx = comAgenda([
       ['n1', 'energia', 2_000],
       ['n2', 'comercio', 10_000],
     ]);
     avancar(3_000);
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
-    expect(ctx.partida.deslocamentosNoite).toEqual([
-      { habitanteId: 'n1', para: 'energia' },
-    ]);
+    expect(ctx.setorDe('n1')).toBe('energia');
+    expect(ctx.setorDe('n2')).toBe('seguranca');
     expect(ctx.segredo.agendaNpc!.map((a) => a.habitanteId)).toEqual(['n2']);
-    // O NPC liberado conta como "está indo": a fileira da Ameaça já o vê no
-    // destino, como um real que andou.
-    expect(ctx.segredo.posicoesNoite).toEqual([
-      { habitanteId: 'n1', setorId: 'energia' },
-    ]);
   });
 
-  it('é idempotente: um segundo pulso não duplica nem escreve', async () => {
+  it('duas travessias em sequência: de vizinho em vizinho', async () => {
+    const ctx = comAgenda([
+      ['n1', 'energia', 1_000],
+      ['n1', 'comunicacao', 4_000],
+    ]);
+    avancar(5_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.setorDe('n1')).toBe('comunicacao');
+  });
+
+  it('travessia sem estrada a partir do setor atual é descartada', async () => {
+    const ctx = comAgenda([['n1', 'abastecimento', 1_000]]);
+    avancar(2_000);
+    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
+    expect(ctx.setorDe('n1')).toBe('seguranca');
+    expect(ctx.segredo.agendaNpc).toEqual([]);
+  });
+
+  it('é idempotente: um segundo pulso não atravessa de novo nem escreve', async () => {
     const ctx = comAgenda([['n1', 'energia', 2_000]]);
     avancar(3_000);
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
     const antes = commits(ctx);
     await ctx.service.resolverPorTempo('p1', { alunoId: 'a3' });
     expect(commits(ctx)).toBe(antes);
-    expect(ctx.partida.deslocamentosNoite).toHaveLength(1);
+    expect(ctx.setorDe('n1')).toBe('energia');
   });
 
-  it('sem aviso vencido, o pulso não escreve nada', async () => {
+  it('sem travessia vencida, o pulso não escreve nada', async () => {
     const ctx = comAgenda([['n1', 'energia', 10_000]]);
     avancar(3_000);
     await ctx.service.resolverPorTempo('p1', { alunoId: 'a3' });
     expect(commits(ctx)).toBe(0);
   });
 
-  it('a desistência do NPC retira o aviso dele', async () => {
-    const ctx = comAgenda([
-      ['n1', 'energia', 2_000],
-      ['n1', null, 4_000],
-    ]);
-    avancar(3_000);
-    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-    expect(ctx.partida.deslocamentosNoite).toHaveLength(1);
+  it('pausada, ninguém atravessa', async () => {
+    const ctx = comAgenda([['n1', 'energia', 1_000]]);
+    ctx.partida.pausadaEm = new Date(agora).toISOString();
     avancar(2_000);
-    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-    expect(ctx.partida.deslocamentosNoite).toEqual([]);
-    expect(ctx.segredo.posicoesNoite).toEqual([]);
+    await ctx.service.resolverPorTempo('p1', { alunoId: 'a3' }).catch(() => {});
+    expect(ctx.setorDe('n1')).toBe('seguranca');
   });
 
   it('qualquer requisição da noite também libera: mover, confirmar, jogada', async () => {
@@ -247,38 +252,18 @@ describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
     ]);
     avancar(1_500);
     await ctx.service.mover('a3', 'p1', 'comercio');
-    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toEqual([
-      'n1',
-    ]);
+    expect(ctx.setorDe('n1')).toBe('energia');
     avancar(1_000);
     await ctx.service.confirmarPosicao('a4', 'p1');
-    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toContain(
-      'n2',
-    );
+    expect(ctx.setorDe('n2')).toBe('comercio');
     avancar(1_000);
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
-    expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toContain(
-      'n3',
-    );
+    expect(ctx.setorDe('n3')).toBe('energia');
   });
 });
 
-describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
-  const fecharPorTempo = async (ctx: ReturnType<typeof vilaComAmeacas>) => {
-    avancar(ISOLATEUS.LIMITE_DESLOCAMENTO_MS + 1);
-    await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-  };
-
-  it('o Delírio da Ameaça neste amanhecer suprime a animação', async () => {
-    const ctx = vilaComAmeacas();
-    ctx.segredo.agendaNpc = [];
-    ctx.segredo.delirioPendente = true;
-    await ctx.service.mover('a3', 'p1', 'energia');
-    await fecharPorTempo(ctx);
-    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
-  });
-
-  it('o Delírio do professor na noite zera os avisos, remapeia a agenda e suprime o amanhecer', async () => {
+describe('Isolateus 026 — o Delírio na noite (036)', () => {
+  it('o Delírio do professor remapeia a agenda; a travessia sai com o id novo', async () => {
     const ctx = vilaComAmeacas({ npcs: 1 });
     ctx.segredo.agendaNpc = [
       {
@@ -287,37 +272,16 @@ describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
         em: new Date(agora + 8_000).toISOString(),
       },
     ];
-    ctx.partida.ultimosDeslocamentos = { rodada: -1, movimentos: [] };
-    await ctx.service.mover('a3', 'p1', 'energia');
-
     await ctx.service.delirioDoProfessor('prof', 'p1');
-
-    expect(ctx.partida.deslocamentosNoite).toEqual([]);
-    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
-    expect(ctx.segredo.delirioNaNoite).toBe(true);
-    // Os ids foram regerados: agenda e destino seguem os habitantes novos.
     const npcNovo = ctx.segredo.npcIds[0];
     expect(npcNovo).not.toBe('n1');
     expect(ctx.segredo.agendaNpc[0].habitanteId).toBe(npcNovo);
-    const h3Novo = ctx.segredo.habitanteDe('a3')!;
-    expect(ctx.setorDe(h3Novo)).toBe('energia');
-
-    // O aviso que sai DEPOIS do delírio aparece normalmente, com o id novo.
     avancar(9_000);
     await ctx.service.resolverPorTempo('p1', { alunoId: 'a4' });
-    expect(ctx.partida.deslocamentosNoite).toEqual([
-      { habitanteId: npcNovo, para: 'energia' },
-    ]);
-
-    await fecharPorTempo(ctx);
-    expect(ctx.partida.ultimosDeslocamentos).toBeNull();
-    expect(ctx.segredo.delirioNaNoite).toBe(false);
-    expect(ctx.partida.habitantes.find((h) => h.id === h3Novo)!.setorId).toBe(
-      'energia',
-    );
+    expect(ctx.setorDe(npcNovo)).toBe('energia');
   });
 
-  it('o Delírio do professor de dia também apaga o último amanhecer (ids mudaram)', async () => {
+  it('o Delírio do professor apaga o último amanhecer de partidas antigas', async () => {
     const ctx = vilaComAmeacas({ status: 'RESULTADO_RODADA' });
     ctx.partida.ultimosDeslocamentos = {
       rodada: 0,
@@ -325,7 +289,6 @@ describe('Isolateus 026 — o amanhecer e o Delírio (Task 5)', () => {
     };
     await ctx.service.delirioDoProfessor('prof', 'p1');
     expect(ctx.partida.ultimosDeslocamentos).toBeNull();
-    expect(ctx.segredo.delirioNaNoite ?? false).toBe(false);
   });
 });
 
@@ -375,7 +338,7 @@ describe('Isolateus 026 — corrida entre o pulso e o mover (transação)', () =
     return { ...ctx, banco, depoisDeLer: (f: () => void) => (aoLerCofre = f) };
   }
 
-  it('um aluno que anda enquanto o pulso libera um NPC não perde o movimento', async () => {
+  it('um aluno que atravessa enquanto o pulso move um NPC não perde a travessia', async () => {
     const ctx = bancoComCorrida();
     ctx.banco.segredo.agendaNpc = [
       {
@@ -385,24 +348,18 @@ describe('Isolateus 026 — corrida entre o pulso e o mover (transação)', () =
       },
     ];
     avancar(2_000);
-    // O pulso lê o cofre; logo em seguida, o aluno a3 anda (outra requisição).
+    // O pulso lê o cofre; logo em seguida, o aluno a3 atravessa (outra
+    // requisição).
     ctx.depoisDeLer(() => {
-      ctx.banco.segredo.posicoesNoite = [
-        { habitanteId: 'h3', setorId: 'comercio' },
-      ];
-      ctx.banco.partida.deslocamentosNoite = [
-        { habitanteId: 'h3', para: 'comercio' },
-      ];
+      ctx.banco.partida.habitantes = ctx.banco.partida.habitantes.map((h) =>
+        h.id === 'h3' ? { ...h, setorId: 'comercio' } : h,
+      );
     });
     await ctx.service.resolverPorTempo('p1', { professorId: 'prof' });
-
-    expect(ctx.banco.segredo.posicoesNoite).toEqual(
-      expect.arrayContaining([
-        { habitanteId: 'h3', setorId: 'comercio' },
-        { habitanteId: 'n1', setorId: 'energia' },
-      ]),
-    );
-    expect(ctx.banco.partida.deslocamentosNoite).toHaveLength(2);
+    const setor = (id: string) =>
+      ctx.banco.partida.habitantes.find((h) => h.id === id)!.setorId;
+    expect(setor('h3')).toBe('comercio');
+    expect(setor('n1')).toBe('energia');
   });
 
   it('dois alunos atravessando ao mesmo tempo: o segundo não apaga o primeiro (036)', async () => {
