@@ -322,3 +322,11 @@ describe('Isolateus 034 — NPCs no mesmo canal (Task 3)', () => {
     jest.restoreAllMocks();
   });
 });
+
+describe('Isolateus 036 — o passo devolve a caminhada (Task 11)', () => {
+  it('o modo simples recebe o x de saída e o alvo, para saber quando chega', async () => {
+    const c = montar();
+    const r = await c.service.passo('a3', 'p1', 24);
+    expect(r).toEqual({ ok: true, x: CENA.X_INICIAL, alvoX: 24, t: agora });
+  });
+});

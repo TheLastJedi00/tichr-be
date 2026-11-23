@@ -63,7 +63,7 @@ interface TravessiaNpc {
   de: string;
   para: string;
 }
-import { CENA, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
+import { CENA, Passo, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusPosicaoService } from './isolateus-posicao.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
@@ -670,7 +670,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
     alvoX: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true } & Passo> {
     const { partida, segredo } = await this.carregarParaComando(partidaId);
     const habitante = this.habitanteNaCena(partida, segredo, alunoId);
     if (!alvoDentroDaCena(alvoX)) {
@@ -680,14 +680,16 @@ export class IsolateusGameService {
       });
     }
     if (!this.posicao?.habilitado) this.canalIndisponivel();
-    await this.posicao.passo(
+    // A caminhada calculada volta na resposta (036 §2.4): o modo simples, sem
+    // cena, usa o x de saída para saber quando o boneco chega à porta.
+    const caminhada = await this.posicao.passo(
       partida.id,
       habitante.setorId,
       habitante.id,
       alvoX,
       { limitar: true },
     );
-    return { ok: true };
+    return { ok: true, ...caminhada };
   }
 
   /**
