@@ -448,6 +448,7 @@ export class IsolateusMatchService {
         : (partida.limiteNoiteMs ?? ISOLATEUS.LIMITE_NOITE_PADRAO_MS),
       cicloBrilho: ISOLATEUS.CICLO_BRILHO,
       brilho: null,
+      chat: [], // o chat da vila abre no Despertar (036)
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública
       entradaEncerraEm: null,
     };

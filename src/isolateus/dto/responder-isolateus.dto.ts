@@ -6,6 +6,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { DefinirCronometroDto } from '../../common/entrada';
 import { ISOLATEUS } from '../entities/isolateus-match.entity';
@@ -22,6 +23,14 @@ export class ResponderIsolateusDto {
 export class MensagemDto {
   @IsString()
   @MaxLength(240)
+  texto: string;
+}
+
+/** Uma fala no chat da vila (036 #29): de 1 a 200 caracteres. */
+export class ChatVilaDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
   texto: string;
 }
 

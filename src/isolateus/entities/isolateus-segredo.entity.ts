@@ -132,6 +132,9 @@ export class IsolateusSegredoEntity {
    */
   travasNoite?: Array<{ alunoId: string; motivo: TravaNoite }>;
 
+  /** A última fala de cada aluno no chat da vila (limite de envio, 036 #30). */
+  ultimosChat?: Array<{ alunoId: string; em: string }>;
+
   /** A última troca de destino de cada aluno nesta noite (rate limit do `mover`). */
   ultimosMover?: Array<{ alunoId: string; em: string }>;
 

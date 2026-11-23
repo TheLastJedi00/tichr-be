@@ -115,6 +115,10 @@ export const ISOLATEUS = {
    * Sinal Interceptado (028 §1). A mesma régua do `WOR.PENALIDADE_XP`.
    */
   PENALIDADE_XP: 1000,
+  /** Chat da vila (036 #29 e #30). */
+  CHAT_MAX_MENSAGENS: 80,
+  CHAT_MAX_CARACTERES: 200,
+  CHAT_INTERVALO_MS: 2_000,
 } as const;
 
 export type StatusIsolateus =
@@ -179,6 +183,14 @@ export interface Rumor {
   autorNome: string;
   texto: string;
   tipo: 'SINAL' | 'RUMOR';
+}
+
+/** Uma fala do chat da vila (036): o nome é o do habitante, nunca o real. */
+export interface MensagemVila {
+  id: string;
+  autorNome: string;
+  texto: string;
+  em: string;
 }
 
 /** Uma fala do debate da Quarentena. */
@@ -360,6 +372,8 @@ export class IsolateusMatchEntity {
 
   rumores: Rumor[];
   debate: MensagemDebate[];
+  /** O chat da vila (036): as últimas `CHAT_MAX_MENSAGENS` falas. */
+  chat: MensagemVila[] = [];
   resumoRodada: ResumoRodada | null;
 
   /**

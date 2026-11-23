@@ -6,6 +6,7 @@ import { MoverDto } from './dto/mover.dto';
 import { PassoDto } from './dto/passo.dto';
 import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
+  ChatVilaDto,
   MensagemDto,
   ResponderIsolateusDto,
   VotarResgateDto,
@@ -181,6 +182,16 @@ export class AlunoIsolateusController {
   }
 
   /** O Debate Tático da Quarentena. */
+  /** Fala no chat da vila (036): passa pelo filtro de linguagem. */
+  @Post(':id/chat')
+  chat(
+    @CurrentStudent() aluno: { alunoId: string },
+    @Param('id') id: string,
+    @Body() dto: ChatVilaDto,
+  ) {
+    return this.game.falarNoChat(aluno.alunoId, id, dto.texto);
+  }
+
   @Post(':id/debate')
   debater(
     @CurrentStudent() aluno: { alunoId: string },

@@ -2988,6 +2988,92 @@ export class IsolateusGameService {
     return partida;
   }
 
+  // ===== O chat da vila (036) =====
+
+  /**
+   * Uma fala no chat da vila: um canal só, do Despertar ao fim, em todas as
+   * fases. Vivos e soltos escrevem (a Ameaça também: ela precisa blefar);
+   * abduzidos e presos só leem. Assina com o nome do habitante — nunca o nome
+   * real nem o id. O palavrão passa pelo filtro da 028 antes de gravar.
+   *
+   * Numa transação: dois alunos falando no mesmo instante não apagam a fala um
+   * do outro, e o limite de envio é conferido sobre o cofre fresco.
+   */
+  async falarNoChat(
+    alunoId: string,
+    partidaId: string,
+    texto: string,
+  ): Promise<IsolateusMatchEntity> {
+    const { partida, segredo } = await this.carregarParaComando(partidaId);
+    this.assertChatAberto(partida);
+    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
+    if (!habitante.vivo || habitante.preso) {
+      throw new ForbiddenException({
+        code: 'FORA_DA_VILA',
+        message: 'Você está fora da vila: só pode ler o chat.',
+      });
+    }
+    const limpo = texto.trim().slice(0, ISOLATEUS.CHAT_MAX_CARACTERES);
+    if (!limpo) {
+      throw new BadRequestException({
+        code: 'MENSAGEM_VAZIA',
+        message: 'Escreva alguma coisa.',
+      });
+    }
+    await this.moderar(partida, alunoId, limpo);
+
+    const fresco = await this.matches.transacao(partidaId, (p, s) => {
+      assertNaoPausada(p);
+      this.assertChatAberto(p);
+      const agora = Date.now();
+      const ultimos = s.ultimosChat ?? [];
+      const ultimo = ultimos.find((u) => u.alunoId === alunoId);
+      if (
+        ultimo &&
+        agora - Date.parse(ultimo.em) < ISOLATEUS.CHAT_INTERVALO_MS
+      ) {
+        throw new HttpException(
+          {
+            code: 'CHAT_RAPIDO',
+            message: 'Calma! Espere um instante antes de mandar outra.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      // O nome é lido na transação: um Delírio no meio troca os codinomes.
+      const autor = p.habitantes.find((h) => h.id === s.habitanteDe(alunoId));
+      const em = new Date(agora).toISOString();
+      const chat = [
+        ...(p.chat ?? []),
+        {
+          id: randomUUID(),
+          autorNome: autor?.nome ?? habitante.nome,
+          texto: limpo,
+          em,
+        },
+      ].slice(-ISOLATEUS.CHAT_MAX_MENSAGENS);
+      const ultimosChat = [
+        ...ultimos.filter((u) => u.alunoId !== alunoId),
+        { alunoId, em },
+      ];
+      p.chat = chat;
+      s.ultimosChat = ultimosChat;
+      return { publico: { chat }, segredo: { ultimosChat } };
+    });
+    if (fresco) partida.chat = fresco.partida.chat;
+    return partida;
+  }
+
+  /** O chat vale com a partida em andamento: nem no lobby, nem depois do fim. */
+  private assertChatAberto(partida: IsolateusMatchEntity): void {
+    if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
+      throw new BadRequestException({
+        code: 'CHAT_FECHADO',
+        message: 'O chat da vila abre quando a investigação começa.',
+      });
+    }
+  }
+
   /** O Debate Tático: acusações e defesas por escrito, com o relógio correndo. */
   async debater(
     alunoId: string,
