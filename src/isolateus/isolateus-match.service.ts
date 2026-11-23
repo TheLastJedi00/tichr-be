@@ -74,6 +74,7 @@ export class IsolateusMatchService {
         nome: jogo.nome,
         status: 'LOBBY',
         valeRanking: true,
+        limiteNoiteMs: ISOLATEUS.LIMITE_NOITE_PADRAO_MS,
         criadaEm: new Date().toISOString(),
         esperanca: ISOLATEUS.ESPERANCA_INICIAL,
         // Sem `vizinhos`: a malha é imutável e vive no banco estático. Copiá-la
@@ -169,6 +170,7 @@ export class IsolateusMatchService {
     partidaId: string,
     segundos: number | null,
     debateHabilitado?: boolean,
+    segundosNoite?: number,
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     assertLobbyCronometro(partida.status);
@@ -178,6 +180,7 @@ export class IsolateusMatchService {
     };
     if (debateHabilitado !== undefined)
       dados.debateHabilitado = debateHabilitado;
+    if (segundosNoite !== undefined) dados.limiteNoiteMs = segundosNoite * 1000;
     Object.assign(partida, dados);
     await this.matches.commitPartida(partidaId, dados);
     return partida;
@@ -307,7 +310,7 @@ export class IsolateusMatchService {
   async iniciar(
     professorId: string,
     partidaId: string,
-    opcoes: { debateHabilitado?: boolean } = {},
+    opcoes: { debateHabilitado?: boolean; segundosNoite?: number } = {},
   ): Promise<IsolateusMatchEntity> {
     const partida = await this.obterDoProfessor(professorId, partidaId);
     return this.despertar(partida, opcoes);
@@ -355,7 +358,7 @@ export class IsolateusMatchService {
   /** O Despertar em si, manual ou pelo cronômetro de entrada (035). */
   private async despertar(
     partida: IsolateusMatchEntity,
-    opcoes: { debateHabilitado?: boolean },
+    opcoes: { debateHabilitado?: boolean; segundosNoite?: number },
   ): Promise<IsolateusMatchEntity> {
     const partidaId = partida.id;
     if (partida.status !== 'LOBBY') {
@@ -422,6 +425,9 @@ export class IsolateusMatchService {
       distribuidos,
       vinculos.filter((v) => !v.alunoId).map((v) => v.habitanteId),
       inicio.getTime(),
+      opcoes.segundosNoite
+        ? opcoes.segundosNoite * 1000
+        : (partida.limiteNoiteMs ?? ISOLATEUS.LIMITE_NOITE_PADRAO_MS),
     );
     const dados: Partial<IsolateusMatchEntity> = {
       status: 'DESLOCAMENTO',
@@ -436,6 +442,10 @@ export class IsolateusMatchService {
       // Escolhido no lobby e fixo daqui em diante: trocar a regra no meio da
       // partida mudaria o jogo que a turma começou.
       debateHabilitado: opcoes.debateHabilitado ?? true,
+      // O tempo de movimentação (036 #2): o do iniciar, senão o do lobby.
+      limiteNoiteMs: opcoes.segundosNoite
+        ? opcoes.segundosNoite * 1000
+        : (partida.limiteNoiteMs ?? ISOLATEUS.LIMITE_NOITE_PADRAO_MS),
       cicloBrilho: ISOLATEUS.CICLO_BRILHO,
       brilho: null,
       inscritos: [], // apaga o vínculo aluno↔pseudônimo da camada pública

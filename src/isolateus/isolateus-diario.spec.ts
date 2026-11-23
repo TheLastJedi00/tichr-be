@@ -163,6 +163,7 @@ describe('Isolateus — o Diário da Vila', () => {
     await c.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
     for (let i = 2; i <= 4; i++)
       await c.service.confirmarPosicao(`a${i}`, 'p1');
+    await c.service.pularFase('prof', 'p1', 'DESLOCAMENTO');
 
     expect(c.tipos()).toContain('SABOTAGEM');
     expect(c.ultimo().texto).toContain('Setor de Energia');

@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { IsolateusGameService } from './isolateus-game.service';
 import { ISOLATEUS } from './entities/isolateus-match.entity';
 import { IsolateusSegredoEntity } from './entities/isolateus-segredo.entity';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { amanhecer, vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /** Todos os reais (menos os listados) confirmam a posição da noite. */
 async function aldeoesConfirmam(
@@ -57,35 +57,29 @@ describe('Isolateus — várias Ameaças: a noite', () => {
     ).rejects.toMatchObject({ response: { code: 'JOGADA_FEITA' } });
   });
 
-  it('a noite só fecha cedo quando TODAS as Ameaças jogaram', async () => {
-    const { service, partida } = vilaComAmeacas({ reais: 5 });
-    await aldeoesConfirmam(service, ['a3', 'a4', 'a5']);
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
-    await service.confirmarPosicao('a2', 'p1');
-    expect(partida.status).toBe('DESLOCAMENTO'); // falta a jogada da a2
-
-    await service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
-    expect(partida.status).toBe('QUESTAO_ATIVA'); // amanheceu
-  });
-
-  it('a carência vale enquanto faltar a jogada de QUALQUER Ameaça', async () => {
-    const { service, partida } = vilaComAmeacas({ reais: 5 });
-    const inicio = partida.faseIniciadaEm;
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
-    await aldeoesConfirmam(service, ['a2', 'a3', 'a4', 'a5']);
-    // Todos se posicionaram; a a2 ainda não jogou: o relógio encurta.
-    expect(partida.faseIniciadaEm).not.toBe(inicio);
-    expect(partida.status).toBe('DESLOCAMENTO');
+  it('todos jogando, a noite não fecha antes do tempo (036 #4)', async () => {
+    const ctx = vilaComAmeacas({ reais: 5 });
+    const inicio = ctx.partida.faseIniciadaEm;
+    await aldeoesConfirmam(ctx.service, ['a3', 'a4', 'a5']);
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    // Sem carência: o relógio não encurta.
+    expect(ctx.partida.faseIniciadaEm).toBe(inicio);
+    await amanhecer(ctx);
+    expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
   });
 
   it('duas sabotagens derrubam os dois setores', async () => {
-    const { service, partida } = vilaComAmeacas({
+    const ctx = vilaComAmeacas({
       reais: 5,
       posicoes: { h1: 'energia', h2: 'saude' },
     });
+    const { service, partida } = ctx;
     await aldeoesConfirmam(service, ['a3', 'a4', 'a5']);
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
     await service.acaoAmeaca('a2', 'p1', { tipo: 'SABOTAR' });
+    await amanhecer(ctx);
 
     const ruinas = partida.setores.filter((s) => !s.intacto).map((s) => s.id);
     expect(ruinas.sort()).toEqual(['energia', 'saude']);

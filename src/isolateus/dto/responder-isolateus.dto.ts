@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -7,6 +8,9 @@ import {
   Min,
 } from 'class-validator';
 import { DefinirCronometroDto } from '../../common/entrada';
+import { ISOLATEUS } from '../entities/isolateus-match.entity';
+
+const OPCOES_NOITE: number[] = [...ISOLATEUS.OPCOES_NOITE_S];
 
 export class ResponderIsolateusDto {
   @IsInt()
@@ -41,6 +45,11 @@ export class IniciarPartidaIsolateusDto {
   @IsOptional()
   @IsBoolean()
   debateHabilitado?: boolean;
+
+  /** Tempo de movimentação = duração da noite (036 #2). Ausente = o do lobby. */
+  @IsOptional()
+  @IsIn(OPCOES_NOITE)
+  segundosNoite?: number;
 }
 
 /**
@@ -51,6 +60,10 @@ export class DefinirCronometroIsolateusDto extends DefinirCronometroDto {
   @IsOptional()
   @IsBoolean()
   debateHabilitado?: boolean;
+
+  @IsOptional()
+  @IsIn(OPCOES_NOITE)
+  segundosNoite?: number;
 }
 
 /** O voto em quem volta pelo resgate (025 §6.4). */

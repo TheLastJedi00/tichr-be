@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
 import { ISOLATEUS } from './entities/isolateus-match.entity';
-import { reescalarAgenda, sortearAgendaNpc } from './isolateus-deslocamento';
+import { sortearAgendaNpc } from './isolateus-deslocamento';
 import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
 import { vizinhosDe } from './isolateus.data';
 
@@ -165,19 +165,30 @@ describe('Isolateus 026 — mover publica o aviso de saída (Task 2)', () => {
   });
 });
 
-const [MIN, MAX] = ISOLATEUS.NPC_AVISO_JANELA_MS;
+const LIMITE = ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
+const MIN = Math.round(LIMITE * ISOLATEUS.NPC_JANELA_FRACAO[0]);
+const MAX = Math.round(LIMITE * ISOLATEUS.NPC_JANELA_FRACAO[1]);
 
-describe('Isolateus — a noite dura 15s', () => {
-  it('a janela de deslocamento é de 15 segundos', () => {
+describe('Isolateus — a duração da noite (036)', () => {
+  it('a noite legada (partidas antigas) é de 15 segundos', () => {
     expect(ISOLATEUS.LIMITE_DESLOCAMENTO_MS).toBe(15_000);
   });
 
-  it('os avisos dos NPCs e a carência da Ameaça cabem na noite', () => {
-    // Aviso de NPC depois do fim da noite nunca sairia: o NPC ficaria parado.
-    expect(MAX).toBeLessThan(ISOLATEUS.LIMITE_DESLOCAMENTO_MS);
-    expect(ISOLATEUS.CARENCIA_AMEACA_MS).toBeLessThan(
-      ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
-    );
+  it('a agenda dos NPCs cabe dentro de qualquer duração escolhida', () => {
+    const { partida } = vilaComAmeacas({ npcs: 6 });
+    for (const s of ISOLATEUS.OPCOES_NOITE_S) {
+      const agenda = sortearAgendaNpc(
+        partida.habitantes,
+        ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'],
+        0,
+        s * 1000,
+        () => 0.01,
+      );
+      for (const a of agenda) {
+        expect(Date.parse(a.em)).toBeGreaterThanOrEqual(s * 100);
+        expect(Date.parse(a.em)).toBeLessThan(s * 1000);
+      }
+    }
   });
 });
 
@@ -192,6 +203,7 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
       partida.habitantes,
       ['n1', 'n2', 'n3'],
       inicio,
+      LIMITE,
       () => 0, // todo NPC anda e muda de ideia
     );
     expect(new Set(agenda.map((a) => a.habitanteId))).toEqual(new Set(['n1']));
@@ -203,6 +215,7 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
       partida.habitantes,
       ['n1', 'n2', 'n3'],
       inicio,
+      LIMITE,
       () => 0.99,
     );
     expect(agenda).toEqual([]);
@@ -215,6 +228,7 @@ describe('Isolateus 026 — a agenda dos NPCs (Task 3)', () => {
       partida.habitantes,
       ['n1'],
       inicio,
+      LIMITE,
       () => 0,
     );
     expect(agenda).toHaveLength(2);
@@ -390,32 +404,6 @@ describe('Isolateus 026 — liberação da agenda e pulso (Task 4)', () => {
     expect(ctx.partida.deslocamentosNoite.map((d) => d.habitanteId)).toContain(
       'n3',
     );
-  });
-
-  it('na carência, os avisos restantes passam a cair dentro dela', async () => {
-    const ctx = comAgenda([['n1', 'energia', 10_000]], { ameacas: ['a1'] });
-    avancar(5_000);
-    // Todos os reais confirmam; falta só a jogada da Ameaça → carência.
-    for (const a of ['a1', 'a2', 'a3', 'a4', 'a5']) {
-      await ctx.service.confirmarPosicao(a, 'p1');
-    }
-    expect(ctx.partida.status).toBe('DESLOCAMENTO');
-    const em = Date.parse(ctx.segredo.agendaNpc![0].em);
-    expect(em).toBeGreaterThan(agora);
-    expect(em).toBeLessThanOrEqual(agora + ISOLATEUS.CARENCIA_AMEACA_MS);
-  });
-
-  it('reescalarAgenda comprime proporcionalmente e mantém a ordem', () => {
-    const base = 1_000_000;
-    const agenda = [10_000, 20_000, 40_000].map((ms, i) => ({
-      habitanteId: `n${i}`,
-      para: 'energia',
-      em: new Date(base + ms).toISOString(),
-    }));
-    const nova = reescalarAgenda(agenda, base, base + 60_000, base + 6_000);
-    expect(nova.map((a) => Date.parse(a.em) - base)).toEqual([
-      1_000, 2_000, 4_000,
-    ]);
   });
 });
 

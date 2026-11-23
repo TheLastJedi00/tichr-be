@@ -58,7 +58,6 @@ import {
   AvisoNpc,
   aplicarAviso,
   movimentosDaNoite,
-  reescalarAgenda,
   sortearAgendaNpc,
 } from './isolateus-deslocamento';
 import { CENA, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
@@ -788,9 +787,9 @@ export class IsolateusGameService {
   }
 
   /**
-   * Contabiliza a confirmação e, quando **todos** os habitantes reais na vila já
-   * fecharam a jogada, encerra a noite na hora — ninguém fica olhando um
-   * cronômetro que não serve mais a ninguém (mesmo Avanço Rápido do debate).
+   * Contabiliza a ação da noite (ociosidade, 032). A noite NÃO fecha antes do
+   * tempo (036 #4): com a movimentação contínua, quem já atravessou uma porta
+   * ainda pode atravessar outra até o relógio zerar.
    *
    * Idempotente: confirmar duas vezes não conta dobrado.
    */
@@ -810,84 +809,7 @@ export class IsolateusGameService {
       { confirmacoesNoite: confirmacoes },
     );
 
-    if (this.noiteEstaFechada(partida, segredo)) {
-      return this.fecharNoite(partida);
-    }
-    await this.encurtarPelaCarencia(partida, segredo);
     return partida;
-  }
-
-  /**
-   * A vila inteira já decidiu e só falta a jogada da Ameaça: o resto da janela
-   * vira a **carência** (`CARENCIA_AMEACA_MS`).
-   *
-   * O encurtamento é feito **rebaseando `faseIniciadaEm`** em vez de criar um
-   * segundo prazo: todos os relógios (telão e celulares) já contam a partir
-   * desse campo, e `resolverPorTempo` revalida contra ele. Um campo só, uma
-   * verdade só.
-   *
-   * O que ele **não** faz é dizer que falta a Ameaça: o relógio encurta para
-   * todo mundo ao mesmo tempo, sem nomear ninguém. Apontar o habitante que falta
-   * seria entregar o alienígena por eliminação, já que cada aldeão sabe que
-   * confirmou.
-   */
-  private async encurtarPelaCarencia(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): Promise<void> {
-    if (
-      partida.status !== 'DESLOCAMENTO' ||
-      this.ameacasJogaram(partida, segredo)
-    )
-      return;
-    if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm)
-      return;
-
-    const fim =
-      Date.parse(partida.faseIniciadaEm) + ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
-    const novoFim = Date.now() + ISOLATEUS.CARENCIA_AMEACA_MS;
-    // Só encurta: uma segunda confirmação (ou um relógio torto) não pode
-    // devolver tempo a quem já está na carência.
-    if (novoFim >= fim) return;
-
-    const base = new Date(
-      novoFim - ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
-    ).toISOString();
-    partida.faseIniciadaEm = base;
-    if (segredo.agendaNpc === undefined) {
-      await this.matches.commitPartida(partida.id, { faseIniciadaEm: base });
-      return;
-    }
-    // Os avisos de NPC que ainda faltam cabem na carência, no mesmo commit do
-    // relógio novo (026 §2.3): senão sairiam todos juntos no fechamento. Numa
-    // transação, sobre a agenda fresca: gravar a lida aqui devolveria à agenda
-    // um aviso que o pulso acabou de liberar.
-    const agora = Date.now();
-    const fresco = await this.matches.transacao(partida.id, (p, s) => {
-      if (p.status !== 'DESLOCAMENTO') return null;
-      s.agendaNpc = reescalarAgenda(s.agendaNpc ?? [], agora, fim, novoFim);
-      p.faseIniciadaEm = base;
-      return {
-        publico: { faseIniciadaEm: base },
-        segredo: { agendaNpc: s.agendaNpc },
-      };
-    });
-    if (fresco) segredo.agendaNpc = fresco.segredo.agendaNpc;
-  }
-
-  /**
-   * A noite só fecha cedo quando **todos** os reais confirmaram **e** todas as
-   * Ameaças livres já jogaram. Fechar sem a jogada de uma delas transformaria a
-   * pressa da vila numa forma de anular o turno do infiltrado.
-   */
-  private noiteEstaFechada(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    return (
-      this.vilaConfirmou(partida, segredo) &&
-      this.ameacasJogaram(partida, segredo)
-    );
   }
 
   /** As Ameaças que ainda estão na vila (nem presas, nem fora). */
@@ -901,31 +823,6 @@ export class IsolateusGameService {
       );
       return !!h && h.vivo && !h.preso;
     });
-  }
-
-  /** Toda Ameaça livre já fechou a jogada desta noite. */
-  private ameacasJogaram(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    const jogaram = new Set(segredo.acoesDaNoite().map((j) => j.alunoId));
-    return this.ameacasLivres(partida, segredo).every((a) => jogaram.has(a));
-  }
-
-  /**
-   * Todos os habitantes reais na vila fecharam a posição da noite.
-   *
-   * A Ameaça conta aqui **pelo deslocamento dela**, como qualquer um: se ela só
-   * entrasse na conta depois de atacar, o contador público pararia em `N-1`
-   * exatamente nas noites em que ela ainda não agiu — e a vila leria o nome do
-   * alienígena no número.
-   */
-  private vilaConfirmou(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    const reais = this.reaisNaVila(partida, segredo);
-    return (segredo.confirmacoesNoite ?? []).length >= reais.length;
   }
 
   /**
@@ -2163,7 +2060,7 @@ export class IsolateusGameService {
   /** Duração de cada fase cronometrada; `undefined` = fase sem relógio. */
   private limiteDaFase(partida: IsolateusMatchEntity): number | undefined {
     const limites: Partial<Record<StatusIsolateus, number>> = {
-      DESLOCAMENTO: ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
+      DESLOCAMENTO: partida.duracaoNoiteMs,
       RESULTADO_RODADA: ISOLATEUS.JANELA_DECISAO_MS,
       QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
       QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
@@ -2733,8 +2630,8 @@ export class IsolateusGameService {
       // #55); a questão (com a correta) fica pelo mesmo motivo. A questão
       // seguinte os limpa.
       //
-      // A noite espera o card: `faseIniciadaEm` fica no futuro, e só então os
-      // 60s de deslocamento correm.
+      // A noite espera o card: `faseIniciadaEm` fica no futuro, e só então o
+      // tempo de movimentação corre.
       faseIniciadaEm: new Date(
         Date.now() + ISOLATEUS.JANELA_RESULTADO_MS,
       ).toISOString(),
@@ -2755,6 +2652,7 @@ export class IsolateusGameService {
         partida.habitantes,
         segredo.npcIds,
         Date.parse(dados.faseIniciadaEm!),
+        partida.duracaoNoiteMs,
       ),
       delirioNaNoite: false,
       ultimosMover: [],

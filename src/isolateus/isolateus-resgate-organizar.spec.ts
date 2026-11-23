@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { amanhecer, vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §6.1–6.2: o resgate é organizado à noite, de dentro do Setor de
@@ -28,6 +28,7 @@ async function fecharNoite(
     await ctx.service.confirmarPosicao(a, 'p1');
   }
   await ctx.service.acaoAmeaca('a1', 'p1', jogada);
+  await amanhecer(ctx);
 }
 
 const codigo = (e: unknown) =>

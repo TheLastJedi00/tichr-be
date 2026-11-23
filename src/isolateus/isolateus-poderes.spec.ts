@@ -1,6 +1,10 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ISOLATEUS } from './entities/isolateus-match.entity';
-import { noiteAberta, vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import {
+  amanhecer,
+  noiteAberta,
+  vilaComAmeacas,
+} from './isolateus-vila.fixture-spec';
 
 /** Cada aluno responde a alternativa dada (a correta é a 1). */
 async function responder(
@@ -250,6 +254,7 @@ describe('Isolateus — usar um superpoder', () => {
     }
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
     await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
+    await amanhecer(ctx);
 
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA'); // a noite fechou
     expect(ctx.segredo.energiaAlien?.a1).toBe(3);
@@ -420,6 +425,7 @@ describe('Isolateus — Contágio', () => {
       await ctx.service.confirmarPosicao(a, 'p1');
     }
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    await amanhecer(ctx);
   }
 
   it('ao amanhecer, um aldeão REAL vira Ameaça — nunca um NPC', async () => {
@@ -452,6 +458,7 @@ describe('Isolateus — Contágio', () => {
       await ctx.service.confirmarPosicao(a, 'p1');
     }
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    await amanhecer(ctx);
     expect(ctx.partida.esperanca).toBe(
       100 - ISOLATEUS.DANO_SABOTAGEM - ISOLATEUS.DANO_CONTAGIO,
     );
@@ -476,7 +483,7 @@ describe('Isolateus — Contágio', () => {
     expect(ctx.partida.esperanca).toBe(100);
   });
 
-  it('na noite seguinte, a noite só fecha cedo com a jogada do contagiado também', async () => {
+  it('na noite seguinte, nem com todos jogando a noite fecha antes do tempo (036 #4)', async () => {
     const ctx = comContagio();
     await fecharNoite(ctx);
     const contagiado = ctx.segredo.ameacasIds().find((a) => a !== 'a1')!;
@@ -490,6 +497,8 @@ describe('Isolateus — Contágio', () => {
     await ctx.service.confirmarPosicao(contagiado, 'p1');
     expect(ctx.partida.status).toBe('DESLOCAMENTO');
     await ctx.service.acaoAmeaca(contagiado, 'p1', { tipo: 'AGUARDAR' });
+    expect(ctx.partida.status).toBe('DESLOCAMENTO');
+    await amanhecer(ctx);
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
   });
 });
@@ -526,6 +535,7 @@ describe('Isolateus — Delírio Coletivo', () => {
     for (const a of ['a2', 'a3', 'a4'])
       await ctx.service.confirmarPosicao(a, 'p1');
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    await amanhecer(ctx);
   }
 
   it('todos trocam de nome entre si — ninguém fica com o próprio', async () => {
@@ -574,6 +584,7 @@ describe('Isolateus — Delírio Coletivo', () => {
       await ctx.service.confirmarPosicao(a, 'p1');
     ctx.partida.habitantes.find((h) => h.id === 'h3')!.setorId = 'energia';
     await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' });
+    await amanhecer(ctx);
 
     expect(ctx.partida.status).toBe('QUESTAO_ATIVA');
     expect(ctx.segredo.acoesDaNoite()[0].acao.alvoId).toBe(

@@ -39,7 +39,7 @@ export interface AvisoNpc {
  * Sorteia, na abertura da noite, os avisos de saída dos NPCs (026 §2.3).
  *
  * Cada NPC vivo e livre anda com `CHANCE_MOVER_NPC`, para um vizinho sorteado,
- * e avisa num horário dentro de `NPC_AVISO_JANELA_MS`. Com
+ * e avisa num horário dentro de `NPC_JANELA_FRACAO` da noite. Com
  * `CHANCE_NPC_MUDAR_IDEIA`, ganha um segundo aviso depois do primeiro: outro
  * vizinho ou `null` (desiste). O destino final é o do último aviso.
  *
@@ -49,10 +49,14 @@ export function sortearAgendaNpc(
   habitantes: Habitante[],
   npcIds: string[],
   inicio: number,
+  limiteMs: number = ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
   rnd: () => number = Math.random,
 ): AvisoNpc[] {
   const npcs = new Set(npcIds);
-  const [min, max] = ISOLATEUS.NPC_AVISO_JANELA_MS;
+  // A janela acompanha a duração da noite da partida (036 #15).
+  const [fMin, fMax] = ISOLATEUS.NPC_JANELA_FRACAO;
+  const min = Math.round(limiteMs * fMin);
+  const max = Math.round(limiteMs * fMax);
   const sorteia = <T>(opcoes: T[]): T =>
     opcoes[Math.min(opcoes.length - 1, Math.floor(rnd() * opcoes.length))];
   const em = (ms: number) => new Date(inicio + ms).toISOString();
@@ -78,28 +82,6 @@ export function sortearAgendaNpc(
     }
   }
   return agenda.sort((a, b) => Date.parse(a.em) - Date.parse(b.em));
-}
-
-/**
- * A carência encurtou a noite: os avisos ainda não liberados (depois de
- * `agora`) são comprimidos, na mesma proporção e na mesma ordem, para caber
- * entre `agora` e o novo fim (026 §2.3). Sem isso, um NPC agendado para os 30s
- * só "avisaria" no fechamento, junto de todos os outros.
- */
-export function reescalarAgenda(
-  agenda: AvisoNpc[],
-  agora: number,
-  fimAntigo: number,
-  fimNovo: number,
-): AvisoNpc[] {
-  const antes = fimAntigo - agora;
-  if (antes <= 0) return agenda;
-  const fator = (fimNovo - agora) / antes;
-  return agenda.map((a) => {
-    const t = Date.parse(a.em);
-    if (t <= agora) return a;
-    return { ...a, em: new Date(agora + (t - agora) * fator).toISOString() };
-  });
 }
 
 /**

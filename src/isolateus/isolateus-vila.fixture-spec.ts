@@ -227,6 +227,14 @@ export function vilaComAmeacas(
   };
 }
 
+/**
+ * Fecha a noite pelo relógio (036 #4: ela não fecha mais sozinha quando todos
+ * decidem). Sem efeito se a partida já não está na noite.
+ */
+export async function amanhecer(v: ReturnType<typeof vilaComAmeacas>) {
+  await v.service.pularFase('prof', 'p1', 'DESLOCAMENTO');
+}
+
 /** Abre a noite já contando (sem a espera do card de resultado, 034 #55). */
 export function noiteAberta(v: ReturnType<typeof vilaComAmeacas>) {
   v.partida.status = 'DESLOCAMENTO';

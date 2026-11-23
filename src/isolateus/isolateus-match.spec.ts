@@ -405,6 +405,44 @@ describe('Isolateus — rodízio da Ameaça por turma', () => {
   });
 });
 
+describe('Isolateus 036 — tempo de movimentação no lobby (Task 1)', () => {
+  it('a partida nasce com 20s de noite', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(20_000);
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(20_000);
+  });
+
+  it('o professor escolhe no iniciar', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id, { segundosNoite: 45 });
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(45_000);
+  });
+
+  it('o cronômetro leva a escolha e o início automático a usa', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 30, undefined, 10);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(10_000);
+    partidas.get(p.id)!.entradaEncerraEm = new Date(
+      Date.now() - 1000,
+    ).toISOString();
+    await service.iniciarAutomatico(p.id);
+    expect(partidas.get(p.id)!.status).toBe('DESLOCAMENTO');
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(10_000);
+  });
+
+  it('partida antiga, sem o campo, usa a noite legada', () => {
+    const antiga = new IsolateusMatchEntity({ id: 'velha' });
+    expect(antiga.duracaoNoiteMs).toBe(15_000);
+  });
+});
+
 describe('Isolateus — cronômetro de entrada (035)', () => {
   it('liga, cancela e guarda o debate escolhido no lobby', async () => {
     const { service, partidas } = make();

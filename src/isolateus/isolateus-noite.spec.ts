@@ -27,11 +27,13 @@ const QUESTOES = Array.from({ length: 3 }, (_, i) => ({
  * `posicoes` mapeia habitante → setor. Os reais são `h1..hN` (o `h1` é sempre a
  * Ameaça, aluno `a1`); os NPCs são `n1..nM`.
  */
-function noite(opts: {
-  reais?: number;
-  npcs?: number;
-  posicoes?: Record<string, string>;
-} = {}) {
+function noite(
+  opts: {
+    reais?: number;
+    npcs?: number;
+    posicoes?: Record<string, string>;
+  } = {},
+) {
   const nReais = opts.reais ?? 4;
   const nNpcs = opts.npcs ?? 0;
   const pos = opts.posicoes ?? {};
@@ -132,7 +134,8 @@ function noite(opts: {
     service: new IsolateusGameService(repo, jogos, xp),
     partida,
     segredo,
-    setorDe: (id: string) => partida.habitantes.find((h) => h.id === id)!.setorId,
+    setorDe: (id: string) =>
+      partida.habitantes.find((h) => h.id === id)!.setorId,
   };
 }
 
@@ -160,7 +163,8 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
     expect(JSON.stringify(partida)).not.toContain('posicoesNoite');
 
     await service.confirmarPosicao('a4', 'p1');
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' }); // fecha a noite
+    await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
     expect(setorDe('h2')).toBe('abastecimento');
     expect(setorDe('h3')).toBe('seguranca');
     expect(segredo.posicoesNoite).toEqual([]);
@@ -172,9 +176,9 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
     });
     await service.mover('a2', 'p1', 'energia');
     // Segurança é vizinha da Energia, mas não da Comunicação, de onde ele saiu.
-    await expect(
-      service.mover('a2', 'p1', 'seguranca'),
-    ).rejects.toMatchObject({ response: { code: 'SEM_ESTRADA' } });
+    await expect(service.mover('a2', 'p1', 'seguranca')).rejects.toMatchObject({
+      response: { code: 'SEM_ESTRADA' },
+    });
     // Trocar de ideia para outro vizinho da origem é permitido (passado o
     // intervalo mínimo entre trocas, 026 §2.2).
     segredo.ultimosMover = [];
@@ -195,14 +199,16 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
   it('recusa salto para setor sem estrada direta', async () => {
     const { service, setorDe } = noite({ posicoes: { h2: 'abastecimento' } });
     // Abastecimento é beco sem saída: só liga a Comunicação.
-    await expect(
-      service.mover('a2', 'p1', 'seguranca'),
-    ).rejects.toMatchObject({ response: { code: 'SEM_ESTRADA' } });
+    await expect(service.mover('a2', 'p1', 'seguranca')).rejects.toMatchObject({
+      response: { code: 'SEM_ESTRADA' },
+    });
     expect(setorDe('h2')).toBe('abastecimento');
   });
 
   it('mover para o próprio setor é "eu fico", e não erro', async () => {
-    const { service, partida, setorDe } = noite({ posicoes: { h2: 'energia' } });
+    const { service, partida, setorDe } = noite({
+      posicoes: { h2: 'energia' },
+    });
     await service.mover('a2', 'p1', 'energia');
     expect(setorDe('h2')).toBe('energia');
     expect(partida.movimentosRecebidos).toBe(1);
@@ -245,10 +251,7 @@ describe('Isolateus — a noite: deslocamento pelo mapa', () => {
 
 describe('Isolateus — o amanhecer', () => {
   /** Todos confirmam menos a Ameaça, que age por último. */
-  async function todosConfirmam(
-    service: IsolateusGameService,
-    reais: number,
-  ) {
+  async function todosConfirmam(service: IsolateusGameService, reais: number) {
     for (let i = 2; i <= reais; i++) {
       await service.confirmarPosicao(`a${i}`, 'p1');
     }
@@ -263,53 +266,27 @@ describe('Isolateus — o amanhecer', () => {
     expect(partida.status).toBe('DESLOCAMENTO');
   });
 
-  it('a vila inteira decidida encurta a janela para a carência da Ameaça', async () => {
-    const { service, partida, segredo } = noite({ reais: 4 });
-    await todosConfirmam(service, 4);
-    await service.confirmarPosicao('a1', 'p1');
-
-    // A Ameaça CONTA no número — se ela só entrasse depois de atacar, o
-    // contador pararia em N-1 e a vila leria o nome dela ali.
-    expect(partida.movimentosRecebidos).toBe(4);
-    expect(segredo.confirmacoesNoite).toHaveLength(4);
-
-    const resta =
-      Date.parse(partida.faseIniciadaEm!) +
-      ISOLATEUS.LIMITE_DESLOCAMENTO_MS -
-      Date.now();
-    expect(resta).toBeLessThanOrEqual(ISOLATEUS.CARENCIA_AMEACA_MS);
-    expect(resta).toBeGreaterThan(ISOLATEUS.CARENCIA_AMEACA_MS - 2_000);
-  });
-
-  it('a carência não devolve tempo a quem já está nela', async () => {
+  it('todos decididos, a noite só fecha pelo relógio (036 #4)', async () => {
     const { service, partida } = noite({ reais: 4 });
-    await todosConfirmam(service, 4);
-    await service.confirmarPosicao('a1', 'p1');
     const base = partida.faseIniciadaEm;
-
-    await service.confirmarPosicao('a2', 'p1'); // confirmação repetida
-    expect(partida.faseIniciadaEm).toBe(base);
-  });
-
-  it('a Ameaça agindo dentro da carência fecha a noite na hora', async () => {
-    const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
-    await service.confirmarPosicao('a1', 'p1');
-    expect(partida.status).toBe('DESLOCAMENTO');
-
     await service.acaoAmeaca('a1', 'p1', { tipo: 'AGUARDAR' });
+    expect(partida.status).toBe('DESLOCAMENTO');
+    expect(partida.faseIniciadaEm).toBe(base); // sem carência
+    partida.faseIniciadaEm = new Date(
+      Date.now() - partida.duracaoNoiteMs - 1000,
+    ).toISOString();
+    await service.resolverPorTempo('p1', { alunoId: 'a2' });
     expect(partida.status).toBe('QUESTAO_ATIVA');
   });
 
-  it('vencida a carência, o prazo fecha a noite sem a Ameaça', async () => {
+  it('o relógio usa o tempo de movimentação da partida', async () => {
     const { service, partida } = noite({ reais: 4 });
-    await todosConfirmam(service, 4);
-    await service.confirmarPosicao('a1', 'p1');
-    // O relógio de todos correu os 8s da carência.
-    partida.faseIniciadaEm = new Date(
-      Date.parse(partida.faseIniciadaEm!) - ISOLATEUS.CARENCIA_AMEACA_MS,
-    ).toISOString();
-
+    partida.limiteNoiteMs = 45_000;
+    partida.faseIniciadaEm = new Date(Date.now() - 30_000).toISOString();
+    await service.resolverPorTempo('p1', { alunoId: 'a2' });
+    expect(partida.status).toBe('DESLOCAMENTO'); // 30s < 45s
+    partida.faseIniciadaEm = new Date(Date.now() - 46_000).toISOString();
     await service.resolverPorTempo('p1', { alunoId: 'a2' });
     expect(partida.status).toBe('QUESTAO_ATIVA');
   });
@@ -318,13 +295,16 @@ describe('Isolateus — o amanhecer', () => {
     const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
 
     // O setor cai na hora; o que a vila pode fazer é marchar até lá e reconstruir.
     expect(partida.status).toBe('QUESTAO_ATIVA');
     // Toda rodada tem questão (034 #48), mas sem disputa o alerta é neutro.
     expect(partida.questaoPublica).not.toBeNull();
     expect(partida.alerta?.tipo).toBe('NEUTRA');
-    expect(partida.setores.find((s) => s.id === 'seguranca')!.intacto).toBe(false);
+    expect(partida.setores.find((s) => s.id === 'seguranca')!.intacto).toBe(
+      false,
+    );
     expect(partida.esperanca).toBe(100 - ISOLATEUS.DANO_SABOTAGEM);
 
     // Fechada a questão, o card diz o que a noite deixou à vista.
@@ -339,6 +319,7 @@ describe('Isolateus — o amanhecer', () => {
     const { service, partida } = noite({ reais: 4 });
     await todosConfirmam(service, 4);
     await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
 
     expect(partida.status).toBe('QUESTAO_ATIVA');
     expect(partida.alerta?.tipo).toBe('ABDUCAO');
@@ -351,6 +332,7 @@ describe('Isolateus — o amanhecer', () => {
     const { service, partida } = noite({ reais: 4, npcs: 3 });
     await todosConfirmam(service, 4);
     await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
     expect(partida.status).toBe('QUESTAO_ATIVA');
     expect(partida.rumores).toEqual([]);
   });
@@ -386,10 +368,11 @@ describe('Isolateus — o amanhecer', () => {
     const antes = new Map(partida.habitantes.map((h) => [h.id, h.setorId]));
 
     await todosConfirmam(service, 4);
-    expect(partida.habitantes.filter((h) => h.setorId !== antes.get(h.id))).toEqual(
-      [],
-    ); // ninguém se mexeu ainda: os NPCs só andam no fechamento
+    expect(
+      partida.habitantes.filter((h) => h.setorId !== antes.get(h.id)),
+    ).toEqual([]); // ninguém se mexeu ainda: os NPCs só andam no fechamento
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
 
     const npcs = partida.habitantes.filter((h) => h.id.startsWith('n'));
     const mexeram = npcs.filter((h) => h.setorId !== antes.get(h.id));
@@ -410,6 +393,7 @@ describe('Isolateus — o amanhecer', () => {
     await todosConfirmam(service, 4);
     await service.mover('a1', 'p1', 'abastecimento');
     await service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    await service.pularFase('prof', 'p1', 'DESLOCAMENTO');
 
     // Sabotou onde TERMINOU a noite, não de onde saiu.
     expect(setorDe('h1')).toBe('abastecimento');
@@ -423,7 +407,10 @@ describe('Isolateus — o amanhecer', () => {
       reais: 4,
       posicoes: { h1: 'comunicacao' },
     });
-    await service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', setorId: 'energia' });
+    await service.acaoAmeaca('a1', 'p1', {
+      tipo: 'ABDUZIR',
+      setorId: 'energia',
+    });
     await service.mover('a1', 'p1', 'abastecimento');
     expect(setorDe('h1')).toBe('comunicacao'); // público só no fechamento
     expect((await service.painel('a1', 'p1')).setorId).toBe('abastecimento');
