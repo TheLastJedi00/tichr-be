@@ -1,6 +1,6 @@
 import { ISOLATEUS } from './entities/isolateus-match.entity';
 import { AcaoAmeacaDto } from './dto/acao-ameaca.dto';
-import { vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import { amanhecer, vilaComAmeacas } from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §5: a cada 3 noites, o setor de onde cada Ameaça age brilha no mapa
@@ -34,6 +34,7 @@ async function fecharNoite(
   for (const [a, jogada] of Object.entries(jogadas)) {
     await ctx.service.acaoAmeaca(a, 'p1', jogada);
   }
+  if (Object.keys(jogadas).length) await amanhecer(ctx);
 }
 
 describe('Isolateus — o brilho misterioso (Task 15)', () => {
@@ -66,7 +67,9 @@ describe('Isolateus — o brilho misterioso (Task 15)', () => {
     await fecharNoite(ctx, { a1: { tipo: 'SABOTAR' } });
     // A noite de brilho é anunciada mesmo sem brilho: a turma esperava por ela.
     expect(ctx.partida.brilho).toEqual({ rodada: NOITE_3, setorIds: [] });
-    const eventos = ctx.partida.acontecimentos.filter((e) => e.tipo === 'BRILHO');
+    const eventos = ctx.partida.acontecimentos.filter(
+      (e) => e.tipo === 'BRILHO',
+    );
     expect(eventos.map((e) => e.texto)).toEqual([
       'Brilho misterioso não apareceu esta noite.',
     ]);
@@ -121,6 +124,8 @@ describe('Isolateus — o brilho misterioso (Task 15)', () => {
     ctx.partida.rodada = 1; // Noite 2
     await fecharNoite(ctx, { a1: { tipo: 'AGUARDAR' } });
     expect(ctx.partida.brilho ?? null).toBeNull();
-    expect(ctx.partida.acontecimentos.some((e) => e.tipo === 'BRILHO')).toBe(false);
+    expect(ctx.partida.acontecimentos.some((e) => e.tipo === 'BRILHO')).toBe(
+      false,
+    );
   });
 });

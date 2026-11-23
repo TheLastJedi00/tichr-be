@@ -6,6 +6,7 @@ import { MoverDto } from './dto/mover.dto';
 import { PassoDto } from './dto/passo.dto';
 import { UsarPoderDto } from './dto/usar-poder.dto';
 import {
+  ChatVilaDto,
   MensagemDto,
   ResponderIsolateusDto,
   VotarResgateDto,
@@ -181,22 +182,14 @@ export class AlunoIsolateusController {
   }
 
   /** O Debate Tático da Quarentena. */
-  @Post(':id/debate')
-  debater(
+  /** Fala no chat da vila (036): passa pelo filtro de linguagem. */
+  @Post(':id/chat')
+  chat(
     @CurrentStudent() aluno: { alunoId: string },
     @Param('id') id: string,
-    @Body() dto: MensagemDto,
+    @Body() dto: ChatVilaDto,
   ) {
-    return this.game.debater(aluno.alunoId, id, dto.texto);
-  }
-
-  /** Abre mão do debate. Todos pulando, a votação abre na hora. */
-  @Post(':id/pular-debate')
-  pularDebate(
-    @CurrentStudent() aluno: { alunoId: string },
-    @Param('id') id: string,
-  ) {
-    return this.game.pularDebate(aluno.alunoId, id);
+    return this.game.falarNoChat(aluno.alunoId, id, dto.texto);
   }
 
   /** O voto no suspeito. */

@@ -1,5 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { convocarPelaNoite, vilaComAmeacas } from './isolateus-vila.fixture-spec';
+import {
+  convocarPelaNoite,
+  vilaComAmeacas,
+} from './isolateus-vila.fixture-spec';
 
 /**
  * Spec 025 §7: o professor dispara o Delírio Coletivo a qualquer momento (anti-
@@ -83,21 +86,18 @@ describe('Isolateus — Delírio Coletivo pelo professor (Task 13)', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('a posição da noite no cofre segue o habitante', async () => {
+  it('quem atravessou na noite continua no setor novo, com o id novo (036)', async () => {
     const ctx = vila('DESLOCAMENTO');
     await ctx.service.mover('a2', 'p1', 'comercio');
     await ctx.service.delirioDoProfessor('prof', 'p1');
     const meuId = ctx.segredo.habitanteDe('a2')!;
-    expect(ctx.segredo.posicoesNoite).toEqual([
-      { habitanteId: meuId, setorId: 'comercio' },
-    ]);
+    expect(ctx.setorDe(meuId)).toBe('comercio');
   });
 
   it('votos pendentes, convocador e bloqueio são remapeados', async () => {
     const ctx = vila('DESLOCAMENTO');
     ctx.partida.convocadorBloqueado = { habitanteId: 'h4', ateRodada: 2 };
     await convocarPelaNoite(ctx, 'a3');
-    await ctx.service.pularFase('prof', 'p1'); // abre a votação
     await ctx.service.votarSuspeito('a2', 'p1', 'h4');
 
     await ctx.service.delirioDoProfessor('prof', 'p1');

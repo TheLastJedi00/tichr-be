@@ -121,9 +121,8 @@ describe('Isolateus 034 — a Quarentena é convocada à noite', () => {
   it('ordem: questão → Quarentena → card → noite seguinte (sem o Dia)', async () => {
     const v = vila();
     await convocarPelaNoite(v, 'a2'); // chega na reunião
-    expect(v.partida.status).toBe('QUARENTENA_DEBATE');
+    expect(v.partida.status).toBe('QUARENTENA_VOTO'); // 036: sem debate
 
-    await v.service.pularFase('prof', 'p1'); // debate → votação
     for (const a of ['a1', 'a2', 'a3', 'a4', 'a5']) {
       await v.service.votarSuspeito(a, 'p1', 'h4');
     }
@@ -230,8 +229,7 @@ describe('Isolateus 034 — toda rodada tem questão (#48)', () => {
     await responderTodos(v);
     expect(v.partida.status).toBe('RESGATE_VOTO'); // 1º: o resgate
     await v.service.pularFase('prof', 'p1');
-    expect(v.partida.status).toBe('QUARENTENA_DEBATE'); // 2º: a Quarentena
-    await v.service.pularFase('prof', 'p1');
+    expect(v.partida.status).toBe('QUARENTENA_VOTO'); // 2º: a Quarentena
     await v.service.pularFase('prof', 'p1'); // fecha a votação
     expect(v.partida.status).toBe('ENCERRADO'); // só então o veredito
   });

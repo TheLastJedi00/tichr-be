@@ -23,11 +23,23 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   const habitantes: Habitante[] = [];
   const vinculos: Array<{ habitanteId: string; alunoId?: string }> = [];
   for (let i = 1; i <= nReais; i++) {
-    habitantes.push({ id: `h${i}`, nome: `Real ${i}`, vivo: true, preso: false, setorId: setor });
+    habitantes.push({
+      id: `h${i}`,
+      nome: `Real ${i}`,
+      vivo: true,
+      preso: false,
+      setorId: setor,
+    });
     vinculos.push({ habitanteId: `h${i}`, alunoId: `a${i}` });
   }
   for (let i = 1; i <= nNpcs; i++) {
-    habitantes.push({ id: `n${i}`, nome: `NPC ${i}`, vivo: true, preso: false, setorId: setor });
+    habitantes.push({
+      id: `n${i}`,
+      nome: `NPC ${i}`,
+      vivo: true,
+      preso: false,
+      setorId: setor,
+    });
     vinculos.push({ habitanteId: `n${i}` });
   }
 
@@ -73,7 +85,8 @@ function cenario(opts: { reais?: number; npcs?: number; setor?: string } = {}) {
   });
 
   // Os votos são por rodada: o fake guarda a rodada e filtra, como o Firestore.
-  const votos: Array<{ rodada: number; alunoId: string; suspeitoId: string }> = [];
+  const votos: Array<{ rodada: number; alunoId: string; suspeitoId: string }> =
+    [];
   const repo = {
     buscar: jest.fn(async () => partida),
     buscarSegredo: jest.fn(async () => segredo),
@@ -147,24 +160,20 @@ describe('Isolateus — a Quarentena', () => {
     const { service, partida } = cenario();
     await reuniao(service, partida, 'a2');
 
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    // Sem debate (036 #35): a reunião abre pela urna.
+    expect(partida.status).toBe('QUARENTENA_VOTO');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
     expect(partida.faseIniciadaEm).not.toBeNull();
-    // Sem falas automáticas: elas saíam sempre sob nome de NPC e entregavam
-    // quem é virtual. O debate é só dos alunos.
-    expect(partida.debate).toEqual([]);
   });
 
-  it('debate desligado no lobby: a Quarentena vai direto para a votação', async () => {
+  it('a Quarentena nasce limpa, direto na votação', async () => {
     const { service, partida } = cenario({ reais: 3, npcs: 2 });
-    partida.debateHabilitado = false;
     partida.votosRecebidos = 3; // resto de uma Quarentena anterior
     await reuniao(service, partida, 'a2');
 
     expect(partida.status).toBe('QUARENTENA_VOTO');
     expect(partida.quarentenaRodada).toBe(partida.rodada);
     expect(partida.faseIniciadaEm).not.toBeNull();
-    expect(partida.debate).toEqual([]); // nem as falas dos NPCs
     expect(partida.votosRecebidos).toBe(0);
     expect(partida.vereditoQuarentena).toBeNull();
     expect(partida.acontecimentos.at(-1)?.tipo).toBe('QUARENTENA');
@@ -175,9 +184,9 @@ describe('Isolateus — a Quarentena', () => {
     await reuniao(service, partida, 'a2');
     partida.status = 'DESLOCAMENTO'; // a noite voltou, na mesma rodada
 
-    await expect(
-      service.convocarQuarentena('p1', 'a3'),
-    ).rejects.toMatchObject({ response: { code: 'QUARENTENA_USADA' } });
+    await expect(service.convocarQuarentena('p1', 'a3')).rejects.toMatchObject({
+      response: { code: 'QUARENTENA_USADA' },
+    });
   });
 
   it('a opção volta na rodada seguinte — a Quarentena não é única por partida', async () => {
@@ -187,7 +196,7 @@ describe('Isolateus — a Quarentena', () => {
     partida.rodada = 1; // a noite passou
 
     await reuniao(service, partida, 'a3');
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
+    expect(partida.status).toBe('QUARENTENA_VOTO');
     expect(partida.quarentenaRodada).toBe(1);
     expect(partida.vereditoQuarentena).toBeNull(); // nasce limpa
   });
@@ -212,86 +221,31 @@ describe('Isolateus — a Quarentena', () => {
     expect(partida.votosRecebidos).toBe(1);
   });
 
-  it('quem saiu da vila não convoca, não debate e não vota', async () => {
+  it('quem saiu da vila não convoca e não fala no chat', async () => {
     const { service, partida } = cenario();
     partida.habitantes.find((h) => h.id === 'h4')!.vivo = false;
 
-    await expect(
-      service.convocarQuarentena('p1', 'a4'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-
-    await reuniao(service, partida, 'a2');
-    await expect(
-      service.debater('a4', 'p1', 'foi o Real 1!'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('o debate publica o pseudônimo, nunca o nome real do aluno', async () => {
-    const { service, partida } = cenario();
-    await reuniao(service, partida, 'a2');
-    await service.debater('a2', 'p1', 'O Real 1 concordou com o rumor.');
-
-    const minha = partida.debate.at(-1)!;
-    expect(minha.autorNome).toBe('Real 2'); // o pseudônimo do habitante
-    // Nenhum autor do debate é um alunoId — o Voto de Silêncio vale no chat.
-    const alunoIds = ['a1', 'a2', 'a3', 'a4'];
-    for (const msg of partida.debate) {
-      expect(alunoIds).not.toContain(msg.autorNome);
-    }
-  });
-
-  it('pular o debate: só abre a votação quando TODOS os reais na vila pulam', async () => {
-    const { service, partida } = cenario({ reais: 3, npcs: 2 });
-    await reuniao(service, partida, 'a2');
-
-    await service.pularDebate('a1', 'p1');
-    expect(partida.pulosRecebidos).toBe(1);
-    expect(partida.status).toBe('QUARENTENA_DEBATE'); // os NPCs não contam
-
-    await service.pularDebate('a2', 'p1');
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
-
-    await service.pularDebate('a3', 'p1');
-    expect(partida.pulosRecebidos).toBe(3);
-    expect(partida.status).toBe('QUARENTENA_VOTO'); // avanço rápido
-  });
-
-  it('pular duas vezes não conta dobrado nem antecipa a votação', async () => {
-    const { service, partida } = cenario({ reais: 2 });
-    await reuniao(service, partida, 'a2');
-
-    await service.pularDebate('a1', 'p1');
-    await service.pularDebate('a1', 'p1');
-    expect(partida.pulosRecebidos).toBe(1);
-    expect(partida.status).toBe('QUARENTENA_DEBATE');
-  });
-
-  it('quem saiu da vila não conta para o pulo — a votação abre sem ele', async () => {
-    const { service, partida } = cenario({ reais: 3 });
-    partida.habitantes.find((h) => h.id === 'h3')!.vivo = false; // abduzido
-    await reuniao(service, partida, 'a2');
-
-    await expect(service.pularDebate('a3', 'p1')).rejects.toBeInstanceOf(
+    await expect(service.convocarQuarentena('p1', 'a4')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
-    // Os 2 que sobraram bastam: o abduzido não entra na conta.
-    await service.pularDebate('a1', 'p1');
-    await service.pularDebate('a2', 'p1');
-    expect(partida.pulosRecebidos).toBe(2);
-    expect(partida.status).toBe('QUARENTENA_VOTO');
+
+    await reuniao(service, partida, 'a2');
+    await expect(
+      service.falarNoChat('a4', 'p1', 'foi o Real 1!'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('a contagem de pulos não denuncia quem pulou (a lista fica no cofre)', async () => {
-    const { service, partida, segredo } = cenario({ reais: 2 });
+  it('durante a votação, o chat publica o pseudônimo, nunca o nome real', async () => {
+    const { service, partida } = cenario();
     await reuniao(service, partida, 'a2');
-    await service.pularDebate('a1', 'p1');
+    await service.falarNoChat('a2', 'p1', 'O Real 1 concordou com o rumor.');
 
-    expect(partida.pulosRecebidos).toBe(1);
-    expect(segredo.pulosDebate).toEqual(['a1']);
-    // A camada pública não carrega nenhum alunoId. Com as aspas: sem elas, a
-    // busca casa com qualquer UUID que contenha "a1" (ex.: 2f166a17-…), e o
-    // teste falha ao acaso. Mesmo idioma de isolateus-match.spec.
-    expect(JSON.stringify(partida)).not.toContain('"a1"');
+    const minha = partida.chat.at(-1)!;
+    expect(minha.autorNome).toBe('Real 2'); // o pseudônimo do habitante
+    const alunoIds = ['a1', 'a2', 'a3', 'a4'];
+    for (const msg of partida.chat) {
+      expect(alunoIds).not.toContain(msg.autorNome);
+    }
   });
 
   it('a vila prende a Ameaça: a partida NÃO acaba — nasce um novo infiltrado (034 #51)', async () => {
@@ -310,9 +264,7 @@ describe('Isolateus — a Quarentena', () => {
     // A partida dura o banco de questões: segue para a noite seguinte.
     expect(partida.status).toBe('DESLOCAMENTO');
     expect(partida.veredito).toBeNull();
-    expect(partida.vereditoQuarentena?.texto).toContain(
-      'a invasão não acabou',
-    );
+    expect(partida.vereditoQuarentena?.texto).toContain('a invasão não acabou');
     // Um novo infiltrado, no mesmo commit, entre os aldeões reais livres.
     expect(segredo.infiltrados).toHaveLength(1);
     const novo = segredo.infiltrados![0];
@@ -355,11 +307,7 @@ describe('Isolateus — a Quarentena', () => {
     expect(
       partida.rankingFinal.filter((p) => p.papel === 'INFILTRADO'),
     ).toHaveLength(1);
-    expect(creditar).toHaveBeenCalledWith(
-      't1',
-      expect.anything(),
-      'ISOLATEUS',
-    );
+    expect(creditar).toHaveBeenCalledWith('t1', expect.anything(), 'ISOLATEUS');
   });
 
   it('a vila prende um inocente: -20 de Esperança e a identidade dele fica em segredo', async () => {
@@ -411,9 +359,7 @@ describe('Isolateus — a Quarentena', () => {
           Date.parse('2026-09-29T12:00:00Z') + ISOLATEUS.JANELA_RESULTADO_MS,
         ),
       );
-      await expect(
-        service.confirmarPosicao('a2', 'p1'),
-      ).resolves.toBeDefined();
+      await expect(service.confirmarPosicao('a2', 'p1')).resolves.toBeDefined();
     } finally {
       jest.useRealTimers();
     }

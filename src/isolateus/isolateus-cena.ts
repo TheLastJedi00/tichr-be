@@ -16,8 +16,18 @@ export const CENA = {
   VELOCIDADE: 48,
   /** Onde o habitante nasce no setor (sem passo anterior). */
   X_INICIAL: 160,
-  /** Um passo por segundo por habitante (429 `PASSO_RAPIDO`). */
-  PASSO_INTERVALO_MS: 1_000,
+  /**
+   * Intervalo mínimo entre dois passos do mesmo habitante (429 `PASSO_RAPIDO`).
+   * 250 ms (036 #25): apertar e soltar uma tecla gera dois passos seguidos.
+   */
+  PASSO_INTERVALO_MS: 250,
+  /**
+   * Distância máxima (px) entre o boneco e a porta para atravessar (036 #19 e
+   * #21): o botão flutuante aparece dentro dela e o servidor confere.
+   */
+  ZONA_PORTA: 28,
+  /** Ao chegar por uma porta, o boneco anda isto para dentro da cena. */
+  ENTRADA_PORTA: 44,
   /** NPCs: no máximo uma rodada de passeio a cada tanto, por partida. */
   NPC_PULSO_MS: 3_000,
   /** Chance de um NPC solto escolher um novo alvo a cada rodada de passeio. */
@@ -66,6 +76,20 @@ export function portasDe(setorId: string): PortaCena[] {
 /** O x da porta de `de` para `para` (undefined sem estrada). */
 export function xDaPorta(de: string, para: string): number | undefined {
   return portasDe(de).find((p) => p.para === para)?.x;
+}
+
+/**
+ * A entrada por uma porta: o boneco aparece no batente que liga de volta à
+ * origem e caminha um pouco para dentro (fora da zona, para o botão de voltar
+ * não aparecer sozinho).
+ */
+export function chegadaPelaPorta(
+  de: string,
+  para: string,
+): { x: number; alvoX: number } {
+  const x = xDaPorta(para, de) ?? CENA.X_INICIAL;
+  const dentro = x < CENA.LARGURA / 2 ? 1 : -1;
+  return { x, alvoX: x + dentro * CENA.ENTRADA_PORTA };
 }
 
 export function alvoDentroDaCena(alvoX: number): boolean {
