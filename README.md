@@ -1208,7 +1208,7 @@ em `qlick_partidas`, `matches` e `isolateus_partidas`. Helper comum em `src/comm
   ficado pausada, e o bônus de rapidez (Qlick e Isolateus) não conta o tempo pausado.
 - **Pausada, todo comando responde 409 `PARTIDA_PAUSADA`**, de aluno ou de professor, exceto
   Retomar: respostas, letras, arriscar, chat do Wor, mover, ação da Ameaça, poder, invasão,
-  debate, sinal, votos, pular-fase, delírio, apurar, próxima, `/tempo` (o pulso) e encerrar.
+  chat da vila, sinal, votos, pular-fase, delírio, apurar, próxima, `/tempo` (o pulso) e encerrar.
   Para encerrar, retoma-se antes. Leituras (`GET` da partida, painel) seguem valendo.
 - A checagem fica num ponto por jogo: Qlick nos comandos do `PartidaService`; Wor no
   `carregarParaComando` (+ `WorChatService.enviar`); Isolateus no `carregarParaComando` de
@@ -1228,7 +1228,7 @@ entrou. Helper comum em `src/common/entrada.ts`. Campos públicos novos em `qlic
 |---|---|---|---|
 | Qlick | `POST /partidas/:id/cronometro` | `POST /partidas/:id/iniciar-automatico` | 1 |
 | Wor | `POST /wor/matches/:id/cronometro` | `POST /wor/matches/:id/iniciar-automatico` | 2 |
-| Isolateus | `POST /isolateus/matches/:id/cronometro` (+ `debateHabilitado`) | `POST /isolateus/matches/:id/iniciar-automatico` | 4 (`MIN_REAIS`) |
+| Isolateus | `POST /isolateus/matches/:id/cronometro` (+ `segundosNoite`, spec 036) | `POST /isolateus/matches/:id/iniciar-automatico` | 4 (`MIN_REAIS`) |
 
 - Corpo `{ segundos: 30 | 60 | 120 | 180 | 300 | null }` (`null` cancela; fora da lista → 400).
   Só no `LOBBY` (400 `PARTIDA_INICIADA`) e só o dono. Ligar limpa `entradaFalhou`; o início
@@ -1241,7 +1241,7 @@ entrou. Helper comum em `src/common/entrada.ts`. Campos públicos novos em `qlic
 - Abaixo do mínimo: não inicia, o cronômetro desliga e grava `entradaFalhou`; o lobby segue aberto.
 - **Wor:** sem equipes, distribui e inicia no mesmo disparo; com equipes, quem entrou depois da
   distribuição vai para as equipes menores. **Isolateus:** o Despertar usa o
-  `debateHabilitado` gravado pelo cronômetro.
+  tempo de movimentação (`limiteNoiteMs`) gravado pelo cronômetro.
 - **`participa`:** as três leituras do aluno devolvem `participa: boolean` (Qlick e Wor pelos
   inscritos; Isolateus pelos vínculos do cofre depois do Despertar, sem expor mais nada).
 
@@ -1488,8 +1488,10 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   `reparoSetorId` (o reparo declarado na noite, **sem autor**), `duracaoSegundos`,
   `faseIniciadaEm`, `questaoPublica` (**sem** a correta), `corretaIndex` (só em
   `RESULTADO_RODADA`), `alerta`, **`acontecimentos[]`** (o Diário, aparado em 60),
-  `rumores[]` (**só `SINAL`** — o Chat de Rumores saiu), `debate[]` (**só falas de alunos**),
-  `resumoRodada`, `quarentenaRodada`, **`debateHabilitado`** (escolha do lobby; ausente = `true`),
+  `rumores[]` (**só `SINAL`** — o Chat de Rumores saiu), **`chat[]`** (spec 036: `{ id, autorNome,
+  texto, em }`, as últimas 80 falas do chat da vila), **`limiteNoiteMs`** (spec 036: a duração da
+  noite = tempo de movimentação; ausente = partida antiga, 15s), `resumoRodada`, `quarentenaRodada`,
+  `debate[]` e `debateHabilitado` (**só leitura de partidas anteriores à 036**),
   `vereditoQuarentena`, **`quarentenaConvocadaPor`** (`{ habitanteId, nome }`, público durante a
   Quarentena), **`convocadorBloqueado`** (`{ habitanteId, ateRodada }`), **`cicloBrilho`** (3) e
   **`brilho`** (`{ rodada, setorIds[] }`), **`resgatePendente`**, `votosResgateRecebidos` e
@@ -1497,20 +1499,21 @@ onde ela atacou. Há teste comparando os dois campo a campo.
   contagens** — as listas são listas de habitantes reais e moram no cofre),
   `inscritos[]` (**só `alunoId`, e esvaziado ao iniciar**), `veredito`, `rankingFinal[]` (**só no fim**;
   cada linha `{ posicao, alunoId, nome, pontos, jogador?, papel? }` — ver *A revelação no fim*),
-  **`deslocamentosNoite[]`** (`{ habitanteId, para }`, os avisos de saída da noite, reais e NPCs
-  iguais) e **`ultimosDeslocamentos`** (`{ rodada, movimentos[{ habitanteId, de, para }] } | null`,
-  quem trocou de setor no último amanhecer; `null` em noite de Delírio).
-  O `setorId` dos habitantes é o do **anoitecer** durante toda a noite (ver *A movimentação em
-  tempo real*).
+  `deslocamentosNoite[]` e `ultimosDeslocamentos` (026; **só leitura de partidas antigas** — a 036
+  não tem aviso de saída nem animação de amanhecer).
+  O `setorId` dos habitantes é a **posição ao vivo**: a travessia de uma porta grava na hora (ver
+  *A movimentação contínua*).
 - **`isolateus_segredos`** (o **cofre**, deny-all): `alienAlunoId` (a Ameaça **original**),
   **`ameacas[]`** (todas, a original inclusa — cresce com o Contágio), `vinculos[]`
   (`habitanteId` → `alunoId`; sem `alunoId` = NPC), **`acoesRodada[]`** (`{ alunoId, acao }`, uma
-  por Ameaça: `SABOTAR | ABDUZIR | AGUARDAR`, com `alvoId` **ou** `setorId`), **`posicoesNoite[]`**
-  (o destino de quem andou nesta noite), **`poderes[]`** (`{ alunoId, ganhoNaRodada }`),
+  por Ameaça: `SABOTAR | ABDUZIR | AGUARDAR`, com `alvoId` **ou** `setorId`), `posicoesNoite[]`
+  (026; só partidas antigas), **`travasNoite[]`** (spec 036: `{ alunoId, motivo: REPARO | RESGATE |
+  ACAO }`, quem não atravessa mais portas até o amanhecer), **`ultimosChat[]`** (`{ alunoId, em }`,
+  limite do chat), **`poderes[]`** (`{ alunoId, ganhoNaRodada }`),
   **`controles[]`** (`{ ameacaAlunoId, habitanteId, rodada }`), `contagioPendente`,
-  `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]`, `confirmacoesNoite[]`, `pontos{}`,
-  **`agendaNpc[]`** (`{ habitanteId, para | null, em }`, os avisos de saída dos NPCs da noite;
-  ausente = partida anterior à 026), **`delirioNaNoite`**, **`ultimosMover[]`** (`{ alunoId, em }`,
+  `delirioPendente`, **`resgateNoite`** (`{ alunoId }`, o resgate organizado na noite), `pulosDebate[]` (só partidas antigas), `confirmacoesNoite[]`, `pontos{}`,
+  **`agendaNpc[]`** (`{ habitanteId, para, em }`, as **travessias** dos NPCs da noite — spec 036;
+  ausente = partida anterior à 026), `delirioNaNoite` (só partidas antigas), **`ultimosMover[]`** (`{ alunoId, em }`,
   rate limit do `mover`), **`noiteFechada`** (a última `rodada` cujo fechamento foi reivindicado),
   **`acertosDesdeContagio`** (acertos da original desde o último Contágio; ausente = 0) e
   **`invasoesNoite[]`** (alunoIds das Ameaças presas que declararam a invasão; zerado na resolução
@@ -1544,10 +1547,12 @@ contra partida infinita, e por isso fica bem acima do orçamento pedagógico —
 LOBBY → DESLOCAMENTO → [QUESTAO_ATIVA] → RESULTADO_RODADA → (próxima noite) …
 ```
 
-com desvio opcional para `QUARENTENA_DEBATE → QUARENTENA_VOTO` e saída em `ENCERRADO`.
+com desvio opcional para `QUARENTENA_VOTO` (a Quarentena abre direto na votação desde a 036;
+`QUARENTENA_DEBATE` só existe em partidas antigas e segue para o voto pelo relógio) e saída em
+`ENCERRADO`.
 
-`DESLOCAMENTO` é **a noite inteira**: todos andam (ou ficam) e a Ameaça joga na mesma
-janela. `fecharNoite` é o ponto único de virada — antes, era a ação da Ameaça que abria
+`DESLOCAMENTO` é **a noite inteira** e dura o **tempo de movimentação** (`limiteNoiteMs`): todos
+andam e atravessam portas, e a Ameaça joga na mesma janela. `fecharNoite` é o ponto único de virada — antes, era a ação da Ameaça que abria
 o dia, e demorar a agir era um *tell* dela. `QUESTAO_ATIVA` só acontece se houve
 abdução ou reparo; senão o dia vai direto ao card.
 
@@ -1564,9 +1569,10 @@ abdução ou reparo; senão o dia vai direto ao card.
   casual*).
 - `POST /isolateus/matches/:id/remover/:alunoId` — tira do lobby quem entrou por engano.
   **Só no `LOBBY`.** (Não há mais vetar/renomear: ninguém digita nome.)
-- `POST /isolateus/matches/:id/iniciar` `{ debateHabilitado? }` — **o Despertar**: sorteia os
-  codinomes, espalha a vila pelos 6 setores e sorteia a Ameaça (pelo **rodízio da turma**). A
-  opção do lobby fica fixa daqui em diante; sem debate, a Quarentena vai direto ao voto.
+- `POST /isolateus/matches/:id/iniciar` `{ segundosNoite? }` — **o Despertar**: sorteia os
+  codinomes, espalha a vila pelos 6 setores e sorteia a Ameaça (pelo **rodízio da turma**).
+  `segundosNoite` ∈ {10, 20, 30, 45, 60} (fora da lista → 400; ausente = o do lobby, padrão 20s)
+  fica fixo daqui em diante. `debateHabilitado` ainda é aceito na DTO e **ignorado** (036).
 - `POST /isolateus/matches/:id/tempo` — cobra a fase cronometrada vencida (**não há timer no
   servidor**; ele revalida o prazo com margem de 2s). É também o que faz o **avanço
   automático**: zerada a janela de decisão, a noite cai sem o professor clicar em nada.
@@ -1604,26 +1610,33 @@ abdução ou reparo; senão o dia vai direto ao card.
 - `POST /aluno/isolateus/:id/entrar` — declara presença. **Sem payload**: o codinome é
   sorteado no Despertar.
 - `GET /aluno/isolateus/:id/painel` — **a única porta do segredo**: o papel do aluno, o
-  `habitanteId` e o **`setorId` atual** (durante a noite, o destino guardado no cofre). **Só para a
+  `habitanteId` e o **`setorId` atual** (a posição pública, ao vivo desde a 036). **Só para a
   Ameaça**: `aliados[]` (codinomes das outras Ameaças livres), `poder` (as opções do poder ganho, ou
   `null`), `controle` e a `fileira` **ao vivo** do setor de onde ela age. **Não traz mais o
   gabarito nem a lista de NPCs.** A original recebe também `contagioAcertos: { atual, necessario }`
   (a recarga do Contágio) e a Ameaça **presa** recebe `invasao: { disponivel, declarada }`. É
   também o canal do Contágio e do Delírio: o celular faz
   **polling** daqui — nada disso passa pelo doc público.
-- `POST /aluno/isolateus/:id/mover` `{ setorId }` — anda **um** setor pelas estradas, contado de
-  onde a noite começou (trocar de ideia vale, encadear dois passos não; voltar à origem desfaz).
-  O destino vai para o **cofre** (`posicoesNoite`) e o **aviso de saída** para o doc público
-  (`deslocamentosNoite`), na mesma transação. 400 `SEM_ESTRADA`; 429 `MOVER_RAPIDO` abaixo de
-  1s entre duas trocas do mesmo aluno.
-- `POST /aluno/isolateus/:id/confirmar-posicao` — "eu fico"; fecha a jogada da noite. Só
-  confirma: quem já andou e quer voltar usa `mover` com a origem.
+- `POST /aluno/isolateus/:id/mover` `{ setorId }` — **atravessa uma porta** (spec 036): passa para
+  um vizinho do setor **atual**, na hora, gravando `habitantes[].setorId` numa transação, quantas
+  vezes o aluno quiser na noite. Com o canal ligado, exige o boneco **na zona da porta**
+  (`CENA.ZONA_PORTA` = 28 px, x calculado pelo último passo) e move a entrada do RTDB para a porta
+  de chegada do setor novo. Devolve a partida + **`tokenCanal`** do setor novo. Conta como ação da
+  noite (ociosidade). `setorId` = o próprio setor é "ficar". 400 `SEM_ESTRADA`, `LONGE_DA_PORTA`,
+  `POSICAO_TRAVADA` (`motivo: REPARO | RESGATE | ACAO`), `FORA_DA_NOITE`; 429 `MOVER_RAPIDO`
+  abaixo de 1s.
+- `POST /aluno/isolateus/:id/confirmar-posicao` — "eu fico"; conta como ação da noite. Não fecha
+  a noite: ela só fecha pelo relógio (036).
 - `POST /aluno/isolateus/:id/reparo` — organiza o reparo da ruína **onde você está**.
-  Um por noite, **anônimo** (autor visível atestaria que aquele habitante é real).
+  Um por noite, **anônimo** (autor visível atestaria que aquele habitante é real). Quem organiza
+  fica travado no setor até o amanhecer (036).
 - `POST /aluno/isolateus/:id/acao` — a jogada de **cada** Ameaça (uma por noite):
   `SABOTAR` (o `alvoId` do cliente é **ignorado** — sabota-se de onde se age),
   `ABDUZIR` com `alvoId` (presencial, só o setor de onde age; nunca uma aliada nem o
-  controlado) **ou** `setorId` (às cegas, qualquer outro), `AGUARDAR`.
+  controlado) **ou** `setorId` (às cegas, qualquer outro), `AGUARDAR`. Desde a 036 a jogada roda
+  numa **transação**: o alvo presencial é validado sobre a leitura fresca (400 `ALVO_SAIU` se já
+  atravessou) e, gravado, vale mesmo que a vítima fuja (o celular marca com um toque no boneco).
+  Sabotar, abduzir e escolher superpoder **travam** a Ameaça no setor (`travasNoite`, `ACAO`).
 - `POST /aluno/isolateus/:id/resgate` — organiza o **resgate** de dentro do Setor de Saúde (noite;
   vivo, livre, na Saúde pela posição do cofre). 403 `FORA_DA_SAUDE` / `SAUDE_EM_RUINAS`; 400
   `SEM_RESGATAVEIS` / `RESGATE_USADO`. Anônimo; a intenção fica no cofre e fecha a jogada da noite.
@@ -1640,14 +1653,20 @@ abdução ou reparo; senão o dia vai direto ao card.
   repetir é idempotente. Não entra em `confirmacoesNoite` (o preso não é esperado para fechar a
   noite). Aldeão: 403; Ameaça livre: 400 `NAO_PRESA`; fora da noite: 400.
 - `POST /aluno/isolateus/:id/resposta` — a questão. **Abduzidos e presos continuam pontuando.**
-- `POST /aluno/isolateus/:id/sinal` · `/quarentena` · `/debate` · `/pular-debate` · `/suspeito` —
-  `/sinal` e `/debate` passam pela **moderação** (`ModeracaoService`, a mesma do Wor): palavrão →
+- `POST /aluno/isolateus/:id/chat` `{ texto }` — **o chat da vila** (spec 036): um canal só, do
+  Despertar ao fim, em todas as fases. Vivos e soltos escrevem (Ameaça inclusa); abduzidos e presos
+  403 `FORA_DA_VILA`. 1 a 200 caracteres (400 `MENSAGEM_VAZIA`), 1 a cada 2s por aluno (429
+  `CHAT_RAPIDO`, cofre `ultimosChat`), fora da partida 400 `CHAT_FECHADO`. Assina com o **nome do
+  habitante** e guarda só as últimas 80 (`chat[]`), numa transação. NPCs não falam.
+- `POST /aluno/isolateus/:id/sinal` · `/quarentena` · `/suspeito` —
+  `/sinal` e `/chat` passam pela **moderação** (`ModeracaoService`, a mesma do Wor): palavrão →
   **422 `MENSAGEM_BLOQUEADA`**, nada é gravado e o falante perde **1000 XP**
   (`XpService.penalizarJogo`, motivo `ISOLATEUS_MODERACAO`, também em partida casual; sem turma
   não há débito). A penalidade é **silenciosa**: sem card, Diário ou Esperança.
   `/quarentena` exige estar **vivo, no Setor de Comunicação e com ele de pé** e não estar
   bloqueado (403 `CONVOCADOR_BLOQUEADO`). **Não há mais
-  exceção para o professor.** A rota `/rumor` (rumor forjado) **foi removida**.
+  exceção para o professor.** As rotas `/rumor` (rumor forjado), `/debate` e `/pular-debate`
+  (036) **foram removidas**.
 - `POST /aluno/isolateus/:id/tempo` — o celular também cobra o prazo vencido da fase. Mesma
   revalidação da rota do telão; exige apenas **ser da partida** (abduzidos e presos incluídos —
   eles seguem na aula, com a mesma tela cronometrada). Durante a noite, cada celular na vila
@@ -1667,30 +1686,35 @@ Hoje **qualquer cliente da partida** cobra o vencimento, e o cliente **insiste**
 virada encontra outro `status` e volta sem efeito, então N clientes cobrando o mesmo vencimento
 produzem **uma** transição.
 
-### A carência da Ameaça (o fast-forward que não denuncia ninguém)
+### A noite fecha só pelo relógio (spec 036)
 
-A noite fecha cedo quando **todos os reais** confirmaram **e** a Ameaça já jogou — fechar sem ela
-anularia o turno do infiltrado. Só que o deslocamento dela **conta como confirmação** (tem de
-contar: se ela só entrasse na conta depois de atacar, `movimentosRecebidos` pararia em `N-1`
-justamente nas noites em que ela ainda não agiu, e a vila leria o nome do alienígena no número).
-O efeito colateral era a tela dizer "todos decidiram" e o relógio continuar correndo à toa.
+A carência da Ameaça (`CARENCIA_AMEACA_MS`) e o fechamento antecipado saíram: com a travessia
+contínua, quem já atravessou uma porta ainda pode atravessar outra até o tempo acabar, então
+"todos decidiram" deixou de existir. A noite dura `limiteNoiteMs` (ou o pulo do professor).
+`movimentosRecebidos` segue contando quem agiu (ociosidade), sem efeito no relógio.
 
-A saída é `CARENCIA_AMEACA_MS`: com a vila inteira decidida e a jogada dela pendente, o
-`faseIniciadaEm` é **rebaseado** para deixar 8s. O relógio encurta para **todo mundo ao mesmo
-tempo**, sem nomear ninguém, e a Ameaça mantém um turno real — se ela agir dentro da carência, a
-noite cai na hora. Um campo só, uma verdade só: os cronômetros de todas as telas já contam a partir
-dele e `resolverPorTempo` revalida contra ele, sem regra nova.
+### A movimentação contínua (spec 036, substitui a 026)
 
-> Detalhe que o cliente precisa saber: `faseIniciadaEm` **nem sempre significa "começou agora"**.
-> Quem estima o desvio entre o relógio local e o do servidor tem de usar o **mínimo** das amostras,
-> não a última — a carência reescreve o campo para o passado de propósito.
+- **A posição pública é a verdade.** O `mover` grava `habitantes[].setorId` na hora; toda
+  validação que depende de lugar usa essa posição. Vale onde cada um está quando a noite fecha.
+- **NPCs atravessam ao vivo.** `sortearAgendaNpc` sorteia de 0 a 2 **travessias** por NPC
+  (`CHANCE_MOVER_NPC`; a 2ª com `CHANCE_NPC_MUDAR_IDEIA`, a partir do setor novo, pelo menos
+  `NPC_INTERVALO_TRAVESSIAS_MS` = 2s depois), em `NPC_JANELA_FRACAO` (10%–85%) da noite. O pulso
+  aplica as vencidas na posição pública (transação) e troca o boneco de cena no canal; com a
+  travessia a até `NPC_PREPARO_MS` (5s), o passeio leva o NPC até a porta. Travessia sem estrada
+  a partir do setor atual é descartada; o que não saiu até o fechamento também.
+- **Sem animação no amanhecer.** `ultimosDeslocamentos` fica `null`; o Delírio do professor não
+  tem aviso a zerar.
+- **Travas da noite** (`travasNoite`): reparo, resgate e a jogada da Ameaça prendem quem agiu no
+  setor até o amanhecer (`POSICAO_TRAVADA` com `motivo`).
 
-### A movimentação em tempo real (spec 026)
+Partidas abertas antes da 036 seguem lendo os campos da 026 abaixo (`posicoesNoite` ainda é
+aplicado no fechamento, se houver).
 
-O `setorId` público é o do anoitecer até o fechamento; o destino da noite mora no cofre
-(`posicoesNoite`), e toda validação que depende de lugar (reparo, sabotagem, abdução presencial,
-Controle Mental, resgate) usa a posição do cofre (`posicaoDe`). Por cima disso, a vila vê **quem
-está saindo**:
+#### O desenho da 026 (histórico)
+
+O `setorId` público era o do anoitecer até o fechamento; o destino da noite morava no cofre
+(`posicoesNoite`), e a vila via **quem estava saindo**:
 
 - **Avisos de saída** (`deslocamentosNoite`): o `mover` publica `{ habitanteId, para }` na hora;
   trocar substitui, voltar à origem remove. O celular mostra só os do próprio setor (recorte de
@@ -1813,13 +1837,11 @@ vale); contagiados não entram. Regra de bastidor, não anunciada. Partida sem t
 saem de **`NOMES_CIDADES` (99 cidades)**, num sorteio único para reais e NPCs — bancos
 separados fariam da origem do nome uma pista.
 
-**Movimento:** janela de **60s** (eram 20s: cobriam o clique, não a decisão — o aluno lê o próprio
-setor, abre o mapa, localiza as ruínas, e a Ameaça ainda escolhe a jogada dentro da mesma janela),
-um salto por noite, com **carência de 8s** quando só falta a Ameaça. Os **NPCs também andam**
-(`CHANCE_MOVER_NPC` = 0,45), decididos na abertura da noite e anunciados ao longo da janela
-(`NPC_AVISO_JANELA_MS` = 1,5s–35s, `CHANCE_NPC_MUDAR_IDEIA` = 0,15): NPC parado seria
-identificado em uma noite, e NPC que só aparecesse no amanhecer, sem aviso, também. Troca de
-destino limitada a uma por segundo por aluno (`MOVER_INTERVALO_MS` = 1000).
+**Movimento (036):** a noite é o **tempo de movimentação**, escolhido no lobby
+(`OPCOES_NOITE_S` = 10/20/30/45/60, `LIMITE_NOITE_PADRAO_MS` = 20s; partida antiga usa
+`LIMITE_DESLOCAMENTO_MS` = 15s), sem carência. Travessias ilimitadas de vizinho em vizinho, só pela
+porta, no máximo uma por segundo por aluno (`MOVER_INTERVALO_MS` = 1000). Os **NPCs também
+atravessam** (`CHANCE_MOVER_NPC` = 0,45, `CHANCE_NPC_MUDAR_IDEIA` = 0,15 para a 2ª travessia).
 
 Esperança inicial **100** · sabotagem **−15** (não contestada) · abdução **−10** (contestada
 pela questão) · inocente preso **−20** · contágio **−10** (silencioso) · reparo bem-sucedido
@@ -1831,7 +1853,7 @@ persistindo, a de menor índice (determinístico).
 
 **Quarentena:** **uma por rodada**, convocada **só pela vila** (com o convocador público) — de dentro da Comunicação, com o
 rádio de pé (o atalho do telão saiu; ver Endpoints).
-Debate **90s** (opcional: `debateHabilitado`) → votação **60s**, os dois com avanço rápido e
+Votação **60s** direto (o debate saiu na 036; a conversa fica no chat da vila), com avanço rápido e
 pulo do professor. Prendeu a última Ameaça livre → Vila vence; prendeu uma restando outra → a
 partida segue; prendeu inocente → −20 e **a identidade do preso permanece em segredo**. Em todo
 veredito que não encerra a partida, a janela de decisão **reabre com relógio** (antes voltava com
@@ -1841,7 +1863,7 @@ veredito que não encerra a partida, a janela de decisão **reabre com relógio*
 população **ou** destruiu mais de 3 setores); só então a Vila. Sem critério batido, vence a
 Vila por resistência. O veredito carrega o **motivo técnico** exibido no card.
 
-**Constantes da spec 028:** `PENALIDADE_XP` = 1000 (palavrão no debate ou no sinal) e
+**Constantes da spec 028:** `PENALIDADE_XP` = 1000 (palavrão no chat da vila ou no sinal) e
 `ACERTOS_PARA_CONTAGIO` = 2.
 
 **Economia de XP (spec 027):** só a **resposta certa** pontua: **1000** + bônus de rapidez até
@@ -1863,8 +1885,8 @@ Os pontos e o log (`logPontos`) ficam no cofre e viram XP **1:1** no encerrament
 
 | Rota | O que faz |
 |---|---|
-| `POST /aluno/isolateus/:id/passo { alvoX }` | Destino da caminhada (vivo, solto, na vila; 1/s, 429 `PASSO_RAPIDO`; 400 `ALVO_FORA_DA_CENA`). |
-| `GET /aluno/isolateus/:id/canal` | Custom token do setor atual (renovado a cada amanhecer). |
+| `POST /aluno/isolateus/:id/passo { alvoX }` | Destino da caminhada (vivo, solto, na vila; intervalo mínimo de 250 ms desde a 036, 429 `PASSO_RAPIDO`; 400 `ALVO_FORA_DA_CENA`). Devolve `{ ok, x, alvoX, t }` (a caminhada calculada: o modo simples sabe quando chega à porta). |
+| `GET /aluno/isolateus/:id/canal` | Custom token do setor atual. Desde a 036 o `mover` já devolve o do setor novo (`tokenCanal`). |
 
 **Turnos.** A Quarentena é convocada **à noite** (`POST .../quarentena` só no `DESLOCAMENTO`; cofre `quarentenaConvocadaNoite`; 409 `QUARENTENA_JA_CONVOCADA`; confirmada no amanhecer depois da sabotagem). O Dia (`RESULTADO_RODADA`) deixou de ser gravado; a noite seguinte abre com `faseIniciadaEm` 6 s à frente (400 `NOITE_NAO_COMECOU`). `TURNO_AMEACA` saiu.
 
