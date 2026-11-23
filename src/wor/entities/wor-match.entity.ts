@@ -1,3 +1,4 @@
+import type { EntradaFalhou } from '../../common/entrada';
 import { LogPontuacaoJogador } from '../../common/log-pontuacao';
 
 /** Constantes de balanceamento. Centralizadas para tuning posterior. */
@@ -204,6 +205,37 @@ export interface ResumoRodada {
   resultados: ResultadoRodadaEquipe[];
   /** A rodada foi fechada por tempo esgotado. */
   porTempo?: boolean;
+  /** 035: equipes cujo castelo caiu neste fechamento (a animação mostra a queda). */
+  quedas?: string[];
+}
+
+/**
+ * Janela da animação do fechamento (035 §2): a rodada seguinte só começa
+ * depois dela. Base + um tempo por evento animado, com teto. O FE usa a mesma
+ * conta para repartir o tempo entre os eventos.
+ */
+export const JANELA_ANIMACAO = {
+  BASE_MS: 2500,
+  POR_EVENTO_MS: 1200,
+  MAX_MS: 12000,
+};
+
+/** Ataques, arriscar (acerto: Catapulta/cura/Usurpação; erro: dano no próprio castelo) e quedas. */
+export function eventosDaRodada(resumo: ResumoRodada): number {
+  let n = resumo.quedas?.length ?? 0;
+  for (const r of resumo.resultados) {
+    if (r.acao === 'ATACAR' && r.alvoEquipeId) n++;
+    if (r.arriscar) n++;
+  }
+  return n;
+}
+
+export function janelaAnimacao(resumo: ResumoRodada): number {
+  return Math.min(
+    JANELA_ANIMACAO.BASE_MS +
+      JANELA_ANIMACAO.POR_EVENTO_MS * eventosDaRodada(resumo),
+    JANELA_ANIMACAO.MAX_MS,
+  );
 }
 
 /**
@@ -250,6 +282,10 @@ export class WorMatchEntity {
    * no ranking da turma (spec 027 §3). Partidas antigas valem.
    */
   valeRanking = true;
+  /** Cronômetro de entrada do lobby (035): ISO do fim; null = sem cronômetro. */
+  entradaEncerraEm?: string | null;
+  /** O prazo venceu sem gente suficiente (035 #8): aviso no lobby. */
+  entradaFalhou?: EntradaFalhou | null;
 
   /** Índice da onda (palavra) atual no baralho e total de ondas. */
   ondaIndex = 0;
@@ -266,6 +302,12 @@ export class WorMatchEntity {
 
   /** Ordem das equipes (exibição; desde a 029 não há mais rodízio). */
   ordemEquipes: string[] = [];
+  /**
+   * 035: qual reino do mapa pixel é de cada equipe (índice). Nasce na
+   * distribuição na ordem de `ordemEquipes` e troca na Usurpação (a Horda toma
+   * o reino do líder). Ausente em partidas antigas: o mapa usa `ordemEquipes`.
+   */
+  reinos?: Record<string, number>;
   /**
    * Quem já agiu na rodada em curso (`alunoId`). É o lado público das ações:
    * a letra e o acerto ficam em `privado/rodada` (029 §2.1).

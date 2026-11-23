@@ -23,8 +23,8 @@ export class AlunoWorController {
 
   /** Partida ativa da turma do aluno (lobby ou em andamento), ou null. */
   @Get()
-  atual(@CurrentStudent() { turmaId }: Student) {
-    return this.service.partidaDaTurma(turmaId);
+  atual(@CurrentStudent() { alunoId, turmaId }: Student) {
+    return this.service.partidaDaTurma(turmaId, alunoId);
   }
 
   /** Inscreve o aluno no lobby da partida. */

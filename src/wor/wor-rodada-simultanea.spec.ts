@@ -123,18 +123,16 @@ describe('Wor 032 — arriscar uma vez por equipe por rodada', () => {
 
   it('a trava zera na rodada seguinte', async () => {
     const teams = [time('e1', ['a1']), time('e2', ['b1'])];
-    const { service } = cenario(teams);
+    const { service, match } = cenario(teams);
     await service.arriscar('a1', 'm1', 'ERRADO');
     await service.chutarLetra('b1', 'm1', 'Q', 'DICA');
     expect(team(teams, 'e1').arriscouNaRodada ?? null).toBeNull();
+    match.rodadaIniciadaEm = new Date(Date.now() - 1).toISOString(); // a animação (035) passou
     await service.arriscar('a1', 'm1', 'ERRADO');
   });
 
   it('na Horda, quem arriscou fecha pela equipe inteira (não sobra ação)', async () => {
-    const teams = [
-      time('e1', ['a1']),
-      time('h', ['h1', 'h2', 'h3'], 0, true),
-    ];
+    const teams = [time('e1', ['a1']), time('h', ['h1', 'h2', 'h3'], 0, true)];
     const { service, match } = cenario(teams);
     await service.arriscar('h1', 'm1', 'ERRADO');
     expect(match.equipesFechadas.map((f) => f.equipeId)).toEqual(['h']);

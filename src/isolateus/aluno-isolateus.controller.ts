@@ -25,8 +25,8 @@ export class AlunoIsolateusController {
 
   /** A investigação ativa da turma do aluno (ou null). */
   @Get()
-  atual(@CurrentStudent() aluno: { turmaId: string }) {
-    return this.matches.partidaDaTurma(aluno.turmaId);
+  atual(@CurrentStudent() aluno: { alunoId: string; turmaId: string }) {
+    return this.matches.partidaDaTurma(aluno.turmaId, aluno.alunoId);
   }
 
   /** O Registro: declara presença. O codinome vem no Despertar. */

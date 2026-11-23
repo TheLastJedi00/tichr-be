@@ -7,6 +7,12 @@ import {
 import { embaralhar } from '../common/shuffle.util';
 import { assertLobbyOciosidade } from '../common/ociosidade';
 import { assertLobbyValeRanking } from '../common/vale-ranking';
+import {
+  assertLobbyCronometro,
+  falhaDeEntrada,
+  prazoDaEntrada,
+  prazoVencido,
+} from '../common/entrada';
 import { turmaCasaComJogo } from '../common/vinculo-jogo.util';
 import { ProfessorService } from '../professor/professor.service';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
@@ -15,6 +21,9 @@ import { WorMatchRepository } from './wor-match.repository';
 import { WorMatchEntity } from './entities/wor-match.entity';
 import { CORES_TEAM, WorTeamEntity } from './entities/wor-team.entity';
 import { WOR, tamanhoEquipe } from './entities/wor-match.entity';
+
+/** A batalha precisa de 2 alunos para formar 2 equipes. */
+const MINIMO_WOR = 2;
 
 export interface MatchView {
   match: WorMatchEntity;
@@ -137,11 +146,20 @@ export class WorMatchService {
   }
 
   /** Visão pública para a turma (aluno/projetor): raiz + equipes. */
-  async partidaDaTurma(turmaId: string): Promise<MatchView | null> {
-    const match = await this.matches.ativaDaTurma(turmaId);
-    if (!match) return null;
-    const teams = await this.matches.listarTeams(match.id);
-    return { match, teams };
+  async partidaDaTurma(
+    turmaId: string,
+    alunoId?: string,
+  ): Promise<(MatchView & { participa: boolean }) | null> {
+    const ativa = await this.matches.ativaDaTurma(turmaId);
+    if (!ativa) return null;
+    // Rede de segurança do cronômetro (035 #7): a leitura do aluno também
+    // começa a partida no prazo, se a aba do professor estiver fechada.
+    const { match, teams } = prazoVencido(ativa.entradaEncerraEm, Date.now())
+      ? await this.iniciarAutomatico(ativa.id)
+      : { match: ativa, teams: await this.matches.listarTeams(ativa.id) };
+    const participa =
+      !!alunoId && match.inscritos.some((i) => i.alunoId === alunoId);
+    return { match, teams, participa };
   }
 
   async view(matchId: string): Promise<MatchView> {
@@ -180,6 +198,11 @@ export class WorMatchService {
    */
   async distribuir(professorId: string, matchId: string): Promise<MatchView> {
     const match = await this.assertProfessor(matchId, professorId);
+    return this.distribuirEquipes(match);
+  }
+
+  private async distribuirEquipes(match: WorMatchEntity): Promise<MatchView> {
+    const matchId = match.id;
     if (match.status !== 'LOBBY') {
       throw new BadRequestException('A partida já começou.');
     }
@@ -229,7 +252,9 @@ export class WorMatchService {
       isHorde: false,
       pontos: 0,
     }));
-    await this.matches.atualizar(matchId, { ordemEquipes, placar });
+    // 035: o reino i do mapa pixel é da i-ª equipe; a Usurpação troca depois.
+    const reinos = Object.fromEntries(ordemEquipes.map((id, i) => [id, i]));
+    await this.matches.atualizar(matchId, { ordemEquipes, placar, reinos });
     return this.view(matchId);
   }
 
@@ -265,6 +290,21 @@ export class WorMatchService {
     return this.view(matchId);
   }
 
+  /** Lobby: liga (segundos) ou cancela (null) o cronômetro de entrada (035). */
+  async definirCronometro(
+    professorId: string,
+    matchId: string,
+    segundos: number | null,
+  ): Promise<MatchView> {
+    const match = await this.assertProfessor(matchId, professorId);
+    assertLobbyCronometro(match.status);
+    await this.matches.atualizar(matchId, {
+      entradaEncerraEm: prazoDaEntrada(segundos, Date.now()),
+      entradaFalhou: null,
+    });
+    return this.view(matchId);
+  }
+
   /** Lobby: a partida vale para o ranking da turma ou é casual (spec 027 §3). */
   async definirValeRanking(
     professorId: string,
@@ -280,12 +320,84 @@ export class WorMatchService {
   /** Inicia a batalha: passa para EM_ANDAMENTO e abre a primeira rodada (todas as equipes). */
   async iniciar(professorId: string, matchId: string): Promise<MatchView> {
     await this.assertProfessor(matchId, professorId);
+    return this.comecar(matchId);
+  }
+
+  /**
+   * Início pelo cronômetro de entrada (035): preguiçoso e idempotente. Só o
+   * disparo que ganha a reivindicação (transação) mexe na partida. Sem equipes,
+   * distribui e inicia; com menos de 2 inscritos, desliga o cronômetro e deixa
+   * o aviso. Com `professorId` (rota do telão), confere o dono.
+   */
+  async iniciarAutomatico(
+    matchId: string,
+    professorId?: string,
+  ): Promise<MatchView> {
+    const match = professorId
+      ? await this.assertProfessor(matchId, professorId)
+      : await this.matches.buscar(matchId);
+    if (!match) throw new NotFoundException('Partida não encontrada.');
+    const agora = Date.now();
+    if (
+      match.status !== 'LOBBY' ||
+      !prazoVencido(match.entradaEncerraEm, agora)
+    ) {
+      return this.view(matchId);
+    }
+    if (!(await this.matches.reivindicarEntrada(matchId, agora))) {
+      return this.view(matchId);
+    }
+    match.entradaEncerraEm = null;
+    if (match.inscritos.length < MINIMO_WOR) {
+      await this.matches.atualizar(matchId, {
+        entradaFalhou: falhaDeEntrada(
+          match.inscritos.length,
+          MINIMO_WOR,
+          agora,
+        ),
+      });
+      return this.view(matchId);
+    }
+    const teams = await this.matches.listarTeams(matchId);
+    if (teams.length < 2) await this.distribuirEquipes(match);
+    else await this.encaixarTardios(match, teams);
+    return this.comecar(matchId);
+  }
+
+  /**
+   * Quem entrou depois da distribuição vai para as equipes menores antes de
+   * começar (035 #6): ninguém que entrou no prazo fica de fora.
+   */
+  private async encaixarTardios(
+    match: WorMatchEntity,
+    teams: WorTeamEntity[],
+  ): Promise<void> {
+    const dentro = new Set(
+      teams.flatMap((t) => t.membros.map((m) => m.alunoId)),
+    );
+    const tardios = match.inscritos.filter((i) => !dentro.has(i.alunoId));
+    if (!tardios.length) return;
+    const sujas = new Set<string>();
+    for (const aluno of tardios) {
+      const menor = [...teams].sort(
+        (a, b) => a.membros.length - b.membros.length,
+      )[0];
+      menor.membros = [...menor.membros, aluno];
+      sujas.add(menor.id);
+    }
+    for (const t of teams.filter((x) => sujas.has(x.id))) {
+      await this.matches.atualizarTeam(match.id, t.id, { membros: t.membros });
+    }
+  }
+
+  private async comecar(matchId: string): Promise<MatchView> {
     const teams = await this.matches.listarTeams(matchId);
     if (teams.length < 2) {
       throw new BadRequestException('Distribua as equipes antes de iniciar.');
     }
     await this.matches.atualizar(matchId, {
       status: 'EM_ANDAMENTO',
+      entradaEncerraEm: null,
       jaAgiram: [],
       equipesFechadas: [],
       feedRodada: [],
