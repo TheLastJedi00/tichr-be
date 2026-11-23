@@ -127,12 +127,12 @@ describe('Isolateus — organizar o resgate (Task 16)', () => {
     );
   });
 
-  it('cancelado se o organizador saiu da Saúde', async () => {
+  it('o organizador não sai da Saúde: fica travado até o amanhecer (036 #12)', async () => {
     const ctx = vila({ h3: 'saude' });
     await ctx.service.organizarResgate('a2', 'p1');
-    await ctx.service.mover('a2', 'p1', 'comercio');
-    await fecharNoite(ctx);
-    expect(ctx.partida.resgatePendente).toBe(false);
+    await expect(
+      ctx.service.mover('a2', 'p1', 'comercio'),
+    ).rejects.toMatchObject({ response: { code: 'POSICAO_TRAVADA' } });
   });
 
   it('cancelado se a Saúde caiu na mesma noite', async () => {

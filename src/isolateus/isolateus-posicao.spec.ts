@@ -124,13 +124,12 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     );
   });
 
-  it('grava no setor de ORIGEM durante a noite (a chegada só no amanhecer)', async () => {
+  it('grava no setor ATUAL: depois da travessia, já é o novo (036)', async () => {
     const c = montar();
-    await c.service.mover('a3', 'p1', 'energia');
-    avancar(1500);
+    c.partida.habitantes.find((h) => h.id === 'h3')!.setorId = 'energia';
     await c.service.passo('a3', 'p1', 40);
-    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(true);
-    expect(c.rtdb.dados.has('pos/p1/energia/h3')).toBe(false);
+    expect(c.rtdb.dados.has('pos/p1/energia/h3')).toBe(true);
+    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(false);
   });
 
   it('partida pausada: 409, como todo comando', async () => {
