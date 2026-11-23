@@ -13,7 +13,7 @@ describe('Isolateus — pausa', () => {
 
   const noite = () => {
     const ctx = vilaComAmeacas({ status: 'DESLOCAMENTO' });
-    ctx.partida.faseIniciadaEm = new Date(T0 - 20_000).toISOString();
+    ctx.partida.faseIniciadaEm = new Date(T0 - 5_000).toISOString();
     ctx.segredo.agendaNpc = [
       {
         habitanteId: 'n1',
@@ -42,7 +42,7 @@ describe('Isolateus — pausa', () => {
 
     expect(ctx.partida.pausadaEm).toBeNull();
     expect(ctx.partida.faseIniciadaEm).toBe(
-      new Date(T0 - 20_000 + 45_000).toISOString(),
+      new Date(T0 - 5_000 + 45_000).toISOString(),
     );
     expect(ctx.segredo.agendaNpc?.map((a) => a.em)).toEqual([
       new Date(T0 + 5_000 + 45_000).toISOString(),
@@ -51,7 +51,7 @@ describe('Isolateus — pausa', () => {
   });
 
   it('retomada, a fase tem exatamente o tempo que faltava (o prazo não vence)', async () => {
-    const ctx = noite(); // 20s corridos de 60s
+    const ctx = noite(); // 5s corridos de 15s
     await ctx.service.pausar('prof', 'p1');
     agora = T0 + 120_000; // pausada por 2 min
     await ctx.service.retomar('prof', 'p1');

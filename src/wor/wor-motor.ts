@@ -174,6 +174,26 @@ export class MotorWor {
   }
 
   /**
+   * Horda: o membro abre mão da Invasão nesta rodada. Na Horda a única ação é
+   * arriscar a palavra; sem esta saída, quem não sabe a palavra só podia chutar
+   * qualquer coisa ou ficar parado — levando falta de ociosidade e segurando a
+   * rodada até o tempo zerar. Passar conta como jogada (sem falta) e não gasta
+   * o arriscar da equipe: um colega ainda pode tentar.
+   */
+  naoArriscar(alunoId: string): void {
+    this.assertEmAndamento();
+    const team = this.equipeDoAluno(alunoId);
+    if (!team.isHorde) {
+      throw new BadRequestException(
+        'Só a Horda pode abrir mão da Invasão. Escolha uma letra.',
+      );
+    }
+    this.assertPodeAgir(team, alunoId);
+    this.match.jaAgiram = [...this.match.jaAgiram, alunoId];
+    this.depoisDaAcao(team);
+  }
+
+  /**
    * Fecha a rodada por TEMPO esgotado (o telão dispara ao zerar). Devolve
    * `false` se o prazo ainda não venceu (margem para o relógio do cliente).
    */
