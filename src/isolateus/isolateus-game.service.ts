@@ -443,18 +443,21 @@ export class IsolateusGameService {
 
     await this.atravessar(partida, segredo, habitante.id, setorId, alunoId);
     // O canal acompanha a travessia (036 #38): o boneco sai da cena antiga e
-    // entra pela porta da nova; o token do setor novo vai na resposta.
-    let tokenCanal: string | null = null;
-    if (this.posicao?.habilitado) {
-      const posicao = this.posicao;
-      await this.semFalhar(() =>
-        posicao.atravessar(partida.id, origem, setorId, habitante.id),
-      );
-      tokenCanal = await posicao
-        .token(partida.id, setorId, alunoId)
-        .catch(() => null);
-    }
-    await this.registrarConfirmacao(partida, segredo, alunoId);
+    // entra pela porta da nova; o token do setor novo vai na resposta. As três
+    // escritas não dependem uma da outra: correm juntas (a cortina da troca de
+    // cena fica fechada enquanto o celular espera).
+    const posicao = this.posicao?.habilitado ? this.posicao : null;
+    const [tokenCanal] = await Promise.all([
+      posicao
+        ? posicao.token(partida.id, setorId, alunoId).catch(() => null)
+        : Promise.resolve(null),
+      posicao
+        ? this.semFalhar(() =>
+            posicao.atravessar(partida.id, origem, setorId, habitante.id),
+          )
+        : Promise.resolve(),
+      this.registrarConfirmacao(partida, segredo, alunoId),
+    ]);
     return Object.assign(partida, { tokenCanal });
   }
 
