@@ -1475,23 +1475,43 @@ export class IsolateusGameService {
       });
     }
     this.assertNoiteComecou(partida);
-    const jogadas = segredo.acoesDaNoite();
-    if (jogadas.some((j) => j.alunoId === alunoId)) {
-      throw new BadRequestException({
-        code: 'JOGADA_FEITA',
-        message: 'Você já fez sua jogada esta noite.',
-      });
-    }
 
-    const acao = this.montarJogada(partida, segredo, alunoId, dto);
-    const acoesRodada = [...jogadas, { alunoId, acao }];
-    segredo.acoesRodada = acoesRodada;
-    segredo.acaoRodada = null;
-    await this.matches.commitPartida(
-      partidaId,
-      {},
-      { acoesRodada, acaoRodada: null },
-    );
+    // Numa transação, sobre a leitura fresca (036 #13a): com a vila andando, a
+    // vítima pode ter atravessado a porta entre a leitura e a gravação. O
+    // toque fixa o alvo; depois disso, fugir não salva mais ninguém.
+    const fresco = await this.matches.transacao(partidaId, (p, s) => {
+      assertNaoPausada(p);
+      if (p.status !== 'DESLOCAMENTO') {
+        throw new BadRequestException({
+          code: 'FORA_DA_NOITE',
+          message: 'A noite não está aberta.',
+        });
+      }
+      const jogadas = s.acoesDaNoite();
+      if (jogadas.some((j) => j.alunoId === alunoId)) {
+        throw new BadRequestException({
+          code: 'JOGADA_FEITA',
+          message: 'Você já fez sua jogada esta noite.',
+        });
+      }
+      const acao = this.montarJogada(p, s, alunoId, dto);
+      const acoesRodada = [...jogadas, { alunoId, acao }];
+      const mudancas: Partial<IsolateusSegredoEntity> = {
+        acoesRodada,
+        acaoRodada: null,
+      };
+      // Agiu (036 #12): fica no setor até o amanhecer. Aguardar não trava.
+      if (acao.tipo !== 'AGUARDAR') {
+        mudancas.travasNoite = this.comTrava(s, alunoId, 'ACAO');
+      }
+      Object.assign(s, mudancas);
+      return { segredo: mudancas };
+    });
+    if (fresco) {
+      segredo.acoesRodada = fresco.segredo.acoesRodada;
+      segredo.acaoRodada = null;
+      segredo.travasNoite = fresco.segredo.travasNoite;
+    }
 
     // A jogada da Ameaça também é uma confirmação da noite dela — e é ela que
     // pode ser a última peça a faltar para o amanhecer.
@@ -1579,6 +1599,8 @@ export class IsolateusGameService {
     }
     // Usar o poder zera a barra.
     mudancas.energiaAlien = { ...(segredo.energiaAlien ?? {}), [alunoId]: 0 };
+    // Agiu na noite (036 #12): fica no setor até o amanhecer.
+    mudancas.travasNoite = this.comTrava(segredo, alunoId, 'ACAO');
 
     Object.assign(segredo, mudancas);
     await this.matches.commitPartida(partidaId, {}, mudancas);
@@ -1640,10 +1662,12 @@ export class IsolateusGameService {
 
     // Abdução presencial: só quem está ao alcance dela.
     const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
-    if (!alvo || this.posicaoDe(segredo, alvo) !== aqui) {
+    if (!alvo || alvo.preso || this.posicaoDe(segredo, alvo) !== aqui) {
+      // Com a vila andando ao vivo, o caso comum é a vítima ter acabado de
+      // atravessar a porta (036 #13a).
       throw new BadRequestException({
-        code: 'FORA_DE_ALCANCE',
-        message: 'Este habitante não está no seu setor.',
+        code: 'ALVO_SAIU',
+        message: 'Ele saiu do setor.',
       });
     }
     if (alvo.id === ameaca.id) {
@@ -2860,8 +2884,8 @@ export class IsolateusGameService {
     }
     this.assertNoiteComecou(partida);
     // O rádio da vila fica na Comunicação: é de lá, e só de lá, que se convoca a
-    // reunião. A posição vale a de ORIGEM da noite (a pública): é onde o boneco
-    // está na cena. Derrubar esse setor cala a vila até ela reconstruí-lo — e é
+    // reunião. Vale onde o boneco está AGORA (036 #13): a posição pública
+    // muda a cada travessia. Derrubar esse setor cala a vila até ela reconstruí-lo — e é
     // isso que faz da Comunicação o alvo mais valioso do mapa.
     if (habitante.setorId !== SETOR_COMUNICACAO) {
       throw new ForbiddenException({

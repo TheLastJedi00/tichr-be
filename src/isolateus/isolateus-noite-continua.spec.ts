@@ -167,3 +167,105 @@ describe('Isolateus 036 — travessia contínua (Task 2)', () => {
     expect(ctx.partida.ultimosDeslocamentos).toBeNull();
   });
 });
+
+describe('Isolateus 036 — ações sobre a posição ao vivo (Task 3)', () => {
+  it('a Ameaça que sabota fica travada no setor (motivo ACAO)', async () => {
+    const ctx = vilaComAmeacas({ posicoes: { h1: 'energia' } });
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    avancar(1_000);
+    const e = await ctx.service
+      .mover('a1', 'p1', 'seguranca')
+      .catch((x: unknown) => x);
+    expect(codigo(e)).toBe('POSICAO_TRAVADA');
+    expect((e as HttpException).getResponse()).toMatchObject({
+      motivo: 'ACAO',
+    });
+  });
+
+  it('abduzir (presencial ou às cegas) também trava; aguardar não', async () => {
+    const ctx = vilaComAmeacas({ posicoes: { h1: 'energia', h3: 'energia' } });
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' });
+    await ctx.service.acaoAmeaca('a2', 'p1', { tipo: 'AGUARDAR' });
+    avancar(1_000);
+    await expect(
+      ctx.service.mover('a1', 'p1', 'seguranca'),
+    ).rejects.toMatchObject({ response: { code: 'POSICAO_TRAVADA' } });
+    await ctx.service.mover('a2', 'p1', 'energia');
+    expect(ctx.setorDe('h2')).toBe('energia');
+  });
+
+  it('superpoder escolhido na noite também trava a Ameaça', async () => {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'] });
+    ctx.segredo.energiaAlien = { a1: 3 };
+    await ctx.service.usarPoder('a1', 'p1', { poder: 'DELIRIO' });
+    await expect(
+      ctx.service.mover('a1', 'p1', 'energia'),
+    ).rejects.toMatchObject({ response: { code: 'POSICAO_TRAVADA' } });
+  });
+
+  it('a sabotagem vale no setor onde a Ameaça estava ao agir', async () => {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'] });
+    await ctx.service.mover('a1', 'p1', 'energia');
+    avancar(1_000);
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'SABOTAR' });
+    await amanhecer(ctx);
+    expect(ctx.partida.setores.find((s) => s.id === 'energia')!.intacto).toBe(
+      false,
+    );
+  });
+
+  it('abdução presencial: o alvo fixado no toque vale mesmo que ele fuja depois', async () => {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'] });
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' });
+    avancar(1_000);
+    await ctx.service.mover('a3', 'p1', 'energia'); // a vítima atravessa
+    await amanhecer(ctx);
+    expect(ctx.partida.alerta?.tipo).toBe('ABDUCAO');
+    expect(ctx.segredo.acoesDaNoite()[0].acao).toEqual({
+      tipo: 'ABDUZIR',
+      alvoId: 'h3',
+    });
+  });
+
+  it('alvo que já atravessou a porta: 400 ALVO_SAIU, e a Ameaça tenta outro', async () => {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'] });
+    await ctx.service.mover('a3', 'p1', 'energia');
+    const e = await ctx.service
+      .acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' })
+      .catch((x: unknown) => x);
+    expect(codigo(e)).toBe('ALVO_SAIU');
+    expect(ctx.segredo.acoesDaNoite()).toEqual([]);
+    await ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h4' });
+    expect(ctx.segredo.acoesDaNoite()).toHaveLength(1);
+  });
+
+  it('o alvo é validado sobre a leitura fresca (transação)', async () => {
+    const ctx = vilaComAmeacas({ ameacas: ['a1'] });
+    type Fn = (p: unknown, s: unknown) => unknown;
+    const repo = ctx.repo as unknown as { transacao: jest.Mock };
+    const original = repo.transacao.getMockImplementation() as (
+      id: string,
+      fn: Fn,
+    ) => Promise<unknown>;
+    // Entre a leitura do comando e a transação, a vítima atravessou.
+    repo.transacao.mockImplementationOnce((id: string, fn: Fn) =>
+      original(id, (p, s) => {
+        ctx.partida.habitantes.find((h) => h.id === 'h3')!.setorId = 'energia';
+        return fn(p, s);
+      }),
+    );
+    const e = await ctx.service
+      .acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' })
+      .catch((x: unknown) => x);
+    expect(codigo(e)).toBe('ALVO_SAIU');
+  });
+
+  it('a Quarentena se convoca de onde se está agora: quem chegou à Comunicação pode', async () => {
+    const ctx = vilaComAmeacas({ posicoes: { h3: 'energia' } });
+    await ctx.service.mover('a3', 'p1', 'comunicacao');
+    await ctx.service.convocarQuarentena('p1', 'a3');
+    expect(ctx.segredo.quarentenaConvocadaNoite).toEqual({
+      habitanteId: 'h3',
+    });
+  });
+});

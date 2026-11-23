@@ -352,7 +352,7 @@ describe('Isolateus — Controle Mental', () => {
     });
     await expect(
       ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h5' }),
-    ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
+    ).rejects.toMatchObject({ response: { code: 'ALVO_SAIU' } });
     await expect(
       ctx.service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h3' }),
     ).rejects.toBeInstanceOf(BadRequestException);
