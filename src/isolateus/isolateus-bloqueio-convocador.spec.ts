@@ -32,7 +32,7 @@ async function votar(
   convocador = 'a2',
 ) {
   await convocarPelaNoite(v, convocador);
-  await v.service.pularFase('prof', 'p1'); // debate → votação
+  // 036: sem debate, a reunião já abre na votação.
   for (const [alunoId, suspeito] of Object.entries(votos)) {
     await v.service.votarSuspeito(alunoId, 'p1', suspeito);
   }
@@ -67,7 +67,7 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     v.partida.rodada = 2;
     noiteAberta(v);
     await convocarPelaNoite(v, 'a2');
-    expect(v.partida.status).toBe('QUARENTENA_DEBATE');
+    expect(v.partida.status).toBe('QUARENTENA_VOTO');
   });
 
   it('o bloqueio dura uma rodada só', async () => {
@@ -76,7 +76,7 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     v.partida.rodada = 3;
     noiteAberta(v);
     await convocarPelaNoite(v, 'a3');
-    expect(v.partida.status).toBe('QUARENTENA_DEBATE');
+    expect(v.partida.status).toBe('QUARENTENA_VOTO');
   });
 
   it('prender uma Ameaça não bloqueia ninguém', async () => {
@@ -89,7 +89,6 @@ describe('Isolateus — bloqueio de quem prendeu um inocente (Task 12)', () => {
     });
     v.partida.rodada = 1;
     await convocarPelaNoite(v, 'a3');
-    await v.service.pularFase('prof', 'p1');
     for (const a of ['a3', 'a4', 'a5']) {
       await v.service.votarSuspeito(a, 'p1', 'h1');
     }

@@ -227,6 +227,14 @@ export function vilaComAmeacas(
   };
 }
 
+/**
+ * Fecha a noite pelo relógio (036 #4: ela não fecha mais sozinha quando todos
+ * decidem). Sem efeito se a partida já não está na noite.
+ */
+export async function amanhecer(v: ReturnType<typeof vilaComAmeacas>) {
+  await v.service.pularFase('prof', 'p1', 'DESLOCAMENTO');
+}
+
 /** Abre a noite já contando (sem a espera do card de resultado, 034 #55). */
 export function noiteAberta(v: ReturnType<typeof vilaComAmeacas>) {
   v.partida.status = 'DESLOCAMENTO';
@@ -235,7 +243,7 @@ export function noiteAberta(v: ReturnType<typeof vilaComAmeacas>) {
 
 /**
  * Convoca a Quarentena pelo caminho REAL (034): à noite, o amanhecer a
- * confirma, a questão do dia fecha e a reunião abre (debate).
+ * confirma, a questão do dia fecha e a reunião abre (na votação, 036).
  */
 export async function convocarPelaNoite(
   v: ReturnType<typeof vilaComAmeacas>,

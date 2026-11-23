@@ -83,15 +83,15 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     expect(g.x).toBeCloseTo(CENA.LARGURA / 2 + CENA.VELOCIDADE);
   });
 
-  it('429 PASSO_RAPIDO acima de 1 por segundo', async () => {
+  it('429 PASSO_RAPIDO abaixo de 250 ms (036 #25: apertar e soltar a tecla)', async () => {
     const c = montar();
     await c.service.passo('a3', 'p1', 250);
-    avancar(400);
+    avancar(100);
     const erro = await c.service.passo('a3', 'p1', 10).catch((e) => e);
     expect(erro).toBeInstanceOf(HttpException);
     expect((erro as HttpException).getStatus()).toBe(429);
     expect(codigo(erro)).toBe('PASSO_RAPIDO');
-    avancar(700);
+    avancar(200);
     await expect(c.service.passo('a3', 'p1', 10)).resolves.toBeDefined();
   });
 
@@ -124,13 +124,12 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     );
   });
 
-  it('grava no setor de ORIGEM durante a noite (a chegada só no amanhecer)', async () => {
+  it('grava no setor ATUAL: depois da travessia, já é o novo (036)', async () => {
     const c = montar();
-    await c.service.mover('a3', 'p1', 'energia');
-    avancar(1500);
+    c.partida.habitantes.find((h) => h.id === 'h3')!.setorId = 'energia';
     await c.service.passo('a3', 'p1', 40);
-    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(true);
-    expect(c.rtdb.dados.has('pos/p1/energia/h3')).toBe(false);
+    expect(c.rtdb.dados.has('pos/p1/energia/h3')).toBe(true);
+    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(false);
   });
 
   it('partida pausada: 409, como todo comando', async () => {
@@ -138,6 +137,70 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     c.partida.pausadaEm = new Date(agora).toISOString();
     const erro = await c.service.passo('a3', 'p1', 10).catch((e) => e);
     expect((erro as HttpException).getStatus()).toBe(409);
+  });
+});
+
+describe('Isolateus 036 — a porta (Task 4)', () => {
+  /** Anda até `x` e espera chegar. */
+  async function andarAte(
+    c: ReturnType<typeof montar>,
+    aluno: string,
+    x: number,
+  ) {
+    await c.service.passo(aluno, 'p1', x);
+    avancar(10_000);
+  }
+
+  it('longe da porta: 400 LONGE_DA_PORTA e ninguém atravessa', async () => {
+    const c = montar();
+    // Nasce no meio da cena (X_INICIAL), longe das portas.
+    const e = await c.service.mover('a3', 'p1', 'energia').catch((x) => x);
+    expect(codigo(e)).toBe('LONGE_DA_PORTA');
+    expect(c.setorDe('h3')).toBe('seguranca');
+  });
+
+  it('na zona da porta, atravessa (com tolerância)', async () => {
+    const c = montar();
+    const porta = xDaPorta('seguranca', 'energia')!;
+    const dentro = porta > CENA.LARGURA / 2 ? -1 : 1;
+    await andarAte(c, 'a3', porta + dentro * (CENA.ZONA_PORTA - 1));
+    await c.service.mover('a3', 'p1', 'energia');
+    expect(c.setorDe('h3')).toBe('energia');
+  });
+
+  it('a porta certa: estar na porta de outro vizinho não vale', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'comercio')!);
+    const e = await c.service.mover('a3', 'p1', 'energia').catch((x) => x);
+    expect(codigo(e)).toBe('LONGE_DA_PORTA');
+  });
+
+  it('a travessia tira o boneco do setor antigo e o põe na porta de chegada', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'energia')!);
+    await c.service.mover('a3', 'p1', 'energia');
+    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(false);
+    const chegada = xDaPorta('energia', 'seguranca')!;
+    const novo = c.rtdb.dados.get('pos/p1/energia/h3') as {
+      x: number;
+      alvoX: number;
+    };
+    expect(novo.x).toBe(chegada);
+    // Entra um pouco para dentro da cena, fora da zona da porta.
+    expect(Math.abs(novo.alvoX - chegada)).toBeGreaterThan(CENA.ZONA_PORTA);
+  });
+
+  it('a resposta traz o token do canal do setor novo', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'energia')!);
+    const r = await c.service.mover('a3', 'p1', 'energia');
+    expect(r.tokenCanal).toContain('"setorId":"energia"');
+  });
+
+  it('"ficar" não exige porta', async () => {
+    const c = montar();
+    await c.service.mover('a3', 'p1', 'seguranca');
+    expect(c.segredo.confirmacoesNoite).toContain('a3');
   });
 });
 
@@ -210,36 +273,33 @@ describe('Isolateus 034 — NPCs no mesmo canal (Task 3)', () => {
     jest.restoreAllMocks();
   });
 
-  it('no horário do aviso de saída, o alvoX do NPC é a porta do destino', async () => {
+  it('com a travessia perto, o NPC anda até a porta do destino (036)', async () => {
     const c = montar({ npcs: 1 });
     c.segredo.agendaNpc = [
-      { habitanteId: 'n1', para: 'energia', em: new Date(agora).toISOString() },
+      {
+        habitanteId: 'n1',
+        para: 'energia',
+        em: new Date(agora + 3_000).toISOString(),
+      },
     ];
-    jest.spyOn(Math, 'random').mockReturnValue(0.99);
+    jest.spyOn(Math, 'random').mockReturnValue(0.99); // sem passeio aleatório
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
     const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
     expect(npc.alvoX).toBe(xDaPorta('seguranca', 'energia'));
     jest.restoreAllMocks();
   });
 
-  it('mudar de ideia tira o NPC da luz: alvoX sai da porta', async () => {
+  it('na hora da travessia, o NPC troca de cena pela porta, como um aluno', async () => {
     const c = montar({ npcs: 1 });
     c.segredo.agendaNpc = [
-      { habitanteId: 'n1', para: null, em: new Date(agora).toISOString() },
+      { habitanteId: 'n1', para: 'energia', em: new Date(agora).toISOString() },
     ];
-    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    jest.spyOn(Math, 'random').mockReturnValue(0.99);
     await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
-    const npc = c.rtdb.dados.get('pos/p1/seguranca/n1') as { alvoX: number };
-    expect(npc.alvoX).toBe(CENA.X_INICIAL);
-    jest.restoreAllMocks();
-  });
-
-  it('NPC já na luz de uma porta não é desviado pelo passeio', async () => {
-    const c = montar({ npcs: 1 });
-    c.partida.deslocamentosNoite = [{ habitanteId: 'n1', para: 'energia' }];
-    jest.spyOn(Math, 'random').mockReturnValue(0.1);
-    await c.service.resolverPorTempo('p1', { alunoId: 'a3' });
+    expect(c.setorDe('n1')).toBe('energia');
     expect(c.rtdb.dados.has('pos/p1/seguranca/n1')).toBe(false);
+    const novo = c.rtdb.dados.get('pos/p1/energia/n1') as { x: number };
+    expect(novo.x).toBe(xDaPorta('energia', 'seguranca'));
     jest.restoreAllMocks();
   });
 
@@ -260,5 +320,13 @@ describe('Isolateus 034 — NPCs no mesmo canal (Task 3)', () => {
       c.service.resolverPorTempo('p1', { alunoId: 'a3' }),
     ).resolves.toBeDefined();
     jest.restoreAllMocks();
+  });
+});
+
+describe('Isolateus 036 — o passo devolve a caminhada (Task 11)', () => {
+  it('o modo simples recebe o x de saída e o alvo, para saber quando chega', async () => {
+    const c = montar();
+    const r = await c.service.passo('a3', 'p1', 24);
+    expect(r).toEqual({ ok: true, x: CENA.X_INICIAL, alvoX: 24, t: agora });
   });
 });

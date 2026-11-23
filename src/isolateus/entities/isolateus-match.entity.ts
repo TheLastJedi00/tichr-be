@@ -51,15 +51,12 @@ export const ISOLATEUS = {
    */
   LIMITE_DESLOCAMENTO_MS: 15_000,
   /**
-   * Quando a vila inteira já fechou a jogada e só falta a Ameaça, a noite não
-   * espera o resto do minuto: o relógio colapsa para esta carência.
-   *
-   * Por que não fechar na hora: o alienígena perderia o turno. Por que não
-   * mostrar "falta 1": todo aldeão sabe que confirmou, então o habitante que
-   * falta seria, por eliminação, a Ameaça. A carência resolve os dois — o
-   * relógio encurta para TODO MUNDO, sem nomear ninguém.
+   * A noite É o tempo de movimentação (036 #1): o professor escolhe no lobby
+   * entre estas durações (s). Partida sem `limiteNoiteMs` (anterior à 036) usa
+   * `LIMITE_DESLOCAMENTO_MS`.
    */
-  CARENCIA_AMEACA_MS: 8_000,
+  OPCOES_NOITE_S: [10, 20, 30, 45, 60] as const,
+  LIMITE_NOITE_PADRAO_MS: 20_000,
   /**
    * O dia: janela em que a vila lê o resultado e pode convocar a Quarentena
    * antes de a noite cair sozinha. Sem ela, o avanço automático tornaria a
@@ -83,11 +80,14 @@ export const ISOLATEUS = {
    */
   CHANCE_MOVER_NPC: 0.45,
   /**
-   * Faixa (ms desde a abertura da noite) dos avisos de saída dos NPCs (026
-   * §2.3). Concentrada no começo da janela, quando os reais decidem: um aviso
-   * "atrasado" só sai no fechamento, e lá ele se mistura ao último real.
+   * Faixa (fração da noite) em que caem os horários da agenda dos NPCs (036
+   * #15): nem no primeiro instante, nem colado no fechamento.
    */
-  NPC_AVISO_JANELA_MS: [1_500, 10_000] as const,
+  NPC_JANELA_FRACAO: [0.1, 0.85] as const,
+  /** Mínimo entre duas travessias do mesmo NPC: o tempo de andar até a porta. */
+  NPC_INTERVALO_TRAVESSIAS_MS: 2_000,
+  /** Quanto antes da travessia o NPC começa a andar até a porta. */
+  NPC_PREPARO_MS: 5_000,
   /**
    * Chance de um NPC que vai andar ganhar um segundo aviso (outro vizinho ou
    * desistir). Os reais podem mudar de ideia; NPC que nunca muda seria pista.
@@ -115,6 +115,10 @@ export const ISOLATEUS = {
    * Sinal Interceptado (028 §1). A mesma régua do `WOR.PENALIDADE_XP`.
    */
   PENALIDADE_XP: 1000,
+  /** Chat da vila (036 #29 e #30). */
+  CHAT_MAX_MENSAGENS: 80,
+  CHAT_MAX_CARACTERES: 200,
+  CHAT_INTERVALO_MS: 2_000,
 } as const;
 
 export type StatusIsolateus =
@@ -179,6 +183,14 @@ export interface Rumor {
   autorNome: string;
   texto: string;
   tipo: 'SINAL' | 'RUMOR';
+}
+
+/** Uma fala do chat da vila (036): o nome é o do habitante, nunca o real. */
+export interface MensagemVila {
+  id: string;
+  autorNome: string;
+  texto: string;
+  em: string;
 }
 
 /** Uma fala do debate da Quarentena. */
@@ -360,6 +372,8 @@ export class IsolateusMatchEntity {
 
   rumores: Rumor[];
   debate: MensagemDebate[];
+  /** O chat da vila (036): as últimas `CHAT_MAX_MENSAGENS` falas. */
+  chat: MensagemVila[] = [];
   resumoRodada: ResumoRodada | null;
 
   /**
@@ -369,11 +383,20 @@ export class IsolateusMatchEntity {
    */
   quarentenaRodada: number | null;
   /**
-   * O Debate Tático antes da votação, escolhido pelo professor no lobby e fixo
-   * depois do Despertar. Desligado, a Quarentena vai direto ao voto. Partidas
-   * anteriores ao campo são lidas como ligadas (o comportamento de sempre).
+   * Só leitura de partidas anteriores à 036: o chat da vila substituiu o Debate
+   * Tático (#35), e a Quarentena vai sempre direto ao voto.
    */
   debateHabilitado = true;
+  /**
+   * Duração da noite (= tempo de movimentação, 036 #1), escolhida no lobby e
+   * fixa depois do Despertar. Ausente = partida anterior à 036.
+   */
+  limiteNoiteMs?: number;
+
+  /** A duração efetiva da noite desta partida. */
+  get duracaoNoiteMs(): number {
+    return this.limiteNoiteMs ?? ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
+  }
   /**
    * Quem convocou a Quarentena em curso (`null` fora dela). **Público de
    * propósito**: convocar à toa custa −20 de Esperança à vila, e sem autor a

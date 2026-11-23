@@ -53,15 +53,17 @@ import {
 import {
   AcaoAmeaca,
   IsolateusSegredoEntity,
+  TravaNoite,
 } from './entities/isolateus-segredo.entity';
-import {
-  AvisoNpc,
-  aplicarAviso,
-  movimentosDaNoite,
-  reescalarAgenda,
-  sortearAgendaNpc,
-} from './isolateus-deslocamento';
-import { CENA, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
+import { sortearAgendaNpc } from './isolateus-deslocamento';
+
+/** Uma travessia de NPC aplicada pelo pulso (para mover o boneco no canal). */
+interface TravessiaNpc {
+  habitanteId: string;
+  de: string;
+  para: string;
+}
+import { CENA, Passo, alvoDentroDaCena, xDaPorta } from './isolateus-cena';
 import { IsolateusJogoRepository } from './isolateus-jogo.repository';
 import { IsolateusPosicaoService } from './isolateus-posicao.service';
 import { IsolateusMatchRepository } from './isolateus-match.repository';
@@ -416,32 +418,116 @@ export class IsolateusGameService {
   // ===== A Noite =====
 
   /**
-   * O deslocamento: o habitante anda **um setor**, pelas estradas do mapa.
+   * A travessia de uma porta (036): o habitante passa para um vizinho do setor
+   * ATUAL, na hora e em público, quantas vezes quiser durante a noite. Vale o
+   * setor onde ele estiver quando o relógio zerar.
    *
-   * Mover é também confirmar — quem andou fechou sua jogada da noite. Passar o
-   * próprio setor como destino é o "eu fico", tratado por `confirmarPosicao`.
+   * Atravessar conta como ação da noite (ociosidade). Passar o próprio setor
+   * como destino é o "eu fico", tratado por `confirmarPosicao`.
    */
   async mover(
     alunoId: string,
     partidaId: string,
     setorId: string,
-  ): Promise<IsolateusMatchEntity> {
+  ): Promise<IsolateusMatchEntity & { tokenCanal?: string | null }> {
     const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
-
-    // A origem é onde a noite começou (a posição pública): trocar de ideia
-    // vale, encadear dois passos não.
+    if (setorId === habitante.setorId) {
+      return this.registrarConfirmacao(partida, segredo, alunoId);
+    }
     const origem = habitante.setorId;
-    if (setorId !== origem && !saoVizinhos(origem, setorId)) {
+    this.assertSemTrava(segredo, alunoId);
+    this.assertEstrada(origem, setorId);
+    await this.assertNaPorta(partida.id, origem, setorId, habitante.id);
+
+    await this.atravessar(partida, segredo, habitante.id, setorId, alunoId);
+    // O canal acompanha a travessia (036 #38): o boneco sai da cena antiga e
+    // entra pela porta da nova; o token do setor novo vai na resposta. As três
+    // escritas não dependem uma da outra: correm juntas (a cortina da troca de
+    // cena fica fechada enquanto o celular espera).
+    const posicao = this.posicao?.habilitado ? this.posicao : null;
+    const [tokenCanal] = await Promise.all([
+      posicao
+        ? posicao.token(partida.id, setorId, alunoId).catch(() => null)
+        : Promise.resolve(null),
+      posicao
+        ? this.semFalhar(() =>
+            posicao.atravessar(partida.id, origem, setorId, habitante.id),
+          )
+        : Promise.resolve(),
+      this.registrarConfirmacao(partida, segredo, alunoId),
+    ]);
+    return Object.assign(partida, { tokenCanal });
+  }
+
+  /**
+   * Anti-trapaça da porta (036 #21): o boneco precisa estar na zona da porta
+   * daquele destino. O `x` sai do último passo (o mesmo cálculo do `passo`).
+   * Sem o canal configurado não há posição: a checagem é pulada.
+   */
+  private async assertNaPorta(
+    partidaId: string,
+    origem: string,
+    destino: string,
+    habitanteId: string,
+  ): Promise<void> {
+    if (!this.posicao?.habilitado) return;
+    const porta = xDaPorta(origem, destino);
+    let x: number;
+    try {
+      x = await this.posicao.xAtual(partidaId, origem, habitanteId);
+    } catch {
+      return; // o canal é só visual: fora do ar, não trava a partida
+    }
+    if (porta === undefined || Math.abs(x - porta) > CENA.ZONA_PORTA) {
       throw new BadRequestException({
-        code: 'SEM_ESTRADA',
-        message: 'Não há estrada daqui para lá. Você anda um setor por noite.',
+        code: 'LONGE_DA_PORTA',
+        message: 'Chegue até a porta para atravessar.',
       });
     }
+  }
 
-    await this.gravarDestino(partida, segredo, habitante.id, setorId, alunoId);
-    return this.registrarConfirmacao(partida, segredo, alunoId);
+  private assertEstrada(de: string, para: string): void {
+    if (!saoVizinhos(de, para)) {
+      throw new BadRequestException({
+        code: 'SEM_ESTRADA',
+        message: 'Não há porta daqui para lá.',
+      });
+    }
+  }
+
+  /** Quem organizou reparo/resgate ou (Ameaça) já agiu fica até o amanhecer. */
+  private assertSemTrava(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+  ): void {
+    const trava = (segredo.travasNoite ?? []).find(
+      (t) => t.alunoId === alunoId,
+    );
+    if (!trava) return;
+    const texto: Record<TravaNoite, string> = {
+      REPARO: 'Você organizou o reparo: fica neste setor esta noite.',
+      RESGATE: 'Você organizou o resgate: fica neste setor esta noite.',
+      ACAO: 'Você agiu neste setor: fica aqui até o amanhecer.',
+    };
+    throw new BadRequestException({
+      code: 'POSICAO_TRAVADA',
+      motivo: trava.motivo,
+      message: texto[trava.motivo],
+    });
+  }
+
+  /** A lista de travas com mais uma (idempotente por aluno). */
+  private comTrava(
+    segredo: IsolateusSegredoEntity,
+    alunoId: string,
+    motivo: TravaNoite,
+  ): Array<{ alunoId: string; motivo: TravaNoite }> {
+    const lista = (segredo.travasNoite ?? []).filter(
+      (t) => t.alunoId !== alunoId,
+    );
+    return [...lista, { alunoId, motivo }];
   }
 
   /**
@@ -475,16 +561,12 @@ export class IsolateusGameService {
   }
 
   /**
-   * Grava o destino da noite no cofre (`posicoesNoite`, a fonte de verdade das
-   * validações) e o aviso de saída no doc público (`deslocamentosNoite`, o
-   * espelho que os colegas do setor veem), no MESMO commit. Voltar à origem
-   * desfaz os dois.
-   *
-   * Numa transação, sobre a leitura fresca: outro aluno andando, ou o pulso
-   * liberando um NPC, no mesmo instante não pode ter a escrita apagada. O rate
-   * limit também é checado ali, contra o último movimento gravado.
+   * A travessia em si, numa transação sobre a leitura fresca: outro aluno
+   * atravessando, ou o pulso movendo um NPC, no mesmo instante não pode ter a
+   * escrita apagada. Pausa, noite, trava, estrada e rate limit são revalidados
+   * ali. A posição pública (`habitantes[].setorId`) é a verdade (036 #9).
    */
-  private async gravarDestino(
+  private async atravessar(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
     habitanteId: string,
@@ -500,25 +582,22 @@ export class IsolateusGameService {
           message: 'A noite não está aberta.',
         });
       }
+      this.assertSemTrava(s, alunoId);
+      const h = p.habitantes.find((x) => x.id === habitanteId);
+      if (!h || !h.vivo || h.preso) {
+        throw new ForbiddenException({
+          code: 'FORA_DA_VILA',
+          message: 'Quem saiu da vila não se desloca.',
+        });
+      }
+      this.assertEstrada(h.setorId, setorId);
       const ultimosMover = this.limitarTroca(s, alunoId);
-      const origem =
-        p.habitantes.find((h) => h.id === habitanteId)?.setorId ?? setorId;
-      const posicoes = (s.posicoesNoite ?? []).filter(
-        (x) => x.habitanteId !== habitanteId,
+      const habitantes = p.habitantes.map((x) =>
+        x.id === habitanteId ? { ...x, setorId } : x,
       );
-      if (setorId !== origem) posicoes.push({ habitanteId, setorId });
-      const avisos = aplicarAviso(
-        p.deslocamentosNoite ?? [],
-        habitanteId,
-        setorId,
-        origem,
-      );
-      Object.assign(s, { posicoesNoite: posicoes, ultimosMover });
-      p.deslocamentosNoite = avisos;
-      return {
-        publico: { deslocamentosNoite: avisos },
-        segredo: { posicoesNoite: posicoes, ultimosMover },
-      };
+      p.habitantes = habitantes;
+      s.ultimosMover = ultimosMover;
+      return { publico: { habitantes }, segredo: { ultimosMover } };
     });
     if (fresco) this.sincronizarNoite(partida, segredo, fresco);
   }
@@ -532,6 +611,7 @@ export class IsolateusGameService {
     segredo: IsolateusSegredoEntity,
     fresco: { partida: IsolateusMatchEntity; segredo: IsolateusSegredoEntity },
   ): void {
+    partida.habitantes = fresco.partida.habitantes;
     partida.deslocamentosNoite = fresco.partida.deslocamentosNoite ?? [];
     segredo.posicoesNoite = fresco.segredo.posicoesNoite ?? [];
     segredo.agendaNpc = fresco.segredo.agendaNpc;
@@ -593,7 +673,7 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
     alvoX: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true } & Passo> {
     const { partida, segredo } = await this.carregarParaComando(partidaId);
     const habitante = this.habitanteNaCena(partida, segredo, alunoId);
     if (!alvoDentroDaCena(alvoX)) {
@@ -603,14 +683,16 @@ export class IsolateusGameService {
       });
     }
     if (!this.posicao?.habilitado) this.canalIndisponivel();
-    await this.posicao.passo(
+    // A caminhada calculada volta na resposta (036 §2.4): o modo simples, sem
+    // cena, usa o x de saída para saber quando o boneco chega à porta.
+    const caminhada = await this.posicao.passo(
       partida.id,
       habitante.setorId,
       habitante.id,
       alvoX,
       { limitar: true },
     );
-    return { ok: true };
+    return { ok: true, ...caminhada };
   }
 
   /**
@@ -657,11 +739,12 @@ export class IsolateusGameService {
   }
 
   /**
-   * O pulso da agenda dos NPCs (026 §2.3). Não há timer no servidor: os avisos
-   * vencidos saem quando alguém da partida fala com ele durante a noite — o
-   * `/tempo` que os celulares e o telão chamam a cada ~3s, ou qualquer jogada.
-   * Só escreve se houver aviso a liberar, e numa transação: o pulso roda o
-   * tempo todo e não pode apagar o movimento de um aluno gravado no meio.
+   * O pulso da agenda dos NPCs (026 §2.3, revisto na 036 #15). Não há timer no
+   * servidor: as travessias vencidas saem quando alguém da partida fala com
+   * ele durante a noite — o `/tempo` que os celulares e o telão chamam a cada
+   * ~3s, ou qualquer jogada. O NPC atravessa como um real: a posição pública
+   * muda na hora, numa transação (o pulso não apaga a travessia de um aluno
+   * gravada no meio), e o boneco troca de cena no canal.
    */
   private async pulsoDaAgenda(
     partida: IsolateusMatchEntity,
@@ -669,45 +752,30 @@ export class IsolateusGameService {
   ): Promise<void> {
     if (partida.status !== 'DESLOCAMENTO') return;
     const agora = Date.now();
-    // Checagem barata na leitura que o handler já fez: sem aviso vencido, nem
-    // abre transação.
+    // Checagem barata na leitura que o handler já fez: sem travessia vencida,
+    // nem abre transação.
     if (!(segredo.agendaNpc ?? []).some((a) => Date.parse(a.em) <= agora)) {
       return;
     }
-    const vencidos = (segredo.agendaNpc ?? []).filter(
-      (a) => Date.parse(a.em) <= agora,
-    );
+    let feitas: TravessiaNpc[] = [];
     const fresco = await this.matches.transacao(partida.id, (p, s) => {
       if (p.status !== 'DESLOCAMENTO' || p.pausadaEm) return null;
-      if (!this.liberarAgenda(p, s, agora)) return null;
+      const liberadas = this.liberarAgenda(p, s, agora);
+      if (!liberadas) return null;
+      feitas = liberadas;
       return {
-        publico: { deslocamentosNoite: p.deslocamentosNoite },
-        segredo: { posicoesNoite: s.posicoesNoite, agendaNpc: s.agendaNpc },
+        publico: { habitantes: p.habitantes },
+        segredo: { agendaNpc: s.agendaNpc },
       };
     });
     if (!fresco) return;
-    this.sincronizarNoite(partida, segredo, fresco);
-    await this.andarAteAsPortas(partida, vencidos);
-  }
-
-  /**
-   * Os NPCs que avisaram a saída andam até a porta do destino (034 §2.2): o
-   * mesmo `passo` de um aluno. Quem desistiu (`para: null`) sai da luz e volta
-   * ao meio da cena. Visual apenas: falha do RTDB não derruba o pulso.
-   */
-  private async andarAteAsPortas(
-    partida: IsolateusMatchEntity,
-    avisos: AvisoNpc[],
-  ): Promise<void> {
+    partida.habitantes = fresco.partida.habitantes;
+    segredo.agendaNpc = fresco.segredo.agendaNpc;
     if (!this.posicao?.habilitado) return;
-    for (const a of avisos) {
-      const h = partida.habitantes.find((x) => x.id === a.habitanteId);
-      if (!h || !h.vivo || h.preso) continue;
-      const alvoX = (a.para && xDaPorta(h.setorId, a.para)) || CENA.X_INICIAL;
+    const posicao = this.posicao;
+    for (const t of feitas) {
       await this.semFalhar(() =>
-        this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
-          limitar: false,
-        }),
+        posicao.atravessar(partida.id, t.de, t.para, t.habitanteId),
       );
     }
   }
@@ -716,9 +784,10 @@ export class IsolateusGameService {
   private readonly ultimoPasseioNpc = new Map<string, number>();
 
   /**
-   * No pulso do `/tempo`, alguns NPCs soltos sorteiam um novo alvo, com o mesmo
-   * caminho e formato dos alunos (034 §2.2): na Névoa de Guerra, ninguém
-   * distingue real de NPC pelo canal. Quem já está na luz de uma porta fica.
+   * No pulso do `/tempo`, os NPCs com travessia próxima andam até a porta
+   * (036 #15), e alguns outros sorteiam um novo alvo, com o mesmo caminho e
+   * formato dos alunos (034 §2.2): na Névoa de Guerra, ninguém distingue real
+   * de NPC pelo canal.
    */
   private async passearNpcs(
     partida: IsolateusMatchEntity,
@@ -731,13 +800,26 @@ export class IsolateusGameService {
     this.ultimoPasseioNpc.set(partida.id, agora);
 
     const npcs = new Set(segredo.npcIds);
-    const naLuz = new Set(
-      (partida.deslocamentosNoite ?? []).map((a) => a.habitanteId),
-    );
+    // A próxima travessia de cada NPC, se ela está para sair.
+    const rumoPorta = new Map<string, string>();
+    if (partida.status === 'DESLOCAMENTO') {
+      for (const a of segredo.agendaNpc ?? []) {
+        const falta = Date.parse(a.em) - agora;
+        if (a.para && falta <= ISOLATEUS.NPC_PREPARO_MS) {
+          if (!rumoPorta.has(a.habitanteId)) {
+            rumoPorta.set(a.habitanteId, a.para);
+          }
+        }
+      }
+    }
     for (const h of partida.habitantes) {
-      if (!npcs.has(h.id) || !h.vivo || h.preso || naLuz.has(h.id)) continue;
-      if (Math.random() >= CENA.NPC_CHANCE_PASSEAR) continue;
-      const alvoX = Math.floor(Math.random() * (CENA.LARGURA + 1));
+      if (!npcs.has(h.id) || !h.vivo || h.preso) continue;
+      const rumo = rumoPorta.get(h.id);
+      const porta = rumo ? xDaPorta(h.setorId, rumo) : undefined;
+      if (porta === undefined && Math.random() >= CENA.NPC_CHANCE_PASSEAR) {
+        continue;
+      }
+      const alvoX = porta ?? Math.floor(Math.random() * (CENA.LARGURA + 1));
       await this.semFalhar(() =>
         this.posicao!.passo(partida.id, h.setorId, h.id, alvoX, {
           limitar: false,
@@ -788,9 +870,9 @@ export class IsolateusGameService {
   }
 
   /**
-   * Contabiliza a confirmação e, quando **todos** os habitantes reais na vila já
-   * fecharam a jogada, encerra a noite na hora — ninguém fica olhando um
-   * cronômetro que não serve mais a ninguém (mesmo Avanço Rápido do debate).
+   * Contabiliza a ação da noite (ociosidade, 032). A noite NÃO fecha antes do
+   * tempo (036 #4): com a movimentação contínua, quem já atravessou uma porta
+   * ainda pode atravessar outra até o relógio zerar.
    *
    * Idempotente: confirmar duas vezes não conta dobrado.
    */
@@ -810,84 +892,7 @@ export class IsolateusGameService {
       { confirmacoesNoite: confirmacoes },
     );
 
-    if (this.noiteEstaFechada(partida, segredo)) {
-      return this.fecharNoite(partida);
-    }
-    await this.encurtarPelaCarencia(partida, segredo);
     return partida;
-  }
-
-  /**
-   * A vila inteira já decidiu e só falta a jogada da Ameaça: o resto da janela
-   * vira a **carência** (`CARENCIA_AMEACA_MS`).
-   *
-   * O encurtamento é feito **rebaseando `faseIniciadaEm`** em vez de criar um
-   * segundo prazo: todos os relógios (telão e celulares) já contam a partir
-   * desse campo, e `resolverPorTempo` revalida contra ele. Um campo só, uma
-   * verdade só.
-   *
-   * O que ele **não** faz é dizer que falta a Ameaça: o relógio encurta para
-   * todo mundo ao mesmo tempo, sem nomear ninguém. Apontar o habitante que falta
-   * seria entregar o alienígena por eliminação, já que cada aldeão sabe que
-   * confirmou.
-   */
-  private async encurtarPelaCarencia(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): Promise<void> {
-    if (
-      partida.status !== 'DESLOCAMENTO' ||
-      this.ameacasJogaram(partida, segredo)
-    )
-      return;
-    if (!this.vilaConfirmou(partida, segredo) || !partida.faseIniciadaEm)
-      return;
-
-    const fim =
-      Date.parse(partida.faseIniciadaEm) + ISOLATEUS.LIMITE_DESLOCAMENTO_MS;
-    const novoFim = Date.now() + ISOLATEUS.CARENCIA_AMEACA_MS;
-    // Só encurta: uma segunda confirmação (ou um relógio torto) não pode
-    // devolver tempo a quem já está na carência.
-    if (novoFim >= fim) return;
-
-    const base = new Date(
-      novoFim - ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
-    ).toISOString();
-    partida.faseIniciadaEm = base;
-    if (segredo.agendaNpc === undefined) {
-      await this.matches.commitPartida(partida.id, { faseIniciadaEm: base });
-      return;
-    }
-    // Os avisos de NPC que ainda faltam cabem na carência, no mesmo commit do
-    // relógio novo (026 §2.3): senão sairiam todos juntos no fechamento. Numa
-    // transação, sobre a agenda fresca: gravar a lida aqui devolveria à agenda
-    // um aviso que o pulso acabou de liberar.
-    const agora = Date.now();
-    const fresco = await this.matches.transacao(partida.id, (p, s) => {
-      if (p.status !== 'DESLOCAMENTO') return null;
-      s.agendaNpc = reescalarAgenda(s.agendaNpc ?? [], agora, fim, novoFim);
-      p.faseIniciadaEm = base;
-      return {
-        publico: { faseIniciadaEm: base },
-        segredo: { agendaNpc: s.agendaNpc },
-      };
-    });
-    if (fresco) segredo.agendaNpc = fresco.segredo.agendaNpc;
-  }
-
-  /**
-   * A noite só fecha cedo quando **todos** os reais confirmaram **e** todas as
-   * Ameaças livres já jogaram. Fechar sem a jogada de uma delas transformaria a
-   * pressa da vila numa forma de anular o turno do infiltrado.
-   */
-  private noiteEstaFechada(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    return (
-      this.vilaConfirmou(partida, segredo) &&
-      this.ameacasJogaram(partida, segredo)
-    );
   }
 
   /** As Ameaças que ainda estão na vila (nem presas, nem fora). */
@@ -901,31 +906,6 @@ export class IsolateusGameService {
       );
       return !!h && h.vivo && !h.preso;
     });
-  }
-
-  /** Toda Ameaça livre já fechou a jogada desta noite. */
-  private ameacasJogaram(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    const jogaram = new Set(segredo.acoesDaNoite().map((j) => j.alunoId));
-    return this.ameacasLivres(partida, segredo).every((a) => jogaram.has(a));
-  }
-
-  /**
-   * Todos os habitantes reais na vila fecharam a posição da noite.
-   *
-   * A Ameaça conta aqui **pelo deslocamento dela**, como qualquer um: se ela só
-   * entrasse na conta depois de atacar, o contador público pararia em `N-1`
-   * exatamente nas noites em que ela ainda não agiu — e a vila leria o nome do
-   * alienígena no número.
-   */
-  private vilaConfirmou(
-    partida: IsolateusMatchEntity,
-    segredo: IsolateusSegredoEntity,
-  ): boolean {
-    const reais = this.reaisNaVila(partida, segredo);
-    return (segredo.confirmacoesNoite ?? []).length >= reais.length;
   }
 
   /**
@@ -960,20 +940,17 @@ export class IsolateusGameService {
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
   ): Promise<IsolateusMatchEntity> {
-    // Os avisos de NPC que ainda não saíram entram AGORA, no mesmo commit do
-    // amanhecer (026 §2.3). Partida anterior à 026 (sem agenda): os NPCs
-    // sorteiam no fechamento, como antes.
+    // As travessias de NPC que não saíram até o fechamento são descartadas
+    // (036 #15): ninguém atravessa depois de a noite fechar. Partida anterior à
+    // 026 (sem agenda): os NPCs sorteiam no fechamento, como antes.
     const comAgenda = segredo.agendaNpc !== undefined;
-    if (comAgenda) this.liberarAgenda(partida, segredo, Infinity);
-    const antes = new Map(partida.habitantes.map((h) => [h.id, h.setorId]));
-    // Reais e NPCs aparecem nas posições novas no MESMO commit: nenhum
-    // movimento fica visível antes do outro.
+    // Só partidas abertas antes da 036 ainda guardam destinos no cofre: a
+    // travessia contínua grava a posição pública na hora.
     for (const { habitanteId, setorId } of segredo.posicoesNoite ?? []) {
       const h = partida.habitantes.find((x) => x.id === habitanteId);
       if (h) h.setorId = setorId;
     }
     if (!comAgenda) this.moverNpcs(partida, segredo);
-    const movimentos = movimentosDaNoite(antes, partida.habitantes);
     // O brilho sai das posições finais, antes de o cofre esquecer as jogadas e
     // os controles da noite — e entra no mesmo commit das posições.
     const brilho = this.brilhoDaNoite(partida, segredo);
@@ -984,6 +961,7 @@ export class IsolateusGameService {
     Object.assign(segredo, {
       confirmacoesNoite: [],
       posicoesNoite: [],
+      travasNoite: [],
       controles: (segredo.controles ?? []).filter(
         (c) => c.rodada >= partida.rodada,
       ),
@@ -992,14 +970,10 @@ export class IsolateusGameService {
     // novas aparecem: nome e lugar mudam juntos, e casar "quem era quem" pela
     // posição fica mais difícil.
     const delirou = this.aplicarDelirio(partida, segredo);
-    // A animação de saídas e chegadas (026 §3). Numa noite de Delírio ela
-    // casaria o nome antigo com o novo pelo movimento: fica de fora.
-    const ultimosDeslocamentos =
-      delirou || segredo.delirioNaNoite
-        ? null
-        : { rodada: partida.rodada, movimentos };
+    // Sem animação de saídas e chegadas no amanhecer (036 #17): as travessias
+    // já aconteceram ao vivo, pela porta.
+    const ultimosDeslocamentos = null;
     Object.assign(partida, { deslocamentosNoite: [], ultimosDeslocamentos });
-    segredo.delirioNaNoite = false;
     await this.matches.commitPartida(
       partida.id,
       {
@@ -1022,8 +996,8 @@ export class IsolateusGameService {
       {
         confirmacoesNoite: segredo.confirmacoesNoite,
         posicoesNoite: segredo.posicoesNoite,
+        travasNoite: [],
         ...(comAgenda ? { agendaNpc: [] } : {}),
-        delirioNaNoite: false,
         controles: segredo.controles,
         ...(delirou
           ? {
@@ -1262,13 +1236,10 @@ export class IsolateusGameService {
     const trocar = this.permutarVila(partida, segredo);
     if (!trocar) return partida;
 
-    // Movimento + nome novo casariam quem era quem (026 §2.4): os avisos da
-    // noite somem, o amanhecer desta noite não anima, e o último amanhecer
-    // (com ids que não existem mais) sai do doc.
-    const naNoite = partida.status === 'DESLOCAMENTO';
-    partida.deslocamentosNoite = naNoite ? [] : partida.deslocamentosNoite;
+    // O último amanhecer de partidas antigas (com ids que não existem mais) sai
+    // do doc. Na 036 não há aviso de saída nem animação de amanhecer a
+    // suprimir: as travessias são ao vivo.
     partida.ultimosDeslocamentos = null;
-    if (naNoite) segredo.delirioNaNoite = true;
 
     // Os votos da Quarentena moram fora do cofre (um doc por aluno) e apontam
     // para o suspeito pelo id antigo.
@@ -1282,7 +1253,6 @@ export class IsolateusGameService {
         convocadorBloqueado: partida.convocadorBloqueado ?? null,
 
         resgateResultado: partida.resgateResultado ?? null,
-        deslocamentosNoite: partida.deslocamentosNoite ?? [],
         ultimosDeslocamentos: null,
       },
       {
@@ -1292,7 +1262,6 @@ export class IsolateusGameService {
         acaoRodada: null,
         posicoesNoite: segredo.posicoesNoite,
         ...(segredo.agendaNpc ? { agendaNpc: segredo.agendaNpc } : {}),
-        ...(naNoite ? { delirioNaNoite: true } : {}),
       },
     );
     return partida;
@@ -1468,37 +1437,37 @@ export class IsolateusGameService {
   }
 
   /**
-   * Aplica os avisos de NPC vencidos até `ate` (ms): o destino vai para o
-   * cofre (`posicoesNoite`, como o de um real) e o aviso para o espelho
-   * público. Cada aviso sai da agenda ao ser aplicado, então chamar duas vezes
-   * não duplica. Só muta as entidades: quem chama decide o commit. Devolve se
-   * algo mudou.
+   * Aplica as travessias de NPC vencidas até `ate` (ms), em ordem: a posição
+   * pública muda como a de um real que atravessou. Travessia sem estrada a
+   * partir do setor atual (o NPC foi levado, ou a agenda é de uma partida
+   * antiga) é descartada. Cada uma sai da agenda ao ser aplicada, então chamar
+   * duas vezes não duplica. Só muta as entidades: quem chama decide o commit.
+   * Devolve as travessias feitas, ou `null` se não havia nada vencido.
    */
   private liberarAgenda(
     partida: IsolateusMatchEntity,
     segredo: IsolateusSegredoEntity,
     ate: number,
-  ): boolean {
+  ): TravessiaNpc[] | null {
     const agenda = segredo.agendaNpc ?? [];
     const vencidos = agenda.filter((a) => Date.parse(a.em) <= ate);
-    if (!vencidos.length) return false;
+    if (!vencidos.length) return null;
     segredo.agendaNpc = agenda.filter((a) => !vencidos.includes(a));
 
-    let posicoes = segredo.posicoesNoite ?? [];
-    let avisos = partida.deslocamentosNoite ?? [];
-    for (const aviso of vencidos) {
-      const h = partida.habitantes.find((x) => x.id === aviso.habitanteId);
-      if (!h || !h.vivo || h.preso) continue;
-      const destino = aviso.para ?? h.setorId;
-      posicoes = posicoes.filter((p) => p.habitanteId !== h.id);
-      if (destino !== h.setorId) {
-        posicoes = [...posicoes, { habitanteId: h.id, setorId: destino }];
-      }
-      avisos = aplicarAviso(avisos, h.id, destino, h.setorId);
+    const feitas: TravessiaNpc[] = [];
+    let habitantes = partida.habitantes;
+    for (const a of vencidos) {
+      const h = habitantes.find((x) => x.id === a.habitanteId);
+      if (!h || !h.vivo || h.preso || !a.para) continue;
+      if (!saoVizinhos(h.setorId, a.para)) continue;
+      feitas.push({ habitanteId: h.id, de: h.setorId, para: a.para });
+      const para = a.para;
+      habitantes = habitantes.map((x) =>
+        x.id === h.id ? { ...x, setorId: para } : x,
+      );
     }
-    segredo.posicoesNoite = posicoes;
-    partida.deslocamentosNoite = avisos;
-    return true;
+    partida.habitantes = habitantes;
+    return feitas;
   }
 
   /**
@@ -1548,23 +1517,43 @@ export class IsolateusGameService {
       });
     }
     this.assertNoiteComecou(partida);
-    const jogadas = segredo.acoesDaNoite();
-    if (jogadas.some((j) => j.alunoId === alunoId)) {
-      throw new BadRequestException({
-        code: 'JOGADA_FEITA',
-        message: 'Você já fez sua jogada esta noite.',
-      });
-    }
 
-    const acao = this.montarJogada(partida, segredo, alunoId, dto);
-    const acoesRodada = [...jogadas, { alunoId, acao }];
-    segredo.acoesRodada = acoesRodada;
-    segredo.acaoRodada = null;
-    await this.matches.commitPartida(
-      partidaId,
-      {},
-      { acoesRodada, acaoRodada: null },
-    );
+    // Numa transação, sobre a leitura fresca (036 #13a): com a vila andando, a
+    // vítima pode ter atravessado a porta entre a leitura e a gravação. O
+    // toque fixa o alvo; depois disso, fugir não salva mais ninguém.
+    const fresco = await this.matches.transacao(partidaId, (p, s) => {
+      assertNaoPausada(p);
+      if (p.status !== 'DESLOCAMENTO') {
+        throw new BadRequestException({
+          code: 'FORA_DA_NOITE',
+          message: 'A noite não está aberta.',
+        });
+      }
+      const jogadas = s.acoesDaNoite();
+      if (jogadas.some((j) => j.alunoId === alunoId)) {
+        throw new BadRequestException({
+          code: 'JOGADA_FEITA',
+          message: 'Você já fez sua jogada esta noite.',
+        });
+      }
+      const acao = this.montarJogada(p, s, alunoId, dto);
+      const acoesRodada = [...jogadas, { alunoId, acao }];
+      const mudancas: Partial<IsolateusSegredoEntity> = {
+        acoesRodada,
+        acaoRodada: null,
+      };
+      // Agiu (036 #12): fica no setor até o amanhecer. Aguardar não trava.
+      if (acao.tipo !== 'AGUARDAR') {
+        mudancas.travasNoite = this.comTrava(s, alunoId, 'ACAO');
+      }
+      Object.assign(s, mudancas);
+      return { segredo: mudancas };
+    });
+    if (fresco) {
+      segredo.acoesRodada = fresco.segredo.acoesRodada;
+      segredo.acaoRodada = null;
+      segredo.travasNoite = fresco.segredo.travasNoite;
+    }
 
     // A jogada da Ameaça também é uma confirmação da noite dela — e é ela que
     // pode ser a última peça a faltar para o amanhecer.
@@ -1652,6 +1641,8 @@ export class IsolateusGameService {
     }
     // Usar o poder zera a barra.
     mudancas.energiaAlien = { ...(segredo.energiaAlien ?? {}), [alunoId]: 0 };
+    // Agiu na noite (036 #12): fica no setor até o amanhecer.
+    mudancas.travasNoite = this.comTrava(segredo, alunoId, 'ACAO');
 
     Object.assign(segredo, mudancas);
     await this.matches.commitPartida(partidaId, {}, mudancas);
@@ -1713,10 +1704,12 @@ export class IsolateusGameService {
 
     // Abdução presencial: só quem está ao alcance dela.
     const alvo = partida.vivos.find((h) => h.id === dto.alvoId);
-    if (!alvo || this.posicaoDe(segredo, alvo) !== aqui) {
+    if (!alvo || alvo.preso || this.posicaoDe(segredo, alvo) !== aqui) {
+      // Com a vila andando ao vivo, o caso comum é a vítima ter acabado de
+      // atravessar a porta (036 #13a).
       throw new BadRequestException({
-        code: 'FORA_DE_ALCANCE',
-        message: 'Este habitante não está no seu setor.',
+        code: 'ALVO_SAIU',
+        message: 'Ele saiu do setor.',
       });
     }
     if (alvo.id === ameaca.id) {
@@ -1778,6 +1771,8 @@ export class IsolateusGameService {
 
     partida.reparoSetorId = setor.id;
     segredo.reparoPor = alunoId;
+    const travasNoite = this.comTrava(segredo, alunoId, 'REPARO');
+    segredo.travasNoite = travasNoite;
     await this.matches.commitPartida(
       partidaId,
       {
@@ -1790,7 +1785,7 @@ export class IsolateusGameService {
           `A vila mobilizou um reparo no ${setor.nome}.`,
         ),
       },
-      { reparoPor: alunoId },
+      { reparoPor: alunoId, travasNoite },
     );
     // Declarar o reparo também fecha a jogada da noite de quem declarou.
     return this.registrarConfirmacao(partida, segredo, alunoId);
@@ -1844,10 +1839,12 @@ export class IsolateusGameService {
     }
 
     segredo.resgateNoite = { alunoId };
+    const travasNoite = this.comTrava(segredo, alunoId, 'RESGATE');
+    segredo.travasNoite = travasNoite;
     await this.matches.commitPartida(
       partidaId,
       {},
-      { resgateNoite: { alunoId } },
+      { resgateNoite: { alunoId }, travasNoite },
     );
     // Como no reparo, organizar também fecha a jogada da noite.
     return this.registrarConfirmacao(partida, segredo, alunoId);
@@ -2163,7 +2160,7 @@ export class IsolateusGameService {
   /** Duração de cada fase cronometrada; `undefined` = fase sem relógio. */
   private limiteDaFase(partida: IsolateusMatchEntity): number | undefined {
     const limites: Partial<Record<StatusIsolateus, number>> = {
-      DESLOCAMENTO: ISOLATEUS.LIMITE_DESLOCAMENTO_MS,
+      DESLOCAMENTO: partida.duracaoNoiteMs,
       RESULTADO_RODADA: ISOLATEUS.JANELA_DECISAO_MS,
       QUESTAO_ATIVA: partida.duracaoSegundos * 1000,
       QUARENTENA_DEBATE: ISOLATEUS.LIMITE_DEBATE_MS,
@@ -2419,23 +2416,21 @@ export class IsolateusGameService {
     dadosSegredo: Partial<IsolateusSegredoEntity>,
   ): Promise<IsolateusMatchEntity> {
     if (partida.quarentenaConvocadaPor) {
-      // Sem debate (escolha do lobby), a reunião começa pela urna.
-      const comDebate = partida.debateHabilitado !== false;
+      // A reunião começa pela urna (036 #35): o chat da vila, aberto a
+      // partida inteira, substituiu o Debate Tático.
       const fase: Partial<IsolateusMatchEntity> = {
-        status: comDebate ? 'QUARENTENA_DEBATE' : 'QUARENTENA_VOTO',
+        status: 'QUARENTENA_VOTO',
         faseIniciadaEm: new Date().toISOString(),
-        debate: [], // só os alunos falam: fala automática saía sob nome de NPC
-        // A Quarentena nova nasce limpa: veredito, votos e pulos são por rodada.
+        // A Quarentena nova nasce limpa: veredito e votos são por rodada.
         vereditoQuarentena: null,
         votosRecebidos: 0,
         pulosRecebidos: 0,
       };
       Object.assign(partida, fase);
-      segredo.pulosDebate = [];
       await this.matches.commitPartida(
         partida.id,
         { ...dados, ...fase },
-        { ...dadosSegredo, pulosDebate: [] },
+        dadosSegredo,
       );
       return partida;
     }
@@ -2733,8 +2728,8 @@ export class IsolateusGameService {
       // #55); a questão (com a correta) fica pelo mesmo motivo. A questão
       // seguinte os limpa.
       //
-      // A noite espera o card: `faseIniciadaEm` fica no futuro, e só então os
-      // 60s de deslocamento correm.
+      // A noite espera o card: `faseIniciadaEm` fica no futuro, e só então o
+      // tempo de movimentação corre.
       faseIniciadaEm: new Date(
         Date.now() + ISOLATEUS.JANELA_RESULTADO_MS,
       ).toISOString(),
@@ -2755,9 +2750,10 @@ export class IsolateusGameService {
         partida.habitantes,
         segredo.npcIds,
         Date.parse(dados.faseIniciadaEm!),
+        partida.duracaoNoiteMs,
       ),
-      delirioNaNoite: false,
       ultimosMover: [],
+      travasNoite: [],
     };
     Object.assign(segredo, noiteNova);
     await this.matches.commitPartida(partida.id, dados, {
@@ -2928,8 +2924,8 @@ export class IsolateusGameService {
     }
     this.assertNoiteComecou(partida);
     // O rádio da vila fica na Comunicação: é de lá, e só de lá, que se convoca a
-    // reunião. A posição vale a de ORIGEM da noite (a pública): é onde o boneco
-    // está na cena. Derrubar esse setor cala a vila até ela reconstruí-lo — e é
+    // reunião. Vale onde o boneco está AGORA (036 #13): a posição pública
+    // muda a cada travessia. Derrubar esse setor cala a vila até ela reconstruí-lo — e é
     // isso que faz da Comunicação o alvo mais valioso do mapa.
     if (habitante.setorId !== SETOR_COMUNICACAO) {
       throw new ForbiddenException({
@@ -2995,72 +2991,96 @@ export class IsolateusGameService {
     return partida;
   }
 
-  /** O Debate Tático: acusações e defesas por escrito, com o relógio correndo. */
-  async debater(
+  // ===== O chat da vila (036) =====
+
+  /**
+   * Uma fala no chat da vila: um canal só, do Despertar ao fim, em todas as
+   * fases. Vivos e soltos escrevem (a Ameaça também: ela precisa blefar);
+   * abduzidos e presos só leem. Assina com o nome do habitante — nunca o nome
+   * real nem o id. O palavrão passa pelo filtro da 028 antes de gravar.
+   *
+   * Numa transação: dois alunos falando no mesmo instante não apagam a fala um
+   * do outro, e o limite de envio é conferido sobre o cofre fresco.
+   */
+  async falarNoChat(
     alunoId: string,
     partidaId: string,
     texto: string,
   ): Promise<IsolateusMatchEntity> {
     const { partida, segredo } = await this.carregarParaComando(partidaId);
-    if (partida.status !== 'QUARENTENA_DEBATE') {
-      throw new BadRequestException('O debate não está aberto.');
-    }
+    this.assertChatAberto(partida);
     const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
     if (!habitante.vivo || habitante.preso) {
-      throw new ForbiddenException('Quem saiu da vila não debate.');
+      throw new ForbiddenException({
+        code: 'FORA_DA_VILA',
+        message: 'Você está fora da vila: só pode ler o chat.',
+      });
     }
-    const limpo = texto.trim().slice(0, 240);
+    const limpo = texto.trim().slice(0, ISOLATEUS.CHAT_MAX_CARACTERES);
+    if (!limpo) {
+      throw new BadRequestException({
+        code: 'MENSAGEM_VAZIA',
+        message: 'Escreva alguma coisa.',
+      });
+    }
     await this.moderar(partida, alunoId, limpo);
 
-    const debate = [
-      ...partida.debate,
-      {
-        id: randomUUID(),
-        autorNome: habitante.nome, // o pseudônimo, nunca o nome real
-        texto: limpo,
-      },
-    ].slice(-60);
-    partida.debate = debate;
-    await this.matches.commitPartida(partidaId, { debate });
+    const fresco = await this.matches.transacao(partidaId, (p, s) => {
+      assertNaoPausada(p);
+      this.assertChatAberto(p);
+      const agora = Date.now();
+      const ultimos = s.ultimosChat ?? [];
+      const ultimo = ultimos.find((u) => u.alunoId === alunoId);
+      if (
+        ultimo &&
+        agora - Date.parse(ultimo.em) < ISOLATEUS.CHAT_INTERVALO_MS
+      ) {
+        throw new HttpException(
+          {
+            code: 'CHAT_RAPIDO',
+            message: 'Calma! Espere um instante antes de mandar outra.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      // O nome é lido na transação: um Delírio no meio troca os codinomes.
+      const autor = p.habitantes.find((h) => h.id === s.habitanteDe(alunoId));
+      const em = new Date(agora).toISOString();
+      const chat = [
+        ...(p.chat ?? []),
+        {
+          id: randomUUID(),
+          autorNome: autor?.nome ?? habitante.nome,
+          texto: limpo,
+          em,
+        },
+      ].slice(-ISOLATEUS.CHAT_MAX_MENSAGENS);
+      const ultimosChat = [
+        ...ultimos.filter((u) => u.alunoId !== alunoId),
+        { alunoId, em },
+      ];
+      p.chat = chat;
+      s.ultimosChat = ultimosChat;
+      return { publico: { chat }, segredo: { ultimosChat } };
+    });
+    if (fresco) partida.chat = fresco.partida.chat;
     return partida;
+  }
+
+  /** O chat vale com a partida em andamento: nem no lobby, nem depois do fim. */
+  private assertChatAberto(partida: IsolateusMatchEntity): void {
+    if (partida.status === 'LOBBY' || partida.status === 'ENCERRADO') {
+      throw new BadRequestException({
+        code: 'CHAT_FECHADO',
+        message: 'O chat da vila abre quando a investigação começa.',
+      });
+    }
   }
 
   /**
-   * Avanço Rápido do debate: quem já se decidiu abre mão do papo. Quando TODOS os
-   * habitantes reais na vila pulam, a votação abre na hora — ninguém fica olhando
-   * um cronômetro que não serve mais a ninguém.
-   *
-   * Idempotente: pular duas vezes não conta dobrado.
+   * Fim do debate de uma partida que estava no `QUARENTENA_DEBATE` no deploy
+   * da 036 (#37): a vila segue para a urna.
    */
-  async pularDebate(
-    alunoId: string,
-    partidaId: string,
-  ): Promise<IsolateusMatchEntity> {
-    const { partida, segredo } = await this.carregarParaComando(partidaId);
-    if (partida.status !== 'QUARENTENA_DEBATE') {
-      throw new BadRequestException('O debate não está aberto.');
-    }
-    const habitante = this.habitanteDoAluno(partida, segredo, alunoId);
-    if (!habitante.vivo || habitante.preso) {
-      throw new ForbiddenException('Quem saiu da vila não debate.');
-    }
-
-    const pulos = [...new Set([...(segredo.pulosDebate ?? []), alunoId])];
-    partida.pulosRecebidos = pulos.length;
-    segredo.pulosDebate = pulos;
-    await this.matches.commitPartida(
-      partidaId,
-      { pulosRecebidos: pulos.length },
-      { pulosDebate: pulos },
-    );
-
-    if (pulos.length >= this.reaisNaVila(partida, segredo).length) {
-      return this.abrirVotacao(partida);
-    }
-    return partida;
-  }
-
-  /** Fim do debate: o teclado trava e a vila deposita seus votos. */
   private async abrirVotacao(
     partida: IsolateusMatchEntity,
   ): Promise<IsolateusMatchEntity> {

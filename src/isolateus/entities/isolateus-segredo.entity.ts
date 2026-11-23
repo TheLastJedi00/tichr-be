@@ -38,6 +38,9 @@ export interface VinculoHabitante {
  * sua fatia por REST autenticado (`GET /aluno/isolateus/:id/painel`), e a fatia
  * do Aldeão não contém nada além do próprio papel.
  */
+/** Por que o habitante ficou preso no setor até o amanhecer (036 #12). */
+export type TravaNoite = 'REPARO' | 'RESGATE' | 'ACAO';
+
 export class IsolateusSegredoEntity {
   id: string; // = partidaId
   partidaId: string;
@@ -70,11 +73,12 @@ export class IsolateusSegredoEntity {
   acoesRodada?: Array<{ alunoId: string; acao: AcaoAmeaca }>;
 
   /**
-   * Alunos que pularam o Debate da Quarentena corrente (limpa a cada convocação).
+   * Só leitura de partidas anteriores à 036 (o debate saiu, #36). Alunos que
+   * pularam o Debate da Quarentena corrente.
    * Mora no cofre porque a lista denunciaria quem é real e quem é NPC — a vila só
    * enxerga a CONTAGEM, em `pulosRecebidos`.
    */
-  pulosDebate: string[];
+  pulosDebate?: string[];
 
   /**
    * Alunos que já fecharam a própria jogada da noite (moveram-se ou confirmaram
@@ -121,6 +125,16 @@ export class IsolateusSegredoEntity {
 
   /** O professor disparou um Delírio nesta noite: o amanhecer não anima (026 §3.2). */
   delirioNaNoite?: boolean;
+
+  /**
+   * Quem não pode mais atravessar portas nesta noite (036 #12), por aluno:
+   * organizou o reparo, o resgate, ou (Ameaça) já agiu. Limpo no amanhecer.
+   * Lista, e não mapa: o cofre é gravado com `merge` (ver `posicoesNoite`).
+   */
+  travasNoite?: Array<{ alunoId: string; motivo: TravaNoite }>;
+
+  /** A última fala de cada aluno no chat da vila (limite de envio, 036 #30). */
+  ultimosChat?: Array<{ alunoId: string; em: string }>;
 
   /** A última troca de destino de cada aluno nesta noite (rate limit do `mover`). */
   ultimosMover?: Array<{ alunoId: string; em: string }>;

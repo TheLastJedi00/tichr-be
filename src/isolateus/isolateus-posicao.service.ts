@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
 import { RtdbService } from '../firebase/rtdb.service';
-import { CENA, Passo, posicaoEm } from './isolateus-cena';
+import { CENA, Passo, chegadaPelaPorta, posicaoEm } from './isolateus-cena';
 
 /**
  * O canal de posição cosmética (spec 034). Só o backend escreve em
@@ -50,6 +50,36 @@ export class IsolateusPosicaoService {
     const novo: Passo = { x, alvoX, t: agora };
     await this.rtdb.gravar(caminho, novo);
     return novo;
+  }
+
+  /** Onde o habitante está agora na cena do setor (sem passo: o meio). */
+  async xAtual(
+    partidaId: string,
+    setorId: string,
+    habitanteId: string,
+    agora: number = Date.now(),
+  ): Promise<number> {
+    const ultimo = await this.rtdb.ler<Passo>(
+      this.caminho(partidaId, setorId, habitanteId),
+    );
+    return ultimo ? posicaoEm(ultimo, agora) : CENA.X_INICIAL;
+  }
+
+  /**
+   * A travessia no canal (036 #38): some do setor antigo e aparece na porta de
+   * chegada do novo, entrando um pouco na cena.
+   */
+  async atravessar(
+    partidaId: string,
+    de: string,
+    para: string,
+    habitanteId: string,
+    agora: number = Date.now(),
+  ): Promise<void> {
+    await this.rtdb.apagar(this.caminho(partidaId, de, habitanteId));
+    const { x, alvoX } = chegadaPelaPorta(de, para);
+    const novo: Passo = { x, alvoX, t: agora };
+    await this.rtdb.gravar(this.caminho(partidaId, para, habitanteId), novo);
   }
 
   /** Custom token que só enxerga `pos/{partidaId}/{setorId}`. */

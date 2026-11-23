@@ -153,7 +153,7 @@ describe('Isolateus — a Ameaça age onde está', () => {
     });
     await expect(
       service.acaoAmeaca('a1', 'p1', { tipo: 'ABDUZIR', alvoId: 'h2' }),
-    ).rejects.toMatchObject({ response: { code: 'FORA_DE_ALCANCE' } });
+    ).rejects.toMatchObject({ response: { code: 'ALVO_SAIU' } });
   });
 
   it('abdução presencial enxerga quem chegou ao setor nesta noite (posição do cofre)', async () => {

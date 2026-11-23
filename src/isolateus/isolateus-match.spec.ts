@@ -176,22 +176,6 @@ describe('Isolateus — lobby e Despertar', () => {
     }
   });
 
-  it('o debate vem ligado por padrão (a partida nasce como sempre foi)', async () => {
-    const { service, partidas } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await povoar(service, p.id, 4);
-    await service.iniciar('prof', p.id);
-    expect(partidas.get(p.id)!.debateHabilitado).toBe(true);
-  });
-
-  it('o professor desliga o debate no lobby: a escolha é gravada no Despertar', async () => {
-    const { service, partidas } = make();
-    const p = await service.criar('prof', 'j1', 't1');
-    await povoar(service, p.id, 4);
-    await service.iniciar('prof', p.id, { debateHabilitado: false });
-    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
-  });
-
   it('partida antiga, sem o campo, é lida com o debate ligado', () => {
     const antiga = new IsolateusMatchEntity({ id: 'velha' });
     expect(antiga.debateHabilitado).toBe(true);
@@ -405,14 +389,52 @@ describe('Isolateus — rodízio da Ameaça por turma', () => {
   });
 });
 
-describe('Isolateus — cronômetro de entrada (035)', () => {
-  it('liga, cancela e guarda o debate escolhido no lobby', async () => {
+describe('Isolateus 036 — tempo de movimentação no lobby (Task 1)', () => {
+  it('a partida nasce com 20s de noite', async () => {
     const { service, partidas } = make();
     const p = await service.criar('prof', 'j1', 't1');
-    await service.definirCronometro('prof', p.id, 30, false);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(20_000);
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(20_000);
+  });
+
+  it('o professor escolhe no iniciar', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.iniciar('prof', p.id, { segundosNoite: 45 });
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(45_000);
+  });
+
+  it('o cronômetro leva a escolha e o início automático a usa', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await povoar(service, p.id, 4);
+    await service.definirCronometro('prof', p.id, 30, 10);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(10_000);
+    partidas.get(p.id)!.entradaEncerraEm = new Date(
+      Date.now() - 1000,
+    ).toISOString();
+    await service.iniciarAutomatico(p.id);
+    expect(partidas.get(p.id)!.status).toBe('DESLOCAMENTO');
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(10_000);
+  });
+
+  it('partida antiga, sem o campo, usa a noite legada', () => {
+    const antiga = new IsolateusMatchEntity({ id: 'velha' });
+    expect(antiga.duracaoNoiteMs).toBe(15_000);
+  });
+});
+
+describe('Isolateus — cronômetro de entrada (035)', () => {
+  it('liga, cancela e guarda o tempo de movimentação escolhido no lobby', async () => {
+    const { service, partidas } = make();
+    const p = await service.criar('prof', 'j1', 't1');
+    await service.definirCronometro('prof', p.id, 30, 45);
     const fim = Date.parse(partidas.get(p.id)!.entradaEncerraEm!);
     expect(fim).toBeGreaterThan(Date.now() + 25_000);
-    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(45_000);
     await service.definirCronometro('prof', p.id, null);
     expect(partidas.get(p.id)!.entradaEncerraEm).toBeNull();
   });
@@ -445,15 +467,15 @@ describe('Isolateus — início automático (035)', () => {
     p.entradaEncerraEm = new Date(Date.now() - 1000).toISOString();
   };
 
-  it('prazo vencido com 4 reais: a vila desperta com o debate do lobby', async () => {
+  it('prazo vencido com 4 reais: a vila desperta com a noite do lobby', async () => {
     const { service, partidas } = make();
     const p = await service.criar('prof', 'j1', 't1');
     await povoar(service, p.id, 4);
-    await service.definirCronometro('prof', p.id, 30, false);
+    await service.definirCronometro('prof', p.id, 30, 30);
     vencer(partidas.get(p.id)!);
     await service.iniciarAutomatico(p.id);
     expect(partidas.get(p.id)!.status).toBe('DESLOCAMENTO');
-    expect(partidas.get(p.id)!.debateHabilitado).toBe(false);
+    expect(partidas.get(p.id)!.limiteNoiteMs).toBe(30_000);
   });
 
   it('menos de 4 reais: o lobby continua com o aviso', async () => {
