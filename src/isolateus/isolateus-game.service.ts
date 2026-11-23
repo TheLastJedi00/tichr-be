@@ -426,18 +426,60 @@ export class IsolateusGameService {
     alunoId: string,
     partidaId: string,
     setorId: string,
-  ): Promise<IsolateusMatchEntity> {
+  ): Promise<IsolateusMatchEntity & { tokenCanal?: string | null }> {
     const { partida, segredo } = await this.carregarParaComando(partidaId);
     await this.pulsoDaAgenda(partida, segredo);
     const habitante = this.habitanteDaNoite(partida, segredo, alunoId);
     if (setorId === habitante.setorId) {
       return this.registrarConfirmacao(partida, segredo, alunoId);
     }
+    const origem = habitante.setorId;
     this.assertSemTrava(segredo, alunoId);
-    this.assertEstrada(habitante.setorId, setorId);
+    this.assertEstrada(origem, setorId);
+    await this.assertNaPorta(partida.id, origem, setorId, habitante.id);
 
     await this.atravessar(partida, segredo, habitante.id, setorId, alunoId);
-    return this.registrarConfirmacao(partida, segredo, alunoId);
+    // O canal acompanha a travessia (036 #38): o boneco sai da cena antiga e
+    // entra pela porta da nova; o token do setor novo vai na resposta.
+    let tokenCanal: string | null = null;
+    if (this.posicao?.habilitado) {
+      const posicao = this.posicao;
+      await this.semFalhar(() =>
+        posicao.atravessar(partida.id, origem, setorId, habitante.id),
+      );
+      tokenCanal = await posicao
+        .token(partida.id, setorId, alunoId)
+        .catch(() => null);
+    }
+    await this.registrarConfirmacao(partida, segredo, alunoId);
+    return Object.assign(partida, { tokenCanal });
+  }
+
+  /**
+   * Anti-trapaça da porta (036 #21): o boneco precisa estar na zona da porta
+   * daquele destino. O `x` sai do último passo (o mesmo cálculo do `passo`).
+   * Sem o canal configurado não há posição: a checagem é pulada.
+   */
+  private async assertNaPorta(
+    partidaId: string,
+    origem: string,
+    destino: string,
+    habitanteId: string,
+  ): Promise<void> {
+    if (!this.posicao?.habilitado) return;
+    const porta = xDaPorta(origem, destino);
+    let x: number;
+    try {
+      x = await this.posicao.xAtual(partidaId, origem, habitanteId);
+    } catch {
+      return; // o canal é só visual: fora do ar, não trava a partida
+    }
+    if (porta === undefined || Math.abs(x - porta) > CENA.ZONA_PORTA) {
+      throw new BadRequestException({
+        code: 'LONGE_DA_PORTA',
+        message: 'Chegue até a porta para atravessar.',
+      });
+    }
   }
 
   private assertEstrada(de: string, para: string): void {

@@ -83,15 +83,15 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     expect(g.x).toBeCloseTo(CENA.LARGURA / 2 + CENA.VELOCIDADE);
   });
 
-  it('429 PASSO_RAPIDO acima de 1 por segundo', async () => {
+  it('429 PASSO_RAPIDO abaixo de 250 ms (036 #25: apertar e soltar a tecla)', async () => {
     const c = montar();
     await c.service.passo('a3', 'p1', 250);
-    avancar(400);
+    avancar(100);
     const erro = await c.service.passo('a3', 'p1', 10).catch((e) => e);
     expect(erro).toBeInstanceOf(HttpException);
     expect((erro as HttpException).getStatus()).toBe(429);
     expect(codigo(erro)).toBe('PASSO_RAPIDO');
-    avancar(700);
+    avancar(200);
     await expect(c.service.passo('a3', 'p1', 10)).resolves.toBeDefined();
   });
 
@@ -137,6 +137,70 @@ describe('Isolateus 034 — POST passo (Task 2)', () => {
     c.partida.pausadaEm = new Date(agora).toISOString();
     const erro = await c.service.passo('a3', 'p1', 10).catch((e) => e);
     expect((erro as HttpException).getStatus()).toBe(409);
+  });
+});
+
+describe('Isolateus 036 — a porta (Task 4)', () => {
+  /** Anda até `x` e espera chegar. */
+  async function andarAte(
+    c: ReturnType<typeof montar>,
+    aluno: string,
+    x: number,
+  ) {
+    await c.service.passo(aluno, 'p1', x);
+    avancar(10_000);
+  }
+
+  it('longe da porta: 400 LONGE_DA_PORTA e ninguém atravessa', async () => {
+    const c = montar();
+    // Nasce no meio da cena (X_INICIAL), longe das portas.
+    const e = await c.service.mover('a3', 'p1', 'energia').catch((x) => x);
+    expect(codigo(e)).toBe('LONGE_DA_PORTA');
+    expect(c.setorDe('h3')).toBe('seguranca');
+  });
+
+  it('na zona da porta, atravessa (com tolerância)', async () => {
+    const c = montar();
+    const porta = xDaPorta('seguranca', 'energia')!;
+    const dentro = porta > CENA.LARGURA / 2 ? -1 : 1;
+    await andarAte(c, 'a3', porta + dentro * (CENA.ZONA_PORTA - 1));
+    await c.service.mover('a3', 'p1', 'energia');
+    expect(c.setorDe('h3')).toBe('energia');
+  });
+
+  it('a porta certa: estar na porta de outro vizinho não vale', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'comercio')!);
+    const e = await c.service.mover('a3', 'p1', 'energia').catch((x) => x);
+    expect(codigo(e)).toBe('LONGE_DA_PORTA');
+  });
+
+  it('a travessia tira o boneco do setor antigo e o põe na porta de chegada', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'energia')!);
+    await c.service.mover('a3', 'p1', 'energia');
+    expect(c.rtdb.dados.has('pos/p1/seguranca/h3')).toBe(false);
+    const chegada = xDaPorta('energia', 'seguranca')!;
+    const novo = c.rtdb.dados.get('pos/p1/energia/h3') as {
+      x: number;
+      alvoX: number;
+    };
+    expect(novo.x).toBe(chegada);
+    // Entra um pouco para dentro da cena, fora da zona da porta.
+    expect(Math.abs(novo.alvoX - chegada)).toBeGreaterThan(CENA.ZONA_PORTA);
+  });
+
+  it('a resposta traz o token do canal do setor novo', async () => {
+    const c = montar();
+    await andarAte(c, 'a3', xDaPorta('seguranca', 'energia')!);
+    const r = await c.service.mover('a3', 'p1', 'energia');
+    expect(r.tokenCanal).toContain('"setorId":"energia"');
+  });
+
+  it('"ficar" não exige porta', async () => {
+    const c = montar();
+    await c.service.mover('a3', 'p1', 'seguranca');
+    expect(c.segredo.confirmacoesNoite).toContain('a3');
   });
 });
 
