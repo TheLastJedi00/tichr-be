@@ -18,6 +18,7 @@ import { CheckoutModule } from './checkout/checkout.module';
 import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
 import { InstituicaoModule } from './instituicao/instituicao.module';
 import { DenunciaModule } from './denuncia/denuncia.module';
+import { PerguntaModule } from './pergunta/pergunta.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { DenunciaModule } from './denuncia/denuncia.module';
     IaGovernancaModule,
     InstituicaoModule,
     DenunciaModule,
+    PerguntaModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -85,6 +85,15 @@ export class TurmaEntity {
   /** Janela aberta agora (`denuncia_janelas`); null quando fechada. */
   denunciaJanelaId?: string | null;
 
+  /**
+   * Janela de perguntas ao professor (spec 037): o aluno so pergunta e
+   * responde com ela aberta. Ausente = fechada. Alternada pelo professor.
+   */
+  perguntasAbertas?: boolean;
+
+  /** Quando a janela de perguntas abriu (ISO); null quando fechada. */
+  perguntasAbertasDesde?: string | null;
+
   /** Nome livre da pontuacao exibido na UI (ex.: 'XP', 'Aura'). */
   nomePontuacao?: string;
 
