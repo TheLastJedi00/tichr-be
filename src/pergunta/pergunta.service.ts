@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -6,18 +7,29 @@ import {
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
-import type { ExtensaoAnexo } from './anexo';
-import { PerguntaMensagemEntity } from './entities/pergunta-mensagem.entity';
+import { contentTypeDe, ExtensaoAnexo, validarAnexo } from './anexo';
+import {
+  AnexoMensagem,
+  PerguntaMensagemEntity,
+} from './entities/pergunta-mensagem.entity';
 import {
   Aguardando,
   AutorMensagem,
   PerguntaEntity,
   StatusPergunta,
 } from './entities/pergunta.entity';
+import { PerguntaAnexoStorage } from './pergunta-anexo.storage';
 import { PerguntaMensagemRepository } from './pergunta-mensagem.repository';
 import { PerguntaRepository } from './pergunta.repository';
 
 type Aluno = { alunoId: string; turmaId: string };
+/** Arquivo multipart do aluno (nome já em UTF-8, ver o controller). */
+export type ArquivoEnviado = { originalname: string; buffer: Buffer };
+type AnexoPreparado = {
+  dados: AnexoMensagem;
+  buffer: Buffer;
+  contentType: string;
+};
 
 export interface EstadoJanelaPerguntas {
   abertas: boolean;
@@ -69,6 +81,7 @@ export class PerguntaService {
     private readonly turmaRepo: TurmaRepository,
     private readonly alunoRepo: AlunoRepository,
     private readonly professorService: ProfessorService,
+    private readonly anexos: PerguntaAnexoStorage,
   ) {}
 
   // ===== Janela de perguntas (#1–#3) =====
@@ -135,6 +148,7 @@ export class PerguntaService {
   async criarDoAluno(
     { alunoId, turmaId }: Aluno,
     dto: { titulo: string; texto?: string },
+    arquivo?: ArquivoEnviado,
   ): Promise<{ id: string }> {
     const turma = await this.turmaDoAluno(turmaId);
     this.assertJanelaAberta(turma);
@@ -146,21 +160,27 @@ export class PerguntaService {
       abertas,
     );
     pergunta.id = this.perguntas.novoId();
+    const mensagemId = this.mensagens.novoId();
+    const anexo = this.prepararAnexo(arquivo, turmaId, pergunta.id, mensagemId);
     const primeira = PerguntaMensagemEntity.criar(
       {
         perguntaId: pergunta.id,
         turmaId,
         autor: 'ALUNO',
         texto: dto.texto,
+        anexo: anexo?.dados,
       },
       new Date(pergunta.criadaEm),
     );
-    primeira.id = this.mensagens.novoId();
-    await this.perguntas.transacao(async (tx) => {
-      this.perguntas.gravarNaTransacao(tx, pergunta);
-      this.mensagens.gravarNaTransacao(tx, primeira);
-      return Promise.resolve();
-    });
+    primeira.id = mensagemId;
+    if (anexo) pergunta.temAnexo = true;
+    await this.comAnexo(anexo, () =>
+      this.perguntas.transacao(async (tx) => {
+        this.perguntas.gravarNaTransacao(tx, pergunta);
+        this.mensagens.gravarNaTransacao(tx, primeira);
+        return Promise.resolve();
+      }),
+    );
     return { id: pergunta.id };
   }
 
@@ -168,11 +188,23 @@ export class PerguntaService {
     aluno: Aluno,
     id: string,
     dto: { texto?: string },
+    arquivo?: ArquivoEnviado,
   ): Promise<MensagemView> {
     const turma = await this.turmaDoAluno(aluno.turmaId);
     const p = await this.perguntaDoAluno(aluno, id);
     this.assertJanelaAberta(turma);
-    return this.enviar(p, 'ALUNO', dto.texto);
+    return this.enviar(p, 'ALUNO', dto.texto, arquivo);
+  }
+
+  /** O aluno baixa o que ele mesmo enviou, mesmo com a janela fechada. */
+  async anexoDoAluno(
+    aluno: Aluno,
+    id: string,
+    mensagemId: string,
+  ): Promise<{ url: string }> {
+    await this.turmaDoAluno(aluno.turmaId);
+    const p = await this.perguntaDoAluno(aluno, id);
+    return this.urlDoAnexo(p, mensagemId);
   }
 
   /** O autor encerra mesmo com a janela fechada (#3, #5). */
@@ -244,6 +276,17 @@ export class PerguntaService {
     );
   }
 
+  async anexoDoProfessor(
+    professorId: string,
+    turmaId: string,
+    id: string,
+    mensagemId: string,
+  ): Promise<{ url: string }> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const p = await this.perguntaDaTurma(turmaId, id);
+    return this.urlDoAnexo(p, mensagemId);
+  }
+
   /** Só o professor reabre (#5), sem depender da janela. */
   async reabrir(
     professorId: string,
@@ -265,25 +308,100 @@ export class PerguntaService {
     p: PerguntaEntity,
     autor: AutorMensagem,
     texto: string | undefined,
+    arquivo?: ArquivoEnviado,
   ): Promise<MensagemView> {
-    // Falha cedo (encerrada/limite) antes de qualquer gravação.
+    // Falha cedo (encerrada/limite/arquivo) antes de subir ou gravar algo.
     new PerguntaEntity({ ...p }).registrarMensagem(autor);
+    const mensagemId = this.mensagens.novoId();
+    const anexo = this.prepararAnexo(arquivo, p.turmaId, p.id, mensagemId);
     const msg = PerguntaMensagemEntity.criar({
       perguntaId: p.id,
       turmaId: p.turmaId,
       autor,
       texto,
+      anexo: anexo?.dados,
     });
-    msg.id = this.mensagens.novoId();
-    await this.perguntas.transacao(async (tx) => {
-      const atual = await this.perguntas.lerNaTransacao(tx, p.id);
-      if (!atual) throw new NotFoundException('Pergunta não encontrada.');
-      atual.registrarMensagem(autor, new Date(msg.criadaEm));
-      if (msg.anexo) atual.temAnexo = true;
-      this.perguntas.gravarNaTransacao(tx, atual);
-      this.mensagens.gravarNaTransacao(tx, msg);
-    });
+    msg.id = mensagemId;
+    await this.comAnexo(anexo, () =>
+      this.perguntas.transacao(async (tx) => {
+        const atual = await this.perguntas.lerNaTransacao(tx, p.id);
+        if (!atual) throw new NotFoundException('Pergunta não encontrada.');
+        atual.registrarMensagem(autor, new Date(msg.criadaEm));
+        if (msg.anexo) atual.temAnexo = true;
+        this.perguntas.gravarNaTransacao(tx, atual);
+        this.mensagens.gravarNaTransacao(tx, msg);
+      }),
+    );
     return this.viewMensagem(msg);
+  }
+
+  /** Valida o arquivo e define o caminho privado (turma/pergunta/mensagem). */
+  private prepararAnexo(
+    arquivo: ArquivoEnviado | undefined,
+    turmaId: string,
+    perguntaId: string,
+    mensagemId: string,
+  ): AnexoPreparado | undefined {
+    if (!arquivo) return undefined;
+    const v = validarAnexo(arquivo.originalname, arquivo.buffer);
+    return {
+      dados: {
+        path: `perguntas/${turmaId}/${perguntaId}/${mensagemId}`,
+        nome: v.nome,
+        extensao: v.extensao,
+        tamanho: v.tamanho,
+      },
+      buffer: arquivo.buffer,
+      contentType: v.contentType,
+    };
+  }
+
+  /**
+   * Sobe o anexo ANTES de gravar (ajuste da §3 na execução): se a transação
+   * recusar, apagar o arquivo desfaz tudo; o contrário exigiria reverter os
+   * contadores da pergunta. Nenhuma mensagem aponta para arquivo inexistente.
+   */
+  private async comAnexo(
+    anexo: AnexoPreparado | undefined,
+    gravar: () => Promise<unknown>,
+  ): Promise<void> {
+    if (anexo) {
+      try {
+        await this.anexos.salvar(
+          anexo.dados.path,
+          anexo.buffer,
+          anexo.contentType,
+        );
+      } catch {
+        throw new BadGatewayException({
+          code: 'ANEXO_FALHOU',
+          message: 'Não deu para enviar o arquivo. Tente de novo.',
+        });
+      }
+    }
+    try {
+      await gravar();
+    } catch (e) {
+      if (anexo) await this.anexos.apagar(anexo.dados.path);
+      throw e;
+    }
+  }
+
+  /** URL assinada do anexo de uma mensagem desta pergunta. */
+  private async urlDoAnexo(
+    p: PerguntaEntity,
+    mensagemId: string,
+  ): Promise<{ url: string }> {
+    const m = await this.mensagens.findById(mensagemId);
+    if (!m || m.perguntaId !== p.id || !m.anexo) {
+      throw new NotFoundException('Anexo não encontrado.');
+    }
+    const url = await this.anexos.urlAssinada(
+      m.anexo.path,
+      m.anexo.nome,
+      contentTypeDe(m.anexo.extensao),
+    );
+    return { url };
   }
 
   private async mudarStatus(

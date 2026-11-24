@@ -98,3 +98,8 @@ export function validarAnexo(nome: string, buffer: Buffer): AnexoValidado {
     contentType: tipo.contentType,
   };
 }
+
+/** Tipo de download de um anexo já gravado (o mesmo da validação). */
+export function contentTypeDe(ext: ExtensaoAnexo): string {
+  return TIPOS[ext].contentType;
+}

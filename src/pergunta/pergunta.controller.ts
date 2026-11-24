@@ -53,6 +53,16 @@ export class PerguntaController {
     return this.service.detalheDoProfessor(professorId, turmaId, id);
   }
 
+  @Get('turmas/:turmaId/perguntas/:id/mensagens/:mensagemId/anexo')
+  anexo(
+    @ProfessorId() professorId: string,
+    @Param('turmaId') turmaId: string,
+    @Param('id') id: string,
+    @Param('mensagemId') mensagemId: string,
+  ) {
+    return this.service.anexoDoProfessor(professorId, turmaId, id, mensagemId);
+  }
+
   @Post('turmas/:turmaId/perguntas/:id/mensagens')
   responder(
     @ProfessorId() professorId: string,

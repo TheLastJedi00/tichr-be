@@ -3,6 +3,7 @@ import { ProfessorModule } from '../professor/professor.module';
 import { TurmaModule } from '../turma/turma.module';
 import { AlunoPerguntaController } from './aluno-pergunta.controller';
 import { PerguntaController } from './pergunta.controller';
+import { PerguntaAnexoStorage } from './pergunta-anexo.storage';
 import { PerguntaMensagemRepository } from './pergunta-mensagem.repository';
 import { PerguntaRepository } from './pergunta.repository';
 import { PerguntaService } from './pergunta.service';
@@ -11,6 +12,11 @@ import { PerguntaService } from './pergunta.service';
 @Module({
   imports: [TurmaModule, ProfessorModule],
   controllers: [PerguntaController, AlunoPerguntaController],
-  providers: [PerguntaService, PerguntaRepository, PerguntaMensagemRepository],
+  providers: [
+    PerguntaService,
+    PerguntaRepository,
+    PerguntaMensagemRepository,
+    PerguntaAnexoStorage,
+  ],
 })
 export class PerguntaModule {}

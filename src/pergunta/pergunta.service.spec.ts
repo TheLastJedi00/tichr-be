@@ -5,6 +5,7 @@ import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { PerguntaMensagemEntity } from './entities/pergunta-mensagem.entity';
 import { PerguntaEntity } from './entities/pergunta.entity';
+import { PerguntaAnexoStorage } from './pergunta-anexo.storage';
 import { PerguntaMensagemRepository } from './pergunta-mensagem.repository';
 import { PerguntaRepository } from './pergunta.repository';
 import { PerguntaService } from './pergunta.service';
@@ -29,6 +30,7 @@ function montar(opcoes: { abertas?: boolean; podeGamificar?: boolean } = {}) {
   const mensagens = new Map<string, PerguntaMensagemEntity>();
   let seq = 0;
 
+  const ctl = { falharUpload: false, falharTx: false };
   const clonar = (p: PerguntaEntity) => new PerguntaEntity({ ...p });
   const perguntaRepo = {
     transacao: async <T>(fn: (tx: unknown) => Promise<T>) => fn(null),
@@ -44,6 +46,7 @@ function montar(opcoes: { abertas?: boolean; podeGamificar?: boolean } = {}) {
       return p ? clonar(p) : null;
     },
     gravarNaTransacao: (_tx: unknown, p: PerguntaEntity) => {
+      if (ctl.falharTx) throw new Error('conflito na transação');
       perguntas.set(p.id, clonar(p));
     },
     abertasDoProfessor: async (professorId: string) =>
@@ -94,14 +97,42 @@ function montar(opcoes: { abertas?: boolean; podeGamificar?: boolean } = {}) {
     getProfile: async () => ({ podeGamificar: opcoes.podeGamificar ?? true }),
   } as unknown as ProfessorService;
 
+  const arquivos = new Map<string, { tamanho: number; contentType: string }>();
+  const apagados: string[] = [];
+  const urls: Array<{ path: string; nome: string; contentType: string }> = [];
+  const storage = {
+    salvar: async (path: string, buffer: Buffer, contentType: string) => {
+      if (ctl.falharUpload) throw new Error('storage fora do ar');
+      arquivos.set(path, { tamanho: buffer.length, contentType });
+    },
+    apagar: async (path: string) => {
+      apagados.push(path);
+      arquivos.delete(path);
+    },
+    urlAssinada: async (path: string, nome: string, contentType: string) => {
+      urls.push({ path, nome, contentType });
+      return `https://assinada/${path}`;
+    },
+  } as unknown as PerguntaAnexoStorage;
+
   const service = new PerguntaService(
     perguntaRepo,
     mensagemRepo,
     turmaRepo,
     alunoRepo,
     professorService,
+    storage,
   );
-  return { service, perguntas, mensagens, turmas };
+  return {
+    service,
+    perguntas,
+    mensagens,
+    turmas,
+    ctl,
+    arquivos,
+    apagados,
+    urls,
+  };
 }
 
 describe('PerguntaService — janela (#1–#3)', () => {
@@ -362,5 +393,101 @@ describe('PerguntaService — professor', () => {
     expect(JSON.stringify(await service.detalheDoAluno(ANA, id))).not.toContain(
       'perguntas/x',
     );
+  });
+});
+
+const PDF = {
+  originalname: 'trabalho.pdf',
+  buffer: Buffer.from('%PDF-1.7 conteúdo'),
+};
+const HTML = {
+  originalname: 'site.html',
+  buffer: Buffer.from('<script>alert(1)</script>', 'utf8'),
+};
+const PNG = {
+  originalname: 'foto.png',
+  buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]),
+};
+
+describe('PerguntaService — anexo (#12–#16)', () => {
+  it('cria pergunta com PDF: sobe privado e marca temAnexo', async () => {
+    const { service, perguntas, mensagens, arquivos } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'Trab' }, PDF);
+    const m = [...mensagens.values()][0];
+    expect(m.anexo).toMatchObject({
+      path: `perguntas/${TURMA}/${id}/${m.id}`,
+      nome: 'trabalho.pdf',
+      extensao: 'pdf',
+    });
+    expect(arquivos.get(m.anexo!.path)?.contentType).toBe('application/pdf');
+    expect(perguntas.get(id)!.temAnexo).toBe(true);
+  });
+
+  it('imagem é recusada antes de subir qualquer coisa', async () => {
+    const { service, perguntas, arquivos } = montar();
+    const e = await falha(
+      service.criarDoAluno(ANA, { titulo: 'Foto', texto: 'x' }, PNG),
+    );
+    expect(codigoDe(e)).toBe('TIPO_ARQUIVO_NAO_ACEITO');
+    expect(perguntas.size).toBe(0);
+    expect(arquivos.size).toBe(0);
+  });
+
+  it('upload falhou: 502 e nada é gravado', async () => {
+    const { service, perguntas, mensagens, ctl } = montar();
+    ctl.falharUpload = true;
+    const e = await falha(service.criarDoAluno(ANA, { titulo: 'T' }, PDF));
+    expect(codigoDe(e)).toBe('ANEXO_FALHOU');
+    expect(perguntas.size).toBe(0);
+    expect(mensagens.size).toBe(0);
+  });
+
+  it('transação recusou depois do upload: o arquivo é apagado', async () => {
+    const { service, ctl, arquivos, apagados } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'T', texto: 'a' });
+    ctl.falharTx = true;
+    await expect(service.responderDoAluno(ANA, id, {}, PDF)).rejects.toThrow(
+      'conflito',
+    );
+    expect(apagados).toHaveLength(1);
+    expect(arquivos.size).toBe(0);
+  });
+
+  it('encerrada: recusa antes de subir o arquivo', async () => {
+    const { service, arquivos } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'T', texto: 'a' });
+    await service.encerrarDoAluno(ANA, id);
+    const e = await falha(service.responderDoAluno(ANA, id, {}, PDF));
+    expect(codigoDe(e)).toBe('PERGUNTA_ENCERRADA');
+    expect(arquivos.size).toBe(0);
+  });
+
+  it('download: HTML sai como texto simples, com o nome original', async () => {
+    const { service, mensagens, urls } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'Site' }, HTML);
+    const m = [...mensagens.values()][0];
+    const r = await service.anexoDoProfessor(PROF, TURMA, id, m.id);
+    expect(r.url).toContain(m.anexo!.path);
+    expect(urls[0]).toEqual({
+      path: m.anexo!.path,
+      nome: 'site.html',
+      contentType: 'text/plain; charset=utf-8',
+    });
+    await expect(service.anexoDoAluno(ANA, id, m.id)).resolves.toBeDefined();
+  });
+
+  it('download protegido: outro aluno, mensagem sem anexo ou de outra pergunta', async () => {
+    const { service, mensagens } = montar();
+    const a = await service.criarDoAluno(ANA, { titulo: 'A' }, PDF);
+    const b = await service.criarDoAluno(ANA, { titulo: 'B', texto: 'só' });
+    const [ma, mb] = [...mensagens.values()];
+    for (const p of [
+      service.anexoDoAluno(BRUNO, a.id, ma.id),
+      service.anexoDoProfessor(PROF, TURMA, b.id, mb.id),
+      service.anexoDoProfessor(PROF, TURMA, b.id, ma.id),
+      service.anexoDoProfessor('prof-2', TURMA, a.id, ma.id),
+    ]) {
+      expect(await falha(p)).toBeInstanceOf(NotFoundException);
+    }
   });
 });
