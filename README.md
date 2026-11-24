@@ -1159,6 +1159,64 @@ nem grupo), `POST /aluno/denuncias` (`denunciadoAlunoId`, `topicoId?`, `texto?`)
   por URL assinada ao professor dono e é **apagada ao resolver** (validar ou invalidar, avulsa ou
   em grupo).
 
+## Perguntas ao professor (spec 037)
+
+Pelo portal (PIN), o aluno abre uma **pergunta privada** ao professor da turma (título + texto
+e/ou um arquivo) e os dois conversam nela. Só o aluno autor e o professor dono veem; **não é
+anônima** (o professor vê o nome). Mesmo gating do portal (`podeGamificar`, hoje só PhD; senão 403
+`GAMIFICACAO_LOCKED`). Módulo `pergunta/`, sem tempo real (o FE lê por REST e faz polling).
+
+**Coleções** (fechadas ao cliente):
+
+| Coleção | Campos |
+|---|---|
+| `perguntas` | `turmaId`, `professorId`, `alunoId`, `titulo` (≤120), `status` (`ABERTA`/`ENCERRADA`), `criadaEm`, `atualizadaEm` (última mensagem), `ultimaMensagemPor` (`ALUNO`/`PROFESSOR`), `totalMensagens`, `temAnexo?`, `encerradaEm?`, `encerradaPor?` |
+| `pergunta_mensagens` | `perguntaId`, `turmaId`, `autor` (`ALUNO`/`PROFESSOR`), `texto?` (≤2000), `anexo?` `{ path, nome, extensao, tamanho }`, `criadaEm` |
+
+Na `turma`: `perguntasAbertas?` (ausente = **fechada**) e `perguntasAbertasDesde?`. Alternados só
+pelas rotas de abrir/fechar.
+
+**Endpoints — professor**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/perguntas/pendentes` | `{ [turmaId]: n }` de perguntas esperando o professor (badge) |
+| `GET` | `/turmas/:turmaId/perguntas?status=` | lista (esperando o professor primeiro), com `alunoNome`, `aguardando`, `temAnexo` |
+| `GET` | `/turmas/:turmaId/perguntas/estado` | `{ abertas, desde }` da janela |
+| `POST` | `/turmas/:turmaId/perguntas/abrir` / `fechar` | janela de perguntas (idempotentes) |
+| `GET` | `/turmas/:turmaId/perguntas/:id` | `{ pergunta, mensagens }` (o `path` do anexo não sai) |
+| `POST` | `/turmas/:turmaId/perguntas/:id/mensagens` | `{ texto }` (o professor responde só em texto) |
+| `POST` | `/turmas/:turmaId/perguntas/:id/encerrar` / `reabrir` | status da pergunta |
+| `GET` | `/turmas/:turmaId/perguntas/:id/mensagens/:mensagemId/anexo` | `{ url }` assinada por 5 min |
+
+**Endpoints — aluno** (`@Roles('STUDENT')`): `GET /aluno/perguntas/estado` (`{ abertas }`),
+`GET /aluno/perguntas`, `GET /aluno/perguntas/:id`, `POST /aluno/perguntas` (multipart
+`titulo`, `texto?`, `arquivo?`), `POST /aluno/perguntas/:id/mensagens` (multipart `texto?`,
+`arquivo?`), `POST /aluno/perguntas/:id/encerrar` e `GET /aluno/perguntas/:id/mensagens/:mensagemId/anexo`.
+
+**Regras**
+
+- **Janela:** fechada, o aluno não cria nem responde (403 `PERGUNTAS_FECHADAS`), mas lê, baixa o
+  que enviou e encerra. O professor responde e encerra com ela fechada.
+- **Status:** aluno e professor encerram (encerrar de novo não muda nada); só o professor reabre
+  (409 `PERGUNTA_ABERTA` se já aberta). Mensagem em encerrada: 409 `PERGUNTA_ENCERRADA`.
+  `aguardando` = `AGUARDANDO_PROFESSOR`/`AGUARDANDO_ALUNO` pela última mensagem (`null` encerrada).
+- **Limites** (`pergunta.constants.ts`): título obrigatório até 120 (`TITULO_INVALIDO`), texto até
+  2000 (`TEXTO_LONGO`), mensagem com texto ou anexo (`MENSAGEM_VAZIA`), 5 abertas por aluno na
+  turma (409 `LIMITE_PERGUNTAS`), 50 mensagens por pergunta (409 `LIMITE_MENSAGENS`). Mensagem
+  nova e contadores da pergunta na mesma transação.
+- **Anexo** (só o aluno, 1 por mensagem): HTML/HTM, CSS, PDF, DOC/DOCX, **sem imagem**, até 4 MB
+  (`validarAnexo` em `pergunta/anexo.ts`). O tipo é conferido pela extensão **e pelo conteúdo**
+  (`%PDF-`, ZIP `PK`, OLE `D0CF11E0`, HTML/CSS em UTF-8 sem byte nulo); o mimetype do navegador é
+  ignorado. Erros: 400 `TIPO_ARQUIVO_NAO_ACEITO`/`ARQUIVO_VAZIO`, 413 `ARQUIVO_GRANDE`. O nome
+  chega em UTF-8 (o multer lê latin1) e é limpo (sem pastas, até 100 caracteres).
+- **Storage privado** em `perguntas/{turmaId}/{perguntaId}/{mensagemId}`: sem token público, só
+  por URL assinada com `Content-Disposition: attachment` e o nome original. **HTML e CSS saem como
+  `text/plain`**, para o navegador nunca renderizar nem rodar script do aluno. O arquivo sobe
+  **antes** da transação; se ela recusar, é apagado (falha no upload: 502 `ANEXO_FALHOU`).
+- **Retenção:** o anexo fica enquanto a pergunta existir (inclusive encerrada).
+- **Privacidade:** pergunta de outro aluno ou de outra turma é 404, sem revelar que existe.
+
 ## Ociosidade nos jogos (spec 032, Qlick, Wor e Isolateus)
 
 Uma **falta** é uma fase com ação esperada que fechou sem ação do aluno. A contagem é **total na
