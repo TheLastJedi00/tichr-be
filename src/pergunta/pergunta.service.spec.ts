@@ -147,3 +147,220 @@ describe('PerguntaService — janela (#1–#3)', () => {
     );
   });
 });
+
+const ANA = { alunoId: 'a1', turmaId: TURMA };
+const BRUNO = { alunoId: 'a2', turmaId: TURMA };
+
+function codigoDe(e: unknown): string | undefined {
+  const r = (e as { getResponse?: () => unknown }).getResponse?.();
+  return (r as { code?: string })?.code;
+}
+
+async function falha(p: Promise<unknown>): Promise<unknown> {
+  try {
+    await p;
+  } catch (e) {
+    return e;
+  }
+  throw new Error('deveria ter falhado');
+}
+
+describe('PerguntaService — aluno', () => {
+  it('cria pergunta com a 1ª mensagem, esperando o professor', async () => {
+    const { service, perguntas, mensagens } = montar();
+    const { id } = await service.criarDoAluno(ANA, {
+      titulo: 'Prova',
+      texto: 'Cai a unidade 2?',
+    });
+    const p = perguntas.get(id)!;
+    expect(p.professorId).toBe(PROF);
+    expect(p.alunoId).toBe('a1');
+    expect(p.totalMensagens).toBe(1);
+    const ms = [...mensagens.values()];
+    expect(ms).toHaveLength(1);
+    expect(ms[0]).toMatchObject({
+      perguntaId: id,
+      autor: 'ALUNO',
+      texto: 'Cai a unidade 2?',
+    });
+    const [minha] = await service.minhasDoAluno(ANA);
+    expect(minha).toMatchObject({
+      id,
+      titulo: 'Prova',
+      aguardando: 'AGUARDANDO_PROFESSOR',
+    });
+  });
+
+  it('pergunta sem texto nem anexo: 400 MENSAGEM_VAZIA', async () => {
+    const { service, perguntas } = montar();
+    const e = await falha(service.criarDoAluno(ANA, { titulo: 'Prova' }));
+    expect(codigoDe(e)).toBe('MENSAGEM_VAZIA');
+    expect(perguntas.size).toBe(0);
+  });
+
+  it('janela fechada: não cria nem responde (403), mas lê e encerra', async () => {
+    const { service, turmas } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'b' });
+    turmas[TURMA].perguntasAbertas = false;
+    expect(await service.estadoAluno(ANA)).toEqual({ abertas: false });
+    for (const p of [
+      service.criarDoAluno(ANA, { titulo: 'B', texto: 'c' }),
+      service.responderDoAluno(ANA, id, { texto: 'mais' }),
+    ]) {
+      const e = await falha(p);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(codigoDe(e)).toBe('PERGUNTAS_FECHADAS');
+    }
+    expect((await service.detalheDoAluno(ANA, id)).mensagens).toHaveLength(1);
+    await service.encerrarDoAluno(ANA, id);
+    expect((await service.detalheDoAluno(ANA, id)).pergunta.status).toBe(
+      'ENCERRADA',
+    );
+  });
+
+  it('6ª aberta: 409; encerrada não conta', async () => {
+    const { service } = montar();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(
+        (await service.criarDoAluno(ANA, { titulo: `P${i}`, texto: 'x' })).id,
+      );
+    }
+    const e = await falha(
+      service.criarDoAluno(ANA, { titulo: 'P6', texto: 'x' }),
+    );
+    expect(codigoDe(e)).toBe('LIMITE_PERGUNTAS');
+    await service.encerrarDoAluno(ANA, ids[0]);
+    await expect(
+      service.criarDoAluno(ANA, { titulo: 'P6', texto: 'x' }),
+    ).resolves.toBeDefined();
+    // Outro aluno tem a própria cota.
+    await expect(
+      service.criarDoAluno(BRUNO, { titulo: 'P1', texto: 'x' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('não enxerga nem mexe na pergunta de outro aluno (404)', async () => {
+    const { service } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'b' });
+    for (const p of [
+      service.detalheDoAluno(BRUNO, id),
+      service.responderDoAluno(BRUNO, id, { texto: 'oi' }),
+      service.encerrarDoAluno(BRUNO, id),
+    ]) {
+      expect(await falha(p)).toBeInstanceOf(NotFoundException);
+    }
+    expect(await service.minhasDoAluno(BRUNO)).toEqual([]);
+  });
+
+  it('responder encerrada: 409 PERGUNTA_ENCERRADA', async () => {
+    const { service } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'b' });
+    await service.encerrarDoAluno(ANA, id);
+    const e = await falha(service.responderDoAluno(ANA, id, { texto: 'c' }));
+    expect(codigoDe(e)).toBe('PERGUNTA_ENCERRADA');
+  });
+
+  it('fora do PhD: 403 também para o aluno', async () => {
+    const { service } = montar({ podeGamificar: false });
+    await expect(service.estadoAluno(ANA)).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('PerguntaService — professor', () => {
+  it('lista com o nome do aluno, aguardando professor primeiro', async () => {
+    const { service } = montar();
+    const a = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'a' });
+    const b = await service.criarDoAluno(BRUNO, { titulo: 'B', texto: 'b' });
+    await service.responderDoProfessor(PROF, TURMA, b.id, { texto: 'r' });
+    const lista = await service.listarDaTurma(PROF, TURMA);
+    expect(lista.map((p) => [p.id, p.alunoNome, p.aguardando])).toEqual([
+      [a.id, 'Ana', 'AGUARDANDO_PROFESSOR'],
+      [b.id, 'Bruno', 'AGUARDANDO_ALUNO'],
+    ]);
+  });
+
+  it('responde com a janela fechada; a conversa sai em ordem', async () => {
+    const { service, turmas } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: '1' });
+    turmas[TURMA].perguntasAbertas = false;
+    await service.responderDoProfessor(PROF, TURMA, id, { texto: '2' });
+    const d = await service.detalheDoProfessor(PROF, TURMA, id);
+    expect(d.mensagens.map((m) => [m.autor, m.texto])).toEqual([
+      ['ALUNO', '1'],
+      ['PROFESSOR', '2'],
+    ]);
+    expect(d.pergunta.aguardando).toBe('AGUARDANDO_ALUNO');
+    expect(d.pergunta.totalMensagens).toBe(2);
+  });
+
+  it('encerra e reabre; reabrir aberta: 409', async () => {
+    const { service } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: '1' });
+    const e = await falha(service.reabrir(PROF, TURMA, id));
+    expect(codigoDe(e)).toBe('PERGUNTA_ABERTA');
+    await service.encerrarDoProfessor(PROF, TURMA, id);
+    let d = await service.detalheDoProfessor(PROF, TURMA, id);
+    expect(d.pergunta).toMatchObject({
+      status: 'ENCERRADA',
+      encerradaPor: 'PROFESSOR',
+      aguardando: null,
+    });
+    await service.reabrir(PROF, TURMA, id);
+    d = await service.detalheDoProfessor(PROF, TURMA, id);
+    expect(d.pergunta.status).toBe('ABERTA');
+  });
+
+  it('filtra por status', async () => {
+    const { service } = montar();
+    const a = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'a' });
+    await service.criarDoAluno(BRUNO, { titulo: 'B', texto: 'b' });
+    await service.encerrarDoProfessor(PROF, TURMA, a.id);
+    expect(
+      (await service.listarDaTurma(PROF, TURMA, 'ENCERRADA')).map((p) => p.id),
+    ).toEqual([a.id]);
+    expect(await service.listarDaTurma(PROF, TURMA, 'ABERTA')).toHaveLength(1);
+  });
+
+  it('professor de outra turma: 404', async () => {
+    const { service } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: '1' });
+    await expect(
+      service.detalheDoProfessor('prof-2', TURMA, id),
+    ).rejects.toThrow(NotFoundException);
+    await expect(
+      service.detalheDoProfessor('prof-2', 'outra', id),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('pendentes conta só as que esperam o professor, por turma', async () => {
+    const { service } = montar();
+    const a = await service.criarDoAluno(ANA, { titulo: 'A', texto: 'a' });
+    const b = await service.criarDoAluno(BRUNO, { titulo: 'B', texto: 'b' });
+    await service.criarDoAluno(BRUNO, { titulo: 'C', texto: 'c' });
+    await service.responderDoProfessor(PROF, TURMA, a.id, { texto: 'r' });
+    await service.encerrarDoProfessor(PROF, TURMA, b.id);
+    expect(await service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 1 });
+  });
+
+  it('a mensagem nunca expõe o caminho do anexo', async () => {
+    const { service, mensagens } = montar();
+    const { id } = await service.criarDoAluno(ANA, { titulo: 'A', texto: '1' });
+    const m = [...mensagens.values()][0];
+    m.anexo = {
+      path: 'perguntas/x',
+      nome: 'a.pdf',
+      extensao: 'pdf',
+      tamanho: 3,
+    };
+    const d = await service.detalheDoProfessor(PROF, TURMA, id);
+    expect(d.mensagens[0].anexo).toEqual({
+      nome: 'a.pdf',
+      extensao: 'pdf',
+      tamanho: 3,
+    });
+    expect(JSON.stringify(await service.detalheDoAluno(ANA, id))).not.toContain(
+      'perguntas/x',
+    );
+  });
+});
