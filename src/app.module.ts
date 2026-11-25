@@ -19,6 +19,7 @@ import { IaGovernancaModule } from './ia-governanca/ia-governanca.module';
 import { InstituicaoModule } from './instituicao/instituicao.module';
 import { DenunciaModule } from './denuncia/denuncia.module';
 import { PerguntaModule } from './pergunta/pergunta.module';
+import { TrabalhoModule } from './trabalho/trabalho.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { PerguntaModule } from './pergunta/pergunta.module';
     InstituicaoModule,
     DenunciaModule,
     PerguntaModule,
+    TrabalhoModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -3,7 +3,7 @@ import {
   ConflictException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { validarAnexo } from './anexo';
+import { ANEXO, validarAnexo } from '../common/anexo';
 import { PERGUNTA } from './pergunta.constants';
 import { PerguntaEntity } from './entities/pergunta.entity';
 import { PerguntaMensagemEntity } from './entities/pergunta-mensagem.entity';
@@ -217,7 +217,7 @@ describe('validarAnexo', () => {
     );
     const grande = Buffer.concat([
       Buffer.from('%PDF-'),
-      Buffer.alloc(PERGUNTA.ARQUIVO_MAX_BYTES),
+      Buffer.alloc(ANEXO.ARQUIVO_MAX_BYTES),
     ]);
     expect(() => validarAnexo('a.pdf', grande)).toThrow(
       PayloadTooLargeException,

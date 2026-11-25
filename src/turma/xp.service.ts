@@ -176,6 +176,51 @@ export class XpService {
   }
 
   /**
+   * Ajusta o XP de um aluno na mesma transação de outro documento (spec 038:
+   * a nota do trabalho). `ler` faz as leituras do chamador e devolve quantos
+   * pontos aplicar (pode ser negativo, na reavaliação); `gravar` recebe o que
+   * de fato foi aplicado, já que o XP nunca fica negativo. Delta zero não gera
+   * log. Como `distribuir`, o gate de plano e de `pontuacaoAtiva` fica com o
+   * chamador.
+   */
+  async ajustarNoMesmoCommit<C>(op: {
+    turmaId: string;
+    alunoId: string;
+    motivo: string;
+    ler: (tx: Transaction) => Promise<{ pontos: number; contexto: C }>;
+    gravar: (tx: Transaction, aplicado: number, contexto: C) => void;
+  }): Promise<{ aplicado: number; contexto: C }> {
+    const aluno = await this.alunoRepo.findById(op.alunoId);
+    if (!aluno || aluno.turmaId !== op.turmaId) {
+      throw new NotFoundException('Aluno nao encontrado.');
+    }
+    const db = this.firebase.firestore;
+    const alunoRef = db.collection('alunos').doc(op.alunoId);
+    return db.runTransaction(async (tx) => {
+      // Todas as leituras antes de qualquer escrita (regra do Firestore).
+      const { pontos, contexto } = await op.ler(tx);
+      const snap = await tx.get(alunoRef);
+      const atual = Math.max(
+        0,
+        (snap.data()?.xpTotal as number | undefined) ?? 0,
+      );
+      const aplicado = pontos >= 0 ? pontos : -Math.min(-pontos, atual);
+      if (aplicado !== 0) {
+        tx.update(alunoRef, { xpTotal: atual + aplicado });
+        tx.set(db.collection('xp_logs').doc(), {
+          alunoId: op.alunoId,
+          turmaId: op.turmaId,
+          pontos: aplicado,
+          motivo: op.motivo,
+          data: new Date().toISOString(),
+        });
+      }
+      op.gravar(tx, aplicado, contexto);
+      return { aplicado, contexto };
+    });
+  }
+
+  /**
    * Transfere XP de um aluno para outro da mesma turma (spec 032, denúncia
    * validada). Transferência REAL: sai do doador no máximo o que ele tem (o XP
    * nunca fica negativo) e o recebedor ganha exatamente isso, sem criar pontos.

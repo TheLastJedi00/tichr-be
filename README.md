@@ -1206,7 +1206,7 @@ pelas rotas de abrir/fechar.
   turma (409 `LIMITE_PERGUNTAS`), 50 mensagens por pergunta (409 `LIMITE_MENSAGENS`). Mensagem
   nova e contadores da pergunta na mesma transação.
 - **Anexo** (só o aluno, 1 por mensagem): HTML/HTM, CSS, PDF, DOC/DOCX, **sem imagem**, até 4 MB
-  (`validarAnexo` em `pergunta/anexo.ts`). O tipo é conferido pela extensão **e pelo conteúdo**
+  (`validarAnexo` em `common/anexo.ts`, compartilhado com os trabalhos). O tipo é conferido pela extensão **e pelo conteúdo**
   (`%PDF-`, ZIP `PK`, OLE `D0CF11E0`, HTML/CSS em UTF-8 sem byte nulo); o mimetype do navegador é
   ignorado. Erros: 400 `TIPO_ARQUIVO_NAO_ACEITO`/`ARQUIVO_VAZIO`, 413 `ARQUIVO_GRANDE`. O nome
   chega em UTF-8 (o multer lê latin1) e é limpo (sem pastas, até 100 caracteres).
@@ -1216,6 +1216,64 @@ pelas rotas de abrir/fechar.
   **antes** da transação; se ela recusar, é apagado (falha no upload: 502 `ANEXO_FALHOU`).
 - **Retenção:** o anexo fica enquanto a pergunta existir (inclusive encerrada).
 - **Privacidade:** pergunta de outro aluno ou de outra turma é 404, sem revelar que existe.
+
+## Envio de trabalhos (spec 038)
+
+O professor cria um **trabalho** (atividade) na turma e o aluno entrega pelo portal (PIN): um
+**canva** de texto puro e/ou **arquivos**. O professor lê, baixa e avalia; a **nota vira XP** no
+ranking. Só o aluno autor e o professor dono veem a entrega. Mesmo gating do portal
+(`podeGamificar`, hoje só PhD; senão 403 `GAMIFICACAO_LOCKED`). Módulo `trabalho/`.
+
+**Coleções** (fechadas ao cliente):
+
+| Coleção | Campos |
+|---|---|
+| `atividades` | `turmaId`, `professorId`, `titulo` (≤120), `descricao?` (≤2000), `prazo` (ISO UTC, **data e hora limite**), `valorPontos` (0–1000, padrão 100), `criadaEm`, `atualizadaEm`, `totalEntregas`, `aguardandoAvaliacao` |
+| `entregas` (id `{atividadeId}_{alunoId}`) | `atividadeId`, `turmaId`, `alunoId`, `texto?` (≤10.000), `arquivos[]` `{ id, path, nome, extensao, tamanho, enviadoEm }` (≤5), `criadaEm`, `atualizadaEm`, `avaliacao?` `{ nota, comentario?, avaliadaEm, xpCreditado }` |
+
+`totalEntregas` e `aguardandoAvaliacao` mudam na mesma transação da entrega/avaliação (o badge do
+professor lê só as atividades).
+
+**Endpoints — professor**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/trabalhos/pendentes` | `{ [turmaId]: n }` de entregas esperando nota (badge) |
+| `GET` | `/turmas/:turmaId/atividades` | lista (prazo mais próximo primeiro) com `aberta`, contadores e `totalAlunos` |
+| `POST` | `/turmas/:turmaId/atividades` | `{ titulo, descricao?, prazo, valorPontos? }` |
+| `PATCH` | `/turmas/:turmaId/atividades/:id` | edita qualquer campo (prazo no passado encerra o envio) |
+| `DELETE` | `/turmas/:turmaId/atividades/:id` | 204; só sem entregas (409 `ATIVIDADE_COM_ENTREGAS`) |
+| `GET` | `/turmas/:turmaId/atividades/:id/entregas` | todos os alunos com `estado`, `nota`, `temTexto`, `totalArquivos` (para avaliar primeiro) |
+| `GET` | `/turmas/:turmaId/atividades/:id/entregas/:alunoId` | entrega completa (o `path` não sai) |
+| `GET` | `/turmas/:turmaId/atividades/:id/entregas/:alunoId/arquivos/:arquivoId` | `{ url }` assinada por 5 min |
+| `PUT` | `/turmas/:turmaId/atividades/:id/entregas/:alunoId/avaliacao` | `{ nota, comentario? }` avalia ou reavalia |
+
+**Endpoints — aluno** (`@Roles('STUDENT')`): `GET /aluno/trabalhos` (atividades + `estado` da
+minha entrega), `GET /aluno/trabalhos/:atividadeId`, `PUT /aluno/trabalhos/:atividadeId/texto`
+(`{ texto }`), `POST /aluno/trabalhos/:atividadeId/arquivos` (multipart `arquivo`, **um por
+requisição**), `DELETE /aluno/trabalhos/:atividadeId/arquivos/:arquivoId` e
+`GET /aluno/trabalhos/:atividadeId/arquivos/:arquivoId` (`{ url }`).
+
+**Regras**
+
+- **Prazo obrigatório com data e hora** (`PRAZO_OBRIGATORIO`; sem hora → `PRAZO_INVALIDO`; ao
+  criar, no passado → `PRAZO_NO_PASSADO`). O envio fecha quando `agora > prazo`. Editar o prazo
+  para trás encerra antes; para frente reabre.
+- **Estado:** `PENDENTE` (sem entrega, no prazo), `ENTREGUE` (texto ou ≥1 arquivo), `AVALIADA`,
+  `PERDIDA` (prazo passou sem entrega). Entrega que fica vazia volta a não contar.
+- **Edição até o prazo ou a avaliação:** fora do prazo 403 `PRAZO_ENCERRADO`; avaliada 409
+  `ENTREGA_AVALIADA`. Sem entrega atrasada.
+- **Canva:** texto puro até 10.000 (400 `TEXTO_GRANDE`).
+- **Arquivos:** mesma validação e Storage privado das perguntas (`common/anexo.ts`,
+  `AnexoStorage`), até 5 por entrega (409 `LIMITE_ARQUIVOS`), em
+  `trabalhos/{turmaId}/{atividadeId}/{alunoId}/{arquivoId}`. Sobe antes da transação e é apagado
+  se ela recusar; remover apaga do Storage. HTML/CSS baixam como `text/plain`.
+- **Nota vira XP:** nota 0–10 com uma casa (400 `NOTA_INVALIDA`), comentário até 2000.
+  `xp = round(nota / 10 × valorPontos)`, gravado com `motivo: 'TRABALHO'` em `xp_logs` na mesma
+  transação (`XpService.ajustarNoMesmoCommit`). Reavaliar credita só a **diferença** do
+  `xpCreditado`, sem deixar o XP negativo. Turma com `pontuacaoAtiva` desligada ou valor 0: só a
+  nota. Só avalia quem entregou (404 `ENTREGA_NAO_ENCONTRADA`); vale depois do prazo.
+- **Privacidade:** atividade de outra turma é 404; um aluno nunca lê a entrega de outro.
 
 ## Ociosidade nos jogos (spec 032, Qlick, Wor e Isolateus)
 
