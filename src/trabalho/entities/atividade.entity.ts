@@ -78,6 +78,8 @@ export class AtividadeEntity {
   atualizadaEm: string;
   /** Entregas que contam (texto ou arquivo): bloqueia a exclusão (#5). */
   totalEntregas = 0;
+  /** Entregas que contam e ainda não têm nota: badge do professor. */
+  aguardandoAvaliacao = 0;
 
   constructor(partial: Partial<AtividadeEntity> = {}) {
     Object.assign(this, partial);
@@ -102,6 +104,7 @@ export class AtividadeEntity {
       criadaEm: iso,
       atualizadaEm: iso,
       totalEntregas: 0,
+      aguardandoAvaliacao: 0,
     });
   }
 
@@ -124,6 +127,28 @@ export class AtividadeEntity {
   /** Recebe entregas até o minuto do prazo, inclusive (#11). */
   aberta(agora = new Date()): boolean {
     return agora.getTime() <= Date.parse(this.prazo);
+  }
+
+  /**
+   * Ajusta os contadores quando uma entrega muda (mesma transação dela): passa
+   * a contar ao ganhar texto/arquivo, deixa de contar ao ficar vazia e sai de
+   * "para avaliar" ao receber nota.
+   */
+  contarEntrega(
+    antes: { entregue: boolean; avaliada: boolean },
+    depois: { entregue: boolean; avaliada: boolean },
+  ): void {
+    const conta = (e: { entregue: boolean }) => (e.entregue ? 1 : 0);
+    const aguarda = (e: { entregue: boolean; avaliada: boolean }) =>
+      e.entregue && !e.avaliada ? 1 : 0;
+    this.totalEntregas = Math.max(
+      0,
+      (this.totalEntregas ?? 0) + conta(depois) - conta(antes),
+    );
+    this.aguardandoAvaliacao = Math.max(
+      0,
+      (this.aguardandoAvaliacao ?? 0) + aguarda(depois) - aguarda(antes),
+    );
   }
 
   garantirExcluivel(): void {

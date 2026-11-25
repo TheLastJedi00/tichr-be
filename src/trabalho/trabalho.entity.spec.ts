@@ -132,6 +132,24 @@ describe('AtividadeEntity', () => {
     );
   });
 
+  it('contadores sobem e descem com a entrega', () => {
+    const a = atividade();
+    const vazia = { entregue: false, avaliada: false };
+    const feita = { entregue: true, avaliada: false };
+    const nota = { entregue: true, avaliada: true };
+    a.contarEntrega(vazia, feita);
+    expect([a.totalEntregas, a.aguardandoAvaliacao]).toEqual([1, 1]);
+    a.contarEntrega(feita, feita);
+    expect([a.totalEntregas, a.aguardandoAvaliacao]).toEqual([1, 1]);
+    a.contarEntrega(feita, nota);
+    expect([a.totalEntregas, a.aguardandoAvaliacao]).toEqual([1, 0]);
+    a.contarEntrega(nota, nota);
+    expect([a.totalEntregas, a.aguardandoAvaliacao]).toEqual([1, 0]);
+    a.contarEntrega(feita, vazia);
+    a.contarEntrega(feita, vazia);
+    expect([a.totalEntregas, a.aguardandoAvaliacao]).toEqual([0, 0]);
+  });
+
   it('só exclui sem entregas', () => {
     const a = atividade();
     expect(() => a.garantirExcluivel()).not.toThrow();
