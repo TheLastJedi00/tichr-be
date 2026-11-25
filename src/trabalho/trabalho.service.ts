@@ -1,8 +1,11 @@
 import {
+  BadGatewayException,
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { contentTypeDe, ExtensaoAnexo, validarAnexo } from '../common/anexo';
 import { AnexoStorage } from '../common/anexo.storage';
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
@@ -10,7 +13,17 @@ import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { XpService } from '../turma/xp.service';
 import { AtividadeRepository } from './atividade.repository';
 import { AtividadeEntity, DadosAtividade } from './entities/atividade.entity';
+import {
+  ArquivoEntrega,
+  EntregaEntity,
+  EstadoEntrega,
+  estadoDaEntrega,
+} from './entities/entrega.entity';
 import { EntregaRepository } from './entrega.repository';
+
+type Aluno = { alunoId: string; turmaId: string };
+/** Arquivo multipart do aluno (nome já em UTF-8, ver o controller). */
+export type ArquivoEnviado = { originalname: string; buffer: Buffer };
 
 /** O que o aluno vê da atividade. */
 export interface AtividadeView {
@@ -29,6 +42,49 @@ export interface AtividadeProfessorView extends AtividadeView {
   totalAlunos: number;
   criadaEm: string;
 }
+
+/** A entrega como o aluno e o professor a veem: sem o `path` dos arquivos. */
+export interface EntregaView {
+  estado: EstadoEntrega;
+  texto: string | null;
+  arquivos: Array<{
+    id: string;
+    nome: string;
+    extensao: ExtensaoAnexo;
+    tamanho: number;
+    enviadoEm: string;
+  }>;
+  criadaEm: string | null;
+  atualizadaEm: string | null;
+  avaliacao: {
+    nota: number;
+    comentario: string | null;
+    avaliadaEm: string;
+    /** XP que de fato entrou no ranking por este trabalho. */
+    pontos: number;
+  } | null;
+}
+
+export interface TrabalhoDoAlunoView {
+  atividade: AtividadeView;
+  estado: EstadoEntrega;
+  nota: number | null;
+  atualizadaEm: string | null;
+}
+
+export interface DetalheDoAlunoView {
+  atividade: AtividadeView;
+  estado: EstadoEntrega;
+  entrega: EntregaView | null;
+}
+
+/** Pendentes primeiro (prazo mais próximo), depois entregues, avaliadas, perdidas. */
+const ORDEM_ALUNO: Record<EstadoEntrega, number> = {
+  PENDENTE: 0,
+  ENTREGUE: 1,
+  AVALIADA: 2,
+  PERDIDA: 3,
+};
 
 /**
  * Envio de trabalhos (spec 038): o professor cria a atividade, o aluno entrega
@@ -65,7 +121,7 @@ export class TrabalhoService {
     turmaId: string,
   ): Promise<AtividadeProfessorView[]> {
     await this.turmaDoProfessor(professorId, turmaId);
-    const totalAlunos = (await this.alunoRepo.findByTurma(turmaId)).length;
+    const totalAlunos = await this.totalAlunos(turmaId);
     return (await this.atividades.daTurma(turmaId)).map((a) =>
       this.viewProfessor(a, totalAlunos),
     );
@@ -115,6 +171,196 @@ export class TrabalhoService {
     });
   }
 
+  // ===== Aluno (#6–#13) =====
+
+  async listarDoAluno(aluno: Aluno): Promise<TrabalhoDoAlunoView[]> {
+    await this.turmaDoAluno(aluno.turmaId);
+    const agora = new Date();
+    const minhas = new Map(
+      (await this.entregas.doAluno(aluno.alunoId, aluno.turmaId)).map((e) => [
+        e.atividadeId,
+        e,
+      ]),
+    );
+    return (await this.atividades.daTurma(aluno.turmaId))
+      .map((a) => {
+        const e = minhas.get(a.id);
+        return {
+          atividade: this.view(a, agora),
+          estado: estadoDaEntrega(a, e, agora),
+          nota: e?.avaliacao?.nota ?? null,
+          atualizadaEm: e?.entregue ? e.atualizadaEm : null,
+        };
+      })
+      .sort(
+        (x, y) =>
+          ORDEM_ALUNO[x.estado] - ORDEM_ALUNO[y.estado] ||
+          x.atividade.prazo.localeCompare(y.atividade.prazo),
+      );
+  }
+
+  async detalheDoAluno(
+    aluno: Aluno,
+    atividadeId: string,
+  ): Promise<DetalheDoAlunoView> {
+    await this.turmaDoAluno(aluno.turmaId);
+    const a = await this.atividadeDaTurma(aluno.turmaId, atividadeId);
+    const e = await this.entregas.findById(
+      EntregaEntity.idDe(a.id, aluno.alunoId),
+    );
+    const agora = new Date();
+    return {
+      atividade: this.view(a, agora),
+      estado: estadoDaEntrega(a, e, agora),
+      entrega: e ? this.viewEntrega(a, e, agora) : null,
+    };
+  }
+
+  async salvarTexto(
+    aluno: Aluno,
+    atividadeId: string,
+    texto: string,
+  ): Promise<EntregaView> {
+    await this.turmaDoAluno(aluno.turmaId);
+    return this.mudarEntrega(aluno, atividadeId, (e) => e.definirTexto(texto));
+  }
+
+  /**
+   * Um arquivo por requisição (#9). Confere prazo, avaliação, tipo e limite
+   * antes de subir; sobe ANTES da transação (como a 037): se ela recusar,
+   * apagar o arquivo desfaz tudo. Nenhuma entrega aponta para arquivo
+   * inexistente.
+   */
+  async enviarArquivo(
+    aluno: Aluno,
+    atividadeId: string,
+    arquivo: ArquivoEnviado | undefined,
+  ): Promise<EntregaView> {
+    await this.turmaDoAluno(aluno.turmaId);
+    const a = await this.atividadeDaTurma(aluno.turmaId, atividadeId);
+    const atual =
+      (await this.entregas.findById(EntregaEntity.idDe(a.id, aluno.alunoId))) ??
+      EntregaEntity.nova({ atividadeId: a.id, ...aluno });
+    atual.garantirEditavel(a);
+    if (!arquivo) {
+      throw new BadRequestException({
+        code: 'ARQUIVO_AUSENTE',
+        message: 'Escolha um arquivo para enviar.',
+      });
+    }
+    const v = validarAnexo(arquivo.originalname, arquivo.buffer);
+    const id = this.entregas.novoArquivoId();
+    const novo: ArquivoEntrega = {
+      id,
+      path: `trabalhos/${aluno.turmaId}/${a.id}/${aluno.alunoId}/${id}`,
+      nome: v.nome,
+      extensao: v.extensao,
+      tamanho: v.tamanho,
+      enviadoEm: new Date().toISOString(),
+    };
+    // Limite de arquivos conferido numa cópia, antes do upload.
+    new EntregaEntity({
+      ...atual,
+      arquivos: [...atual.arquivos],
+    }).adicionarArquivo(novo);
+    try {
+      await this.arquivos.salvar(novo.path, arquivo.buffer, v.contentType);
+    } catch {
+      throw new BadGatewayException({
+        code: 'ANEXO_FALHOU',
+        message: 'Não deu para enviar o arquivo. Tente de novo.',
+      });
+    }
+    try {
+      return await this.mudarEntrega(aluno, atividadeId, (e) =>
+        e.adicionarArquivo(novo),
+      );
+    } catch (erro) {
+      await this.arquivos.apagar(novo.path);
+      throw erro;
+    }
+  }
+
+  /** Sai da entrega na transação e depois do Storage (#22). */
+  async removerArquivo(
+    aluno: Aluno,
+    atividadeId: string,
+    arquivoId: string,
+  ): Promise<EntregaView> {
+    await this.turmaDoAluno(aluno.turmaId);
+    let removido: ArquivoEntrega | undefined;
+    const view = await this.mudarEntrega(aluno, atividadeId, (e) => {
+      removido = e.removerArquivo(arquivoId);
+    });
+    if (removido) await this.arquivos.apagar(removido.path);
+    return view;
+  }
+
+  /** O aluno baixa o que ele mesmo enviou, mesmo depois do prazo. */
+  async arquivoDoAluno(
+    aluno: Aluno,
+    atividadeId: string,
+    arquivoId: string,
+  ): Promise<{ url: string }> {
+    await this.turmaDoAluno(aluno.turmaId);
+    const a = await this.atividadeDaTurma(aluno.turmaId, atividadeId);
+    return this.urlDoArquivo(a.id, aluno.alunoId, arquivoId);
+  }
+
+  /**
+   * Muda a entrega do aluno e os contadores da atividade numa transação só:
+   * relê os dois, confere prazo e avaliação (#10) e grava junto. Dois envios
+   * simultâneos caem no mesmo doc (#6) e não contam em dobro.
+   */
+  private async mudarEntrega(
+    aluno: Aluno,
+    atividadeId: string,
+    mudar: (e: EntregaEntity) => void,
+  ): Promise<EntregaView> {
+    const agora = new Date();
+    const { a, e } = await this.atividades.transacao(async (tx) => {
+      const a = await this.atividades.lerNaTransacao(tx, atividadeId);
+      if (!a || a.turmaId !== aluno.turmaId) {
+        throw this.atividadeNaoEncontrada();
+      }
+      const id = EntregaEntity.idDe(a.id, aluno.alunoId);
+      const existente = await this.entregas.lerNaTransacao(tx, id);
+      const e =
+        existente ?? EntregaEntity.nova({ atividadeId: a.id, ...aluno }, agora);
+      const antes = { entregue: e.entregue, avaliada: e.avaliada };
+      e.garantirEditavel(a, agora);
+      mudar(e);
+      a.contarEntrega(antes, { entregue: e.entregue, avaliada: e.avaliada });
+      if (existente || e.entregue) this.entregas.gravarNaTransacao(tx, e);
+      this.atividades.gravarNaTransacao(tx, a);
+      return { a, e };
+    });
+    return this.viewEntrega(a, e, agora);
+  }
+
+  private async urlDoArquivo(
+    atividadeId: string,
+    alunoId: string,
+    arquivoId: string,
+  ): Promise<{ url: string }> {
+    const e = await this.entregas.findById(
+      EntregaEntity.idDe(atividadeId, alunoId),
+    );
+    if (!e) {
+      throw new NotFoundException({
+        code: 'ARQUIVO_NAO_ENCONTRADO',
+        message: 'Arquivo não encontrado.',
+      });
+    }
+    const arq = e.arquivo(arquivoId);
+    const url = await this.arquivos.urlAssinada(
+      arq.path,
+      arq.nome,
+      contentTypeDe(arq.extensao),
+    );
+    return { url };
+  }
+
   // ===== Views =====
 
   private view(a: AtividadeEntity, agora = new Date()): AtividadeView {
@@ -141,6 +387,34 @@ export class TrabalhoService {
     };
   }
 
+  private viewEntrega(
+    a: AtividadeEntity,
+    e: EntregaEntity,
+    agora = new Date(),
+  ): EntregaView {
+    return {
+      estado: estadoDaEntrega(a, e, agora),
+      texto: e.texto ?? null,
+      arquivos: e.arquivos.map((x) => ({
+        id: x.id,
+        nome: x.nome,
+        extensao: x.extensao,
+        tamanho: x.tamanho,
+        enviadoEm: x.enviadoEm,
+      })),
+      criadaEm: e.criadaEm ?? null,
+      atualizadaEm: e.atualizadaEm ?? null,
+      avaliacao: e.avaliacao
+        ? {
+            nota: e.avaliacao.nota,
+            comentario: e.avaliacao.comentario ?? null,
+            avaliadaEm: e.avaliacao.avaliadaEm,
+            pontos: e.avaliacao.xpCreditado,
+          }
+        : null,
+    };
+  }
+
   // ===== Apoio =====
 
   private atividadeNaoEncontrada(): NotFoundException {
@@ -148,6 +422,16 @@ export class TrabalhoService {
       code: 'ATIVIDADE_NAO_ENCONTRADA',
       message: 'Trabalho não encontrado.',
     });
+  }
+
+  /** Atividade de outra turma é 404: nem a existência vaza (#20). */
+  private async atividadeDaTurma(
+    turmaId: string,
+    id: string,
+  ): Promise<AtividadeEntity> {
+    const a = await this.atividades.findById(id);
+    if (!a || a.turmaId !== turmaId) throw this.atividadeNaoEncontrada();
+    return a;
   }
 
   private async totalAlunos(turmaId: string): Promise<number> {
@@ -164,6 +448,13 @@ export class TrabalhoService {
           'O envio de trabalhos faz parte do portal do aluno, exclusivo do plano PhD.',
       });
     }
+  }
+
+  private async turmaDoAluno(turmaId: string) {
+    const turma = await this.turmaRepo.findById(turmaId);
+    if (!turma) throw new NotFoundException('Turma não encontrada.');
+    await this.assertPlano(turma.professorId);
+    return turma;
   }
 
   private async turmaDoProfessor(professorId: string, turmaId: string) {

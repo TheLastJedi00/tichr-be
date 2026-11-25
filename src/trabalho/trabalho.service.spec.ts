@@ -313,3 +313,211 @@ describe('TrabalhoService — atividades do professor (#1–#5)', () => {
     expect(await m.service.pendentesPorTurma(PROF)).toEqual({ [TURMA]: 3 });
   });
 });
+
+const ANA = { alunoId: 'a1', turmaId: TURMA };
+const BRUNO = { alunoId: 'a2', turmaId: TURMA };
+
+describe('TrabalhoService — entrega do aluno (#6–#13)', () => {
+  it('lista as atividades da turma com o estado da minha entrega', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const b = await comAtividade(m, { titulo: 'Vencida' });
+    vencer(m, b.id);
+    await m.service.salvarTexto(ANA, a.id, 'Meu trabalho');
+    const lista = await m.service.listarDoAluno(ANA);
+    expect(lista.map((x) => [x.atividade.titulo, x.estado])).toEqual([
+      ['Site pessoal', 'ENTREGUE'],
+      ['Vencida', 'PERDIDA'],
+    ]);
+    const doBruno = await m.service.listarDoAluno(BRUNO);
+    expect(doBruno[0].estado).toBe('PENDENTE');
+    // a visão do aluno não traz os contadores da turma
+    expect(lista[0].atividade).not.toHaveProperty('totalEntregas');
+  });
+
+  it('salvar texto cria a entrega (id determinístico) e conta 1 vez', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    await m.service.salvarTexto(ANA, a.id, 'v1');
+    const r = await m.service.salvarTexto(ANA, a.id, 'v2');
+    expect(r.texto).toBe('v2');
+    expect(r.estado).toBe('ENTREGUE');
+    expect([...m.entregas.keys()]).toEqual([`${a.id}_a1`]);
+    expect(m.atividades.get(a.id)).toMatchObject({
+      totalEntregas: 1,
+      aguardandoAvaliacao: 1,
+    });
+  });
+
+  it('apagar o texto de uma entrega sem arquivos tira do contador', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    await m.service.salvarTexto(ANA, a.id, 'v1');
+    const r = await m.service.salvarTexto(ANA, a.id, '');
+    expect(r.estado).toBe('PENDENTE');
+    expect(m.atividades.get(a.id)!.totalEntregas).toBe(0);
+  });
+
+  it('texto acima de 10.000: 400 TEXTO_GRANDE', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    expect(
+      await falha(m.service.salvarTexto(ANA, a.id, 'x'.repeat(10001))),
+    ).toBe('TEXTO_GRANDE');
+  });
+
+  it('fora do prazo: 403 PRAZO_ENCERRADO (texto e arquivo)', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    vencer(m, a.id);
+    expect(await falha(m.service.salvarTexto(ANA, a.id, 'tarde'))).toBe(
+      'PRAZO_ENCERRADO',
+    );
+    expect(
+      await falha(
+        m.service.enviarArquivo(ANA, a.id, {
+          originalname: 'a.pdf',
+          buffer: PDF,
+        }),
+      ),
+    ).toBe('PRAZO_ENCERRADO');
+    expect(m.arquivos.size).toBe(0);
+  });
+
+  it('envia arquivo: sobe privado e entra na entrega sem o path', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const r = await m.service.enviarArquivo(ANA, a.id, {
+      originalname: 'relatório.pdf',
+      buffer: PDF,
+    });
+    expect(r.arquivos).toHaveLength(1);
+    expect(r.arquivos[0]).toMatchObject({
+      nome: 'relatório.pdf',
+      extensao: 'pdf',
+      tamanho: PDF.length,
+    });
+    expect(r.arquivos[0]).not.toHaveProperty('path');
+    const path = `trabalhos/${TURMA}/${a.id}/a1/${r.arquivos[0].id}`;
+    expect(m.arquivos.get(path)?.contentType).toBe('application/pdf');
+    expect(m.atividades.get(a.id)!.totalEntregas).toBe(1);
+  });
+
+  it('imagem é recusada antes de subir', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    expect(
+      await falha(
+        m.service.enviarArquivo(ANA, a.id, {
+          originalname: 'foto.pdf',
+          buffer: png,
+        }),
+      ),
+    ).toBe('TIPO_ARQUIVO_NAO_ACEITO');
+    expect(m.arquivos.size).toBe(0);
+  });
+
+  it('6º arquivo: 409 LIMITE_ARQUIVOS, sem subir nada', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    for (let i = 0; i < 5; i++) {
+      await m.service.enviarArquivo(ANA, a.id, {
+        originalname: `p${i}.pdf`,
+        buffer: PDF,
+      });
+    }
+    expect(
+      await falha(
+        m.service.enviarArquivo(ANA, a.id, {
+          originalname: 'p5.pdf',
+          buffer: PDF,
+        }),
+      ),
+    ).toBe('LIMITE_ARQUIVOS');
+    expect(m.arquivos.size).toBe(5);
+  });
+
+  it('transação recusada apaga o arquivo que subiu', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    m.ctl.falharTx = true;
+    await expect(
+      m.service.enviarArquivo(ANA, a.id, {
+        originalname: 'a.pdf',
+        buffer: PDF,
+      }),
+    ).rejects.toThrow();
+    expect(m.arquivos.size).toBe(0);
+    expect(m.apagados).toHaveLength(1);
+    expect(m.entregas.size).toBe(0);
+  });
+
+  it('falha no upload: 502 ANEXO_FALHOU, nada gravado', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    m.ctl.falharUpload = true;
+    expect(
+      await falha(
+        m.service.enviarArquivo(ANA, a.id, {
+          originalname: 'a.pdf',
+          buffer: PDF,
+        }),
+      ),
+    ).toBe('ANEXO_FALHOU');
+    expect(m.entregas.size).toBe(0);
+  });
+
+  it('remove arquivo: sai da entrega e do Storage', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const r = await m.service.enviarArquivo(ANA, a.id, {
+      originalname: 'a.pdf',
+      buffer: PDF,
+    });
+    const depois = await m.service.removerArquivo(ANA, a.id, r.arquivos[0].id);
+    expect(depois.arquivos).toHaveLength(0);
+    expect(depois.estado).toBe('PENDENTE');
+    expect(m.arquivos.size).toBe(0);
+    expect(m.atividades.get(a.id)!.totalEntregas).toBe(0);
+  });
+
+  it('download pela URL assinada; HTML sai como text/plain', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const r = await m.service.enviarArquivo(ANA, a.id, {
+      originalname: 'index.html',
+      buffer: Buffer.from('<script>alert(1)</script>'),
+    });
+    const { url } = await m.service.arquivoDoAluno(ANA, a.id, r.arquivos[0].id);
+    expect(url).toContain('https://assinada/');
+    expect(m.urls[0]).toMatchObject({
+      nome: 'index.html',
+      contentType: 'text/plain; charset=utf-8',
+    });
+  });
+
+  it('isolamento: atividade de outra turma e arquivo de outro aluno são 404', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const fora = { alunoId: 'x9', turmaId: 'outra' };
+    await expect(m.service.detalheDoAluno(fora, a.id)).rejects.toThrow(
+      NotFoundException,
+    );
+    const r = await m.service.enviarArquivo(ANA, a.id, {
+      originalname: 'a.pdf',
+      buffer: PDF,
+    });
+    await expect(
+      m.service.arquivoDoAluno(BRUNO, a.id, r.arquivos[0].id),
+    ).rejects.toThrow(NotFoundException);
+    expect((await m.service.detalheDoAluno(BRUNO, a.id)).entrega).toBeNull();
+  });
+
+  it('turma de professor fora do PhD: 403', async () => {
+    const m = montar({ podeGamificar: false });
+    await expect(m.service.listarDoAluno(ANA)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+});

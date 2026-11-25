@@ -4,13 +4,14 @@ import { ProfessorModule } from '../professor/professor.module';
 import { TurmaModule } from '../turma/turma.module';
 import { AtividadeRepository } from './atividade.repository';
 import { EntregaRepository } from './entrega.repository';
+import { AlunoTrabalhoController } from './aluno-trabalho.controller';
 import { TrabalhoController } from './trabalho.controller';
 import { TrabalhoService } from './trabalho.service';
 
 /** Envio de trabalhos (spec 038): módulo próprio, sem ciclo com a turma. */
 @Module({
   imports: [TurmaModule, ProfessorModule],
-  controllers: [TrabalhoController],
+  controllers: [TrabalhoController, AlunoTrabalhoController],
   providers: [
     TrabalhoService,
     AtividadeRepository,
