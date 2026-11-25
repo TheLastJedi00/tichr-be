@@ -5,16 +5,20 @@ import { IsInt, IsNumber, IsOptional, IsString } from 'class-validator';
  * responde com código próprio (TITULO_INVALIDO, PRAZO_INVALIDO...).
  */
 export class CriarAtividadeDto {
+  // Opcionais aqui de propósito: ausentes, a entidade responde com
+  // TITULO_INVALIDO / PRAZO_OBRIGATORIO em vez do erro genérico do pipe.
+  @IsOptional()
   @IsString()
-  titulo: string;
+  titulo?: string;
 
   @IsOptional()
   @IsString()
   descricao?: string | null;
 
   /** ISO com data e hora limite (038 #2). */
+  @IsOptional()
   @IsString()
-  prazo: string;
+  prazo?: string;
 
   @IsOptional()
   @IsInt()
