@@ -1228,7 +1228,7 @@ ranking. Só o aluno autor e o professor dono veem a entrega. Mesmo gating do po
 
 | Coleção | Campos |
 |---|---|
-| `atividades` | `turmaId`, `professorId`, `titulo` (≤120), `descricao?` (≤2000), `prazo` (ISO UTC, **data e hora limite**), `valorPontos` (0–1000, padrão 100), `criadaEm`, `atualizadaEm`, `totalEntregas`, `aguardandoAvaliacao` |
+| `atividades` | `turmaId`, `professorId`, `titulo` (≤120), `descricao?` (≤2000), `prazo` (ISO UTC, **data e hora limite**), `valorPontos` (0–99.999, padrão 100), `criadaEm`, `atualizadaEm`, `totalEntregas`, `aguardandoAvaliacao` |
 | `entregas` (id `{atividadeId}_{alunoId}`) | `atividadeId`, `turmaId`, `alunoId`, `texto?` (≤10.000), `arquivos[]` `{ id, path, nome, extensao, tamanho, enviadoEm }` (≤5), `criadaEm`, `atualizadaEm`, `avaliacao?` `{ nota, comentario?, avaliadaEm, xpCreditado }` |
 
 `totalEntregas` e `aguardandoAvaliacao` mudam na mesma transação da entrega/avaliação (o badge do
