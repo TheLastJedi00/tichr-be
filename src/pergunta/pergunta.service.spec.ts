@@ -5,7 +5,7 @@ import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
 import { PerguntaMensagemEntity } from './entities/pergunta-mensagem.entity';
 import { PerguntaEntity } from './entities/pergunta.entity';
-import { PerguntaAnexoStorage } from './pergunta-anexo.storage';
+import { AnexoStorage } from '../common/anexo.storage';
 import { PerguntaMensagemRepository } from './pergunta-mensagem.repository';
 import { PerguntaRepository } from './pergunta.repository';
 import { PerguntaService } from './pergunta.service';
@@ -113,7 +113,7 @@ function montar(opcoes: { abertas?: boolean; podeGamificar?: boolean } = {}) {
       urls.push({ path, nome, contentType });
       return `https://assinada/${path}`;
     },
-  } as unknown as PerguntaAnexoStorage;
+  } as unknown as AnexoStorage;
 
   const service = new PerguntaService(
     perguntaRepo,

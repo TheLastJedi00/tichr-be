@@ -1,5 +1,14 @@
 import { BadRequestException, PayloadTooLargeException } from '@nestjs/common';
-import { PERGUNTA } from './pergunta.constants';
+/**
+ * Limites do anexo de aluno (037 #14, 038 #9), compartilhados por perguntas e
+ * trabalhos. A API roda na Vercel, que corta a requisição em ~4,5 MB.
+ */
+export const ANEXO = {
+  ARQUIVO_MAX_BYTES: 4 * 1024 * 1024,
+  NOME_ARQUIVO_MAX: 100,
+  /** Validade da URL assinada de download. */
+  URL_MS: 5 * 60 * 1000,
+};
 
 export type ExtensaoAnexo = 'html' | 'htm' | 'css' | 'pdf' | 'doc' | 'docx';
 
@@ -64,13 +73,13 @@ function recusar(): never {
 function limparNome(nome: string, ext: string): string {
   const base = nome.split(/[\\/]/).pop() ?? '';
   const limpo = base.replace(/[^\p{L}\p{N} ._()-]/gu, '_').trim();
-  if (limpo.length <= PERGUNTA.NOME_ARQUIVO_MAX) return limpo;
+  if (limpo.length <= ANEXO.NOME_ARQUIVO_MAX) return limpo;
   const sufixo = `.${ext}`;
-  return limpo.slice(0, PERGUNTA.NOME_ARQUIVO_MAX - sufixo.length) + sufixo;
+  return limpo.slice(0, ANEXO.NOME_ARQUIVO_MAX - sufixo.length) + sufixo;
 }
 
 /**
- * Valida o anexo da pergunta (037 #13, #14): extensão aceita, conteúdo que
+ * Valida o anexo do aluno (037 #13, #14; 038 #9): extensão aceita, conteúdo que
  * confere com ela e no máximo 4 MB. Imagens nunca passam.
  */
 export function validarAnexo(nome: string, buffer: Buffer): AnexoValidado {
@@ -84,7 +93,7 @@ export function validarAnexo(nome: string, buffer: Buffer): AnexoValidado {
       message: 'O arquivo está vazio.',
     });
   }
-  if (buffer.length > PERGUNTA.ARQUIVO_MAX_BYTES) {
+  if (buffer.length > ANEXO.ARQUIVO_MAX_BYTES) {
     throw new PayloadTooLargeException({
       code: 'ARQUIVO_GRANDE',
       message: 'O arquivo pode ter até 4 MB.',

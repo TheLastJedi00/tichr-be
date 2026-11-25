@@ -11,7 +11,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentStudent } from '../auth/current-student.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { CriarPerguntaDto, MensagemPerguntaDto } from './dto/pergunta.dto';
-import { PERGUNTA } from './pergunta.constants';
+import { ANEXO } from '../common/anexo';
 import { ArquivoEnviado, PerguntaService } from './pergunta.service';
 
 type Aluno = { alunoId: string; turmaId: string };
@@ -22,7 +22,7 @@ type Multer = { originalname: string; buffer: Buffer };
  * `validarAnexo`, que responde com o código ARQUIVO_GRANDE.
  */
 const ARQUIVO = FileInterceptor('arquivo', {
-  limits: { fileSize: PERGUNTA.ARQUIVO_MAX_BYTES * 2, files: 1 },
+  limits: { fileSize: ANEXO.ARQUIVO_MAX_BYTES * 2, files: 1 },
 });
 
 /** O multer lê o nome do arquivo como latin1: "relatório.pdf" chegaria quebrado. */
