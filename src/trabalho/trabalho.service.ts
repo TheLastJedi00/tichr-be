@@ -72,6 +72,29 @@ export interface TrabalhoDoAlunoView {
   atualizadaEm: string | null;
 }
 
+/** Uma linha da lista de entregas do professor (todos os alunos da turma). */
+export interface EntregaResumoView {
+  alunoId: string;
+  alunoNome: string;
+  estado: EstadoEntrega;
+  atualizadaEm: string | null;
+  nota: number | null;
+  temTexto: boolean;
+  totalArquivos: number;
+}
+
+export interface EntregasDaAtividadeView {
+  atividade: AtividadeProfessorView;
+  alunos: EntregaResumoView[];
+}
+
+export interface EntregaDoAlunoView {
+  atividade: AtividadeProfessorView;
+  aluno: { id: string; nome: string };
+  estado: EstadoEntrega;
+  entrega: EntregaView | null;
+}
+
 export interface DetalheDoAlunoView {
   atividade: AtividadeView;
   estado: EstadoEntrega;
@@ -83,6 +106,14 @@ const ORDEM_ALUNO: Record<EstadoEntrega, number> = {
   PENDENTE: 0,
   ENTREGUE: 1,
   AVALIADA: 2,
+  PERDIDA: 3,
+};
+
+/** Para avaliar primeiro, depois avaliadas, pendentes e quem não entregou. */
+const ORDEM_PROFESSOR: Record<EstadoEntrega, number> = {
+  ENTREGUE: 0,
+  AVALIADA: 1,
+  PENDENTE: 2,
   PERDIDA: 3,
 };
 
@@ -169,6 +200,134 @@ export class TrabalhoService {
       a.garantirExcluivel();
       this.atividades.excluirNaTransacao(tx, id);
     });
+  }
+
+  // ===== Professor: entregas e avaliação (#14–#19) =====
+
+  async entregasDaAtividade(
+    professorId: string,
+    turmaId: string,
+    atividadeId: string,
+  ): Promise<EntregasDaAtividadeView> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const a = await this.atividadeDaTurma(turmaId, atividadeId);
+    const alunos = await this.alunoRepo.findByTurma(turmaId);
+    const porAluno = new Map(
+      (await this.entregas.daAtividade(a.id)).map((e) => [e.alunoId, e]),
+    );
+    const agora = new Date();
+    const linha = (
+      alunoId: string,
+      alunoNome: string,
+      e: EntregaEntity | undefined,
+    ): EntregaResumoView => ({
+      alunoId,
+      alunoNome,
+      estado: estadoDaEntrega(a, e, agora),
+      atualizadaEm: e?.entregue ? e.atualizadaEm : null,
+      nota: e?.avaliacao?.nota ?? null,
+      temTexto: !!e?.texto?.trim(),
+      totalArquivos: e?.arquivos.length ?? 0,
+    });
+    const linhas = alunos.map((al) =>
+      linha(al.id, al.nome, porAluno.get(al.id)),
+    );
+    // Quem saiu da turma mas entregou continua aparecendo.
+    const naTurma = new Set(alunos.map((al) => al.id));
+    for (const e of porAluno.values()) {
+      if (!naTurma.has(e.alunoId) && e.entregue) {
+        linhas.push(linha(e.alunoId, 'Aluno removido', e));
+      }
+    }
+    linhas.sort(
+      (x, y) =>
+        ORDEM_PROFESSOR[x.estado] - ORDEM_PROFESSOR[y.estado] ||
+        x.alunoNome.localeCompare(y.alunoNome, 'pt-BR'),
+    );
+    return { atividade: this.viewProfessor(a, alunos.length), alunos: linhas };
+  }
+
+  async entregaDoAluno(
+    professorId: string,
+    turmaId: string,
+    atividadeId: string,
+    alunoId: string,
+  ): Promise<EntregaDoAlunoView> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const a = await this.atividadeDaTurma(turmaId, atividadeId);
+    const aluno = await this.alunoDaTurma(turmaId, alunoId);
+    const e = await this.entregas.findById(EntregaEntity.idDe(a.id, alunoId));
+    const agora = new Date();
+    return {
+      atividade: this.viewProfessor(a, await this.totalAlunos(turmaId)),
+      aluno: { id: aluno.id, nome: aluno.nome },
+      estado: estadoDaEntrega(a, e, agora),
+      entrega: e ? this.viewEntrega(a, e, agora) : null,
+    };
+  }
+
+  async arquivoDoProfessor(
+    professorId: string,
+    turmaId: string,
+    atividadeId: string,
+    alunoId: string,
+    arquivoId: string,
+  ): Promise<{ url: string }> {
+    await this.turmaDoProfessor(professorId, turmaId);
+    const a = await this.atividadeDaTurma(turmaId, atividadeId);
+    return this.urlDoArquivo(a.id, alunoId, arquivoId);
+  }
+
+  /**
+   * Nota + comentário (#14) e o XP na mesma transação (#15): relê atividade
+   * e entrega, credita a diferença do já creditado (#16) e tira a entrega do
+   * "para avaliar". Vale depois do prazo; trava a edição do aluno (#10).
+   */
+  async avaliar(
+    professorId: string,
+    turmaId: string,
+    atividadeId: string,
+    alunoId: string,
+    dto: { nota: number; comentario?: string | null },
+  ): Promise<EntregaView> {
+    const turma = await this.turmaDoProfessor(professorId, turmaId);
+    await this.atividadeDaTurma(turmaId, atividadeId);
+    await this.alunoDaTurma(turmaId, alunoId);
+    const pontuacaoAtiva = turma.configPontuacao.pontuacaoAtiva;
+    const agora = new Date();
+    const { contexto } = await this.xp.ajustarNoMesmoCommit({
+      turmaId,
+      alunoId,
+      motivo: 'TRABALHO',
+      ler: async (tx) => {
+        const a = await this.atividades.lerNaTransacao(tx, atividadeId);
+        if (!a || a.turmaId !== turmaId) throw this.atividadeNaoEncontrada();
+        const e = await this.entregas.lerNaTransacao(
+          tx,
+          EntregaEntity.idDe(a.id, alunoId),
+        );
+        if (!e || !e.entregue) {
+          throw new NotFoundException({
+            code: 'ENTREGA_NAO_ENCONTRADA',
+            message: 'Este aluno ainda não entregou o trabalho.',
+          });
+        }
+        const antes = { entregue: e.entregue, avaliada: e.avaliada };
+        const pontos = e.avaliar(
+          dto,
+          { valorPontos: a.valorPontos, pontuacaoAtiva },
+          agora,
+        );
+        return { pontos, contexto: { a, e, antes } };
+      },
+      gravar: (tx, aplicado, { a, e, antes }) => {
+        e.registrarCredito(aplicado);
+        a.contarEntrega(antes, { entregue: e.entregue, avaliada: e.avaliada });
+        this.entregas.gravarNaTransacao(tx, e);
+        this.atividades.gravarNaTransacao(tx, a);
+      },
+    });
+    return this.viewEntrega(contexto.a, contexto.e, agora);
   }
 
   // ===== Aluno (#6–#13) =====
@@ -432,6 +591,14 @@ export class TrabalhoService {
     const a = await this.atividades.findById(id);
     if (!a || a.turmaId !== turmaId) throw this.atividadeNaoEncontrada();
     return a;
+  }
+
+  private async alunoDaTurma(turmaId: string, alunoId: string) {
+    const aluno = await this.alunoRepo.findById(alunoId);
+    if (!aluno || aluno.turmaId !== turmaId) {
+      throw new NotFoundException('Aluno não encontrado.');
+    }
+    return aluno;
   }
 
   private async totalAlunos(turmaId: string): Promise<number> {

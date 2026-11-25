@@ -521,3 +521,171 @@ describe('TrabalhoService — entrega do aluno (#6–#13)', () => {
     );
   });
 });
+
+describe('TrabalhoService — entregas e avaliação do professor (#14–#19)', () => {
+  async function comEntrega(m: ReturnType<typeof montar>, valorPontos = 100) {
+    const a = await comAtividade(m, { valorPontos });
+    await m.service.salvarTexto(ANA, a.id, 'Meu trabalho');
+    return a;
+  }
+
+  it('lista todos os alunos com o estado, para avaliar primeiro', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    const r = await m.service.entregasDaAtividade(PROF, TURMA, a.id);
+    expect(r.atividade.totalEntregas).toBe(1);
+    expect(r.alunos.map((x) => [x.alunoNome, x.estado])).toEqual([
+      ['Ana', 'ENTREGUE'],
+      ['Bruno', 'PENDENTE'],
+    ]);
+    expect(r.alunos[0]).toMatchObject({ temTexto: true, totalArquivos: 0 });
+  });
+
+  it('abre a entrega completa; aluno sem entrega vem com entrega null', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    const ana = await m.service.entregaDoAluno(PROF, TURMA, a.id, 'a1');
+    expect(ana.aluno).toEqual({ id: 'a1', nome: 'Ana' });
+    expect(ana.entrega?.texto).toBe('Meu trabalho');
+    const bruno = await m.service.entregaDoAluno(PROF, TURMA, a.id, 'a2');
+    expect(bruno.entrega).toBeNull();
+    expect(bruno.estado).toBe('PENDENTE');
+  });
+
+  it('aluno de outra turma: 404', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await expect(
+      m.service.entregaDoAluno(PROF, TURMA, a.id, 'x9'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('baixa o arquivo do aluno pela URL assinada', async () => {
+    const m = montar();
+    const a = await comAtividade(m);
+    const r = await m.service.enviarArquivo(ANA, a.id, {
+      originalname: 'estilo.css',
+      buffer: Buffer.from('body { color: red }'),
+    });
+    await m.service.arquivoDoProfessor(
+      PROF,
+      TURMA,
+      a.id,
+      'a1',
+      r.arquivos[0].id,
+    );
+    expect(m.urls[0]).toMatchObject({
+      path: `trabalhos/${TURMA}/${a.id}/a1/${r.arquivos[0].id}`,
+      contentType: 'text/plain; charset=utf-8',
+    });
+  });
+
+  it('avaliar: nota 8 de 100 → +80 XP com log TRABALHO, sai do "para avaliar"', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    const r = await m.service.avaliar(PROF, TURMA, a.id, 'a1', {
+      nota: 8,
+      comentario: 'Muito bom',
+    });
+    expect(r.estado).toBe('AVALIADA');
+    expect(r.avaliacao).toMatchObject({
+      nota: 8,
+      comentario: 'Muito bom',
+      pontos: 80,
+    });
+    expect(m.xp.a1).toBe(80);
+    expect(m.xpLogs).toEqual([
+      { alunoId: 'a1', pontos: 80, motivo: 'TRABALHO' },
+    ]);
+    expect(m.atividades.get(a.id)).toMatchObject({
+      totalEntregas: 1,
+      aguardandoAvaliacao: 0,
+    });
+    expect(await m.service.pendentesPorTurma(PROF)).toEqual({});
+  });
+
+  it('avaliada, o aluno não edita mais (409 ENTREGA_AVALIADA)', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 5 });
+    expect(await falha(m.service.salvarTexto(ANA, a.id, 'mudei'))).toBe(
+      'ENTREGA_AVALIADA',
+    );
+  });
+
+  it('reavaliar credita só a diferença e não volta para "para avaliar"', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 8 });
+    const r = await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 9.5 });
+    expect(r.avaliacao?.pontos).toBe(95);
+    expect(m.xp.a1).toBe(95);
+    expect(m.xpLogs.map((l) => l.pontos)).toEqual([80, 15]);
+    expect(m.atividades.get(a.id)!.aguardandoAvaliacao).toBe(0);
+  });
+
+  it('reavaliar para baixo nunca deixa o XP negativo', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 10 });
+    m.xp.a1 = 30; // gastou/perdeu pontos em outro lugar
+    const r = await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 0 });
+    expect(m.xp.a1).toBe(0);
+    expect(r.avaliacao?.pontos).toBe(70);
+  });
+
+  it('pontuação desativada na turma: nota sem XP', async () => {
+    const m = montar({ pontuacaoAtiva: false });
+    const a = await comEntrega(m);
+    const r = await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 10 });
+    expect(r.avaliacao).toMatchObject({ nota: 10, pontos: 0 });
+    expect(m.xp.a1).toBe(0);
+    expect(m.xpLogs).toHaveLength(0);
+  });
+
+  it('só avalia quem entregou; nota inválida é 400', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    expect(
+      await falha(m.service.avaliar(PROF, TURMA, a.id, 'a2', { nota: 5 })),
+    ).toBe('ENTREGA_NAO_ENCONTRADA');
+    expect(
+      await falha(m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 11 })),
+    ).toBe('NOTA_INVALIDA');
+    expect(m.xpLogs).toHaveLength(0);
+  });
+
+  it('avalia mesmo depois do prazo', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    vencer(m, a.id);
+    const r = await m.service.avaliar(PROF, TURMA, a.id, 'a1', { nota: 7 });
+    expect(r.avaliacao?.pontos).toBe(70);
+  });
+
+  it('o aluno vê a nota, o comentário e os pontos', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await m.service.avaliar(PROF, TURMA, a.id, 'a1', {
+      nota: 6.5,
+      comentario: 'Faltou o CSS',
+    });
+    const d = await m.service.detalheDoAluno(ANA, a.id);
+    expect(d.estado).toBe('AVALIADA');
+    expect(d.entrega?.avaliacao).toMatchObject({
+      nota: 6.5,
+      comentario: 'Faltou o CSS',
+      pontos: 65,
+    });
+    const lista = await m.service.listarDoAluno(ANA);
+    expect(lista[0]).toMatchObject({ estado: 'AVALIADA', nota: 6.5 });
+  });
+
+  it('professor de outra turma: 404', async () => {
+    const m = montar();
+    const a = await comEntrega(m);
+    await expect(
+      m.service.entregasDaAtividade('prof-2', TURMA, a.id),
+    ).rejects.toThrow(NotFoundException);
+  });
+});
