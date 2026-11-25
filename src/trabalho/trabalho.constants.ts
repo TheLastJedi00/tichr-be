@@ -2,7 +2,8 @@
 export const TRABALHO = {
   TITULO_MAX: 120,
   DESCRICAO_MAX: 2000,
-  VALOR_MAX: 1000,
+  /** Até 5 dígitos. */
+  VALOR_MAX: 99999,
   VALOR_PADRAO: 100,
   /** Caracteres do canva. */
   TEXTO_MAX: 10000,

@@ -103,10 +103,11 @@ describe('AtividadeEntity', () => {
     );
   });
 
-  it('valor em pontos de 0 a 1.000, inteiro', () => {
+  it('valor em pontos de 0 a 99.999 (até 5 dígitos), inteiro', () => {
     expect(atividade({ valorPontos: 0 }).valorPontos).toBe(0);
     expect(atividade({ valorPontos: 1000 }).valorPontos).toBe(1000);
-    for (const v of [-1, 1001, 2.5]) {
+    expect(atividade({ valorPontos: 99999 }).valorPontos).toBe(99999);
+    for (const v of [-1, 100000, 2.5]) {
       expect(codigo(() => atividade({ valorPontos: v }))).toBe(
         'VALOR_INVALIDO',
       );
