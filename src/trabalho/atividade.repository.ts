@@ -38,6 +38,10 @@ export class AtividadeRepository extends FirestoreRepository<AtividadeEntity> {
     tx.set(this.ref(id), this.toPlain(dados));
   }
 
+  excluirNaTransacao(tx: Transaction, id: string): void {
+    tx.delete(this.ref(id));
+  }
+
   /** Para o badge de "para avaliar" de todas as turmas do professor. */
   async doProfessor(professorId: string): Promise<AtividadeEntity[]> {
     return this.findBy('professorId', professorId);
