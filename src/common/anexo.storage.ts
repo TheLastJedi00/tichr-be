@@ -1,15 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
-import { PERGUNTA } from './pergunta.constants';
+import { ANEXO } from './anexo';
 
 /**
- * Anexo da pergunta (spec 037 #15). Privado: sem token de download público;
+ * Anexo do aluno: perguntas (037 #15) e trabalhos (038 #21). Privado: sem token de download público;
  * só sai por URL assinada de curta duração, gerada para o professor dono ou
  * para o aluno autor, sempre como download (`attachment`).
  */
 @Injectable()
-export class PerguntaAnexoStorage {
-  private readonly logger = new Logger(PerguntaAnexoStorage.name);
+export class AnexoStorage {
+  private readonly logger = new Logger(AnexoStorage.name);
 
   constructor(private readonly firebase: FirebaseService) {}
 
@@ -25,7 +25,7 @@ export class PerguntaAnexoStorage {
     });
   }
 
-  /** Falhar ao apagar só gera log: o arquivo órfão não quebra a conversa. */
+  /** Falhar ao apagar só gera log: o arquivo órfão não quebra o fluxo. */
   async apagar(path: string): Promise<void> {
     try {
       await this.firebase.bucket.file(path).delete({ ignoreNotFound: true });
@@ -46,7 +46,7 @@ export class PerguntaAnexoStorage {
     const [url] = await this.firebase.bucket.file(path).getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + PERGUNTA.URL_ANEXO_MS,
+      expires: Date.now() + ANEXO.URL_MS,
       responseDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(nome)}`,
       responseType: contentType,
     });

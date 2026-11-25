@@ -7,7 +7,7 @@ import {
 import { ProfessorService } from '../professor/professor.service';
 import { AlunoRepository } from '../turma/repositories/aluno.repository';
 import { TurmaRepository } from '../turma/repositories/turma.repository';
-import { contentTypeDe, ExtensaoAnexo, validarAnexo } from './anexo';
+import { contentTypeDe, ExtensaoAnexo, validarAnexo } from '../common/anexo';
 import {
   AnexoMensagem,
   PerguntaMensagemEntity,
@@ -18,7 +18,7 @@ import {
   PerguntaEntity,
   StatusPergunta,
 } from './entities/pergunta.entity';
-import { PerguntaAnexoStorage } from './pergunta-anexo.storage';
+import { AnexoStorage } from '../common/anexo.storage';
 import { PerguntaMensagemRepository } from './pergunta-mensagem.repository';
 import { PerguntaRepository } from './pergunta.repository';
 
@@ -81,7 +81,7 @@ export class PerguntaService {
     private readonly turmaRepo: TurmaRepository,
     private readonly alunoRepo: AlunoRepository,
     private readonly professorService: ProfessorService,
-    private readonly anexos: PerguntaAnexoStorage,
+    private readonly anexos: AnexoStorage,
   ) {}
 
   // ===== Janela de perguntas (#1–#3) =====

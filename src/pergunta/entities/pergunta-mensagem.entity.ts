@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import type { ExtensaoAnexo } from '../anexo';
+import type { ExtensaoAnexo } from '../../common/anexo';
 import { PERGUNTA } from '../pergunta.constants';
 import type { AutorMensagem } from './pergunta.entity';
 
