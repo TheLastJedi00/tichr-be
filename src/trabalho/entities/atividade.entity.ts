@@ -55,7 +55,7 @@ function valor(v: number | undefined): number {
   if (!Number.isInteger(v) || v < 0 || v > TRABALHO.VALOR_MAX) {
     erro(
       'VALOR_INVALIDO',
-      `O trabalho vale de 0 a ${TRABALHO.VALOR_MAX} pontos.`,
+      `O trabalho vale de 0 a ${TRABALHO.VALOR_MAX.toLocaleString('pt-BR')} pontos.`,
     );
   }
   return v;
